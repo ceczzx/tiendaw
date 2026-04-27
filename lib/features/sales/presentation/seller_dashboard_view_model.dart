@@ -7,8 +7,8 @@ import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
 import 'package:tiendaw/features/catalog/domain/load_catalog_overview_use_case.dart';
 import 'package:tiendaw/features/dashboard/presentation/admin_desktop_dashboard_view_model.dart';
 import 'package:tiendaw/features/purchases/presentation/admin_mobile_dashboard_view_model.dart';
-import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 import 'package:tiendaw/features/sales/domain/create_sale_use_case.dart';
+import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 import 'package:uuid/uuid.dart';
 
 class SellerDashboardState {
@@ -26,8 +26,8 @@ class SellerDashboardState {
 
   final List<Category> categories;
   final List<Product> products;
-  final String selectedCategoryId;
-  final String selectedProductId;
+  final String? selectedCategoryId;
+  final String? selectedProductId;
   final int quantity;
   final PaymentMethod paymentMethod;
   final CashShift currentShift;
@@ -38,7 +38,9 @@ class SellerDashboardState {
     List<Category>? categories,
     List<Product>? products,
     String? selectedCategoryId,
+    bool clearSelectedCategory = false,
     String? selectedProductId,
+    bool clearSelectedProduct = false,
     int? quantity,
     PaymentMethod? paymentMethod,
     CashShift? currentShift,
@@ -48,8 +50,14 @@ class SellerDashboardState {
     return SellerDashboardState(
       categories: categories ?? this.categories,
       products: products ?? this.products,
-      selectedCategoryId: selectedCategoryId ?? this.selectedCategoryId,
-      selectedProductId: selectedProductId ?? this.selectedProductId,
+      selectedCategoryId:
+          clearSelectedCategory
+              ? null
+              : selectedCategoryId ?? this.selectedCategoryId,
+      selectedProductId:
+          clearSelectedProduct
+              ? null
+              : selectedProductId ?? this.selectedProductId,
       quantity: quantity ?? this.quantity,
       paymentMethod: paymentMethod ?? this.paymentMethod,
       currentShift: currentShift ?? this.currentShift,
@@ -58,8 +66,18 @@ class SellerDashboardState {
     );
   }
 
-  Product get selectedProduct =>
-      products.firstWhere((product) => product.id == selectedProductId);
+  Product? get selectedProduct {
+    if (selectedProductId == null) {
+      return null;
+    }
+
+    for (final product in products) {
+      if (product.id == selectedProductId) {
+        return product;
+      }
+    }
+    return null;
+  }
 }
 
 final sellerDashboardViewModelProvider =
@@ -76,6 +94,9 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
   CreateSaleUseCase get _createSaleUseCase =>
       ref.read(createSaleUseCaseProvider);
 
+  AppUser? get _currentUser =>
+      ref.read(sessionViewModelProvider).valueOrNull?.currentUser;
+
   @override
   Future<SellerDashboardState> build() async {
     return _hydrate();
@@ -87,15 +108,16 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       return;
     }
 
-    final firstProduct = current.products.firstWhere(
-      (product) => product.categoryId == categoryId,
-      orElse: () => current.products.first,
-    );
+    final productsInCategory =
+        current.products.where((product) => product.categoryId == categoryId).toList();
+    final nextProductId =
+        productsInCategory.isEmpty ? null : productsInCategory.first.id;
 
     state = AsyncData(
       current.copyWith(
         selectedCategoryId: categoryId,
-        selectedProductId: firstProduct.id,
+        selectedProductId: nextProductId,
+        clearSelectedProduct: nextProductId == null,
       ),
     );
   }
@@ -129,11 +151,12 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
 
   Future<void> registerSale(AppUser user) async {
     final current = state.valueOrNull;
-    if (current == null) {
+    final selectedProduct = current?.selectedProduct;
+
+    if (current == null || selectedProduct == null) {
       return;
     }
 
-    final selectedProduct = current.selectedProduct;
     final sale = Sale(
       id: _uuid.v4(),
       sellerId: user.id,
@@ -148,36 +171,45 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       ],
       paymentMethod: current.paymentMethod,
       createdAt: DateTime.now(),
-      syncStatus:
-          ref.read(sessionViewModelProvider).isOnline
-              ? SyncStatus.synced
-              : SyncStatus.pending,
+      syncStatus: SyncStatus.synced,
       syncAttempts: 0,
     );
 
-    await _createSaleUseCase(sale);
-    await _refreshAll();
+    try {
+      await _createSaleUseCase(sale);
+      await _refreshAll();
 
-    final synced = ref.read(sessionViewModelProvider).isOnline;
-    state = AsyncData(
-      state.requireValue.copyWith(
-        quantity: 1,
-        feedbackMessage:
-            synced
-                ? 'Venta registrada y sincronizada.'
-                : 'Venta guardada offline. Pendiente de sincronizar.',
-      ),
-    );
+      state = AsyncData(
+        state.requireValue.copyWith(
+          quantity: 1,
+          feedbackMessage: 'Venta registrada en Supabase.',
+        ),
+      );
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(feedbackMessage: 'No se pudo registrar la venta: $error'),
+      );
+    }
   }
 
   Future<void> closeShift(AppUser user) async {
-    await ref.read(salesRepositoryProvider).closeShift(user.id);
-    await _refreshAll();
-    state = AsyncData(
-      state.requireValue.copyWith(
-        feedbackMessage: 'Caja cerrada y turno reiniciado.',
-      ),
-    );
+    try {
+      await ref.read(salesRepositoryProvider).closeShift(user.id);
+      await _refreshAll();
+      state = AsyncData(
+        state.requireValue.copyWith(
+          feedbackMessage: 'Caja cerrada y turno reabierto en Supabase.',
+        ),
+      );
+    } catch (error) {
+      final current = state.valueOrNull;
+      if (current == null) {
+        return;
+      }
+      state = AsyncData(
+        current.copyWith(feedbackMessage: 'No se pudo cerrar la caja: $error'),
+      );
+    }
   }
 
   Future<SellerDashboardState> _hydrate({
@@ -187,27 +219,34 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     PaymentMethod? paymentMethod,
     String? feedbackMessage,
   }) async {
+    final user = _currentUser;
+    if (user == null) {
+      throw StateError('No hay sesion activa.');
+    }
+
     final catalog = await _catalogUseCase();
     final sales = await ref.read(salesRepositoryProvider).getSales();
-    final shift = await ref.read(salesRepositoryProvider).getOpenShift();
+    final shift = await ref.read(salesRepositoryProvider).getOpenShift(user.id);
 
     final effectiveCategoryId =
-        selectedCategoryId ??
-        catalog.categories
-            .firstWhere(
-              (category) => category.id == selectedCategoryId,
-              orElse: () => catalog.categories.first,
-            )
-            .id;
+        catalog.categories.any((category) => category.id == selectedCategoryId)
+            ? selectedCategoryId
+            : catalog.categories.isEmpty
+            ? null
+            : catalog.categories.first.id;
 
     final productsInCategory =
-        catalog.products
-            .where((product) => product.categoryId == effectiveCategoryId)
-            .toList();
+        effectiveCategoryId == null
+            ? const <Product>[]
+            : catalog.products
+                .where((product) => product.categoryId == effectiveCategoryId)
+                .toList();
 
     final effectiveProductId =
         productsInCategory.any((product) => product.id == selectedProductId)
-            ? selectedProductId!
+            ? selectedProductId
+            : productsInCategory.isEmpty
+            ? null
             : productsInCategory.first.id;
 
     final today = DateTime.now();
@@ -242,7 +281,6 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       ),
     );
 
-    ref.read(sessionViewModelProvider.notifier).refreshStatus();
     ref.invalidate(adminMobileDashboardViewModelProvider);
     ref.invalidate(adminDesktopDashboardViewModelProvider);
   }

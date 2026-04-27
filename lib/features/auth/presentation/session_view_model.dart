@@ -4,79 +4,96 @@ import 'package:tiendaw/features/auth/domain/app_user.dart';
 
 class SessionState {
   const SessionState({
-    required this.currentUser,
-    required this.isOnline,
-    required this.pendingSyncCount,
+    this.currentUser,
+    this.isBusy = false,
+    this.errorMessage,
   });
 
-  final AppUser currentUser;
-  final bool isOnline;
-  final int pendingSyncCount;
+  final AppUser? currentUser;
+  final bool isBusy;
+  final String? errorMessage;
+
+  bool get isAuthenticated => currentUser != null;
 
   SessionState copyWith({
     AppUser? currentUser,
-    bool? isOnline,
-    int? pendingSyncCount,
+    bool replaceCurrentUser = false,
+    bool? isBusy,
+    String? errorMessage,
+    bool clearError = false,
   }) {
     return SessionState(
-      currentUser: currentUser ?? this.currentUser,
-      isOnline: isOnline ?? this.isOnline,
-      pendingSyncCount: pendingSyncCount ?? this.pendingSyncCount,
+      currentUser:
+          replaceCurrentUser ? currentUser : currentUser ?? this.currentUser,
+      isBusy: isBusy ?? this.isBusy,
+      errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
     );
   }
 }
 
 final sessionViewModelProvider =
-    NotifierProvider<SessionViewModel, SessionState>(SessionViewModel.new);
+    AsyncNotifierProvider<SessionViewModel, SessionState>(SessionViewModel.new);
 
-class SessionViewModel extends Notifier<SessionState> {
+class SessionViewModel extends AsyncNotifier<SessionState> {
   @override
-  SessionState build() {
-    final store = ref.read(systemWStoreProvider);
-    return SessionState(
-      currentUser: const AppUser(
-        id: 'admin-1',
-        name: 'Mariana Ruiz',
-        role: UserRole.admin,
-      ),
-      isOnline: store.isOnline,
-      pendingSyncCount: store.pendingTransactionsCount,
-    );
-  }
-
-  Future<void> switchRole(UserRole role) async {
-    final nextUser =
-        role == UserRole.admin
-            ? const AppUser(
-              id: 'admin-1',
-              name: 'Mariana Ruiz',
-              role: UserRole.admin,
-            )
-            : const AppUser(
-              id: 'seller-1',
-              name: 'Luis Vega',
-              role: UserRole.seller,
-            );
-
-    state = state.copyWith(currentUser: nextUser);
-  }
-
-  Future<void> toggleOnline(bool value) async {
-    final store = ref.read(systemWStoreProvider);
-    store.isOnline = value;
-
-    if (value) {
-      await ref.read(syncEngineProvider).syncPendingTransactions();
+  Future<SessionState> build() async {
+    try {
+      final currentUser = await ref.read(loadCurrentUserUseCaseProvider)();
+      return SessionState(currentUser: currentUser);
+    } catch (error) {
+      return SessionState(errorMessage: _normalizeError(error));
     }
-
-    refreshStatus();
   }
 
-  void refreshStatus() {
-    final store = ref.read(systemWStoreProvider);
-    state = state.copyWith(
-      isOnline: store.isOnline,
-      pendingSyncCount: store.pendingTransactionsCount,
-    );
+  Future<void> signIn({
+    required String email,
+    required String password,
+  }) async {
+    final current = state.valueOrNull ?? const SessionState();
+    state = AsyncData(current.copyWith(isBusy: true, clearError: true));
+
+    try {
+      final user = await ref
+          .read(signInUseCaseProvider)
+          .call(email: email, password: password);
+
+      _invalidateFeatureState();
+      state = AsyncData(SessionState(currentUser: user));
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(
+          isBusy: false,
+          errorMessage: _normalizeError(error),
+          replaceCurrentUser: true,
+          currentUser: null,
+        ),
+      );
+    }
+  }
+
+  Future<void> signOut() async {
+    final current = state.valueOrNull ?? const SessionState();
+    state = AsyncData(current.copyWith(isBusy: true, clearError: true));
+
+    try {
+      await ref.read(signOutUseCaseProvider)();
+      _invalidateFeatureState();
+      state = const AsyncData(SessionState());
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(isBusy: false, errorMessage: _normalizeError(error)),
+      );
+    }
+  }
+
+  String _normalizeError(Object error) {
+    final message = error.toString().trim();
+    return message.replaceFirst('AuthException(message: ', '').replaceAll(')', '');
+  }
+
+  void _invalidateFeatureState() {
+    ref.invalidate(catalogRepositoryProvider);
+    ref.invalidate(salesRepositoryProvider);
+    ref.invalidate(purchaseRepositoryProvider);
   }
 }

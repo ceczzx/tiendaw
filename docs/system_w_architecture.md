@@ -38,7 +38,6 @@ lib/
       domain/
       presentation/
   shared/
-    demo/
     widgets/
 ```
 
@@ -72,7 +71,8 @@ Archivos ejemplo:
 
 - Repositorios coordinan `local` + `remote`.
 - Data sources separan lectura/escritura por origen.
-- Se deja lista la sustitucion del store demo por `Supabase` y `SQLite`.
+- `remote` ya opera con `Supabase`.
+- `local` queda como cache temporal en memoria mientras se implementa `SQLite`.
 
 Archivos ejemplo:
 
@@ -191,9 +191,9 @@ Campos de sincronizacion obligatorios:
 
 ## 9. Siguiente paso recomendado
 
-Reemplazar `SystemWStore` por:
+Completar la fase offline real con:
 
-1. `SupabaseClient` real para `remote`.
-2. repositorio SQLite real para `local`.
-3. `connectivity_plus` para detectar red.
-4. login real con `Supabase Auth`.
+1. repositorio `SQLite` para `local`.
+2. `connectivity_plus` para detectar red.
+3. cola de sincronizacion persistente.
+4. manejo de conflictos y reintentos.

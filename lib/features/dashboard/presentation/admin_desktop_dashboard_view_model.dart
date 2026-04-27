@@ -30,12 +30,7 @@ class AdminDesktopDashboardState {
   final DashboardWindow window;
 
   List<Sale> get filteredSales {
-    final days = switch (window) {
-      DashboardWindow.today => 1,
-      DashboardWindow.week => 7,
-      DashboardWindow.month => 30,
-    };
-    final threshold = DateTime.now().subtract(Duration(days: days));
+    final threshold = DateTime.now().subtract(Duration(days: _windowDays));
     return sales.where((sale) {
       final sellerMatches =
           sellerFilter == 'all' || sale.sellerId == sellerFilter;
@@ -44,27 +39,25 @@ class AdminDesktopDashboardState {
   }
 
   List<Purchase> get filteredPurchases {
-    final days = switch (window) {
-      DashboardWindow.today => 1,
-      DashboardWindow.week => 7,
-      DashboardWindow.month => 30,
-    };
-    final threshold = DateTime.now().subtract(Duration(days: days));
+    final threshold = DateTime.now().subtract(Duration(days: _windowDays));
     return purchases
         .where((purchase) => purchase.receivedAt.isAfter(threshold))
         .toList();
   }
 
   List<InventoryMovement> get filteredMovements {
-    final days = switch (window) {
+    final threshold = DateTime.now().subtract(Duration(days: _windowDays));
+    return movements
+        .where((movement) => movement.occurredAt.isAfter(threshold))
+        .toList();
+  }
+
+  int get _windowDays {
+    return switch (window) {
       DashboardWindow.today => 1,
       DashboardWindow.week => 7,
       DashboardWindow.month => 30,
     };
-    final threshold = DateTime.now().subtract(Duration(days: days));
-    return movements
-        .where((movement) => movement.occurredAt.isAfter(threshold))
-        .toList();
   }
 
   double get dailySalesTotal =>
@@ -92,13 +85,16 @@ class AdminDesktopDashboardState {
     return '${names[winnerEntry.key]} (${SystemWFormatters.currency.format(winnerEntry.value)})';
   }
 
-  List<String> get sellerOptions {
-    final sellers =
-        sales
-            .map((sale) => {'id': sale.sellerId, 'name': sale.sellerName})
-            .toSet()
-            .toList();
-    return ['all', ...sellers.map((entry) => entry['id']!)];
+  List<Map<String, String>> get sellerOptions {
+    final sellers = <String, String>{};
+    for (final sale in sales) {
+      sellers[sale.sellerId] = sale.sellerName;
+    }
+
+    return [
+      {'id': 'all', 'name': 'Todos'},
+      ...sellers.entries.map((entry) => {'id': entry.key, 'name': entry.value}),
+    ];
   }
 
   AdminDesktopDashboardState copyWith({
@@ -156,19 +152,35 @@ class AdminDesktopDashboardViewModel
     String sellerFilter = 'all',
     DashboardWindow window = DashboardWindow.week,
   }) async {
+    final catalog = await ref.read(loadCatalogOverviewUseCaseProvider)();
     final sales = await ref.read(salesRepositoryProvider).getSales();
     final purchases = await ref.read(purchaseRepositoryProvider).getPurchases();
     final movements =
         await ref.read(catalogRepositoryProvider).getInventoryMovements();
-    final store = ref.read(systemWStoreProvider);
+    final today = DateTime.now();
+
+    final lowStockProducts =
+        catalog.products
+            .where((product) => product.stockStore < product.lowStockThreshold)
+            .toList();
+    final expiringProducts =
+        catalog.products.where((product) {
+          final expiryDate = product.nextExpiryDate;
+          if (expiryDate == null) {
+            return false;
+          }
+
+          final remainingDays = expiryDate.difference(today).inDays;
+          return remainingDays <= 14;
+        }).toList();
 
     return AdminDesktopDashboardState(
       sales: sales,
       purchases: purchases,
       movements: movements,
-      lowStockProducts: store.lowStockProducts(),
-      expiringProducts: store.expiringProducts(),
-      pendingSyncCount: store.pendingTransactionsCount,
+      lowStockProducts: lowStockProducts,
+      expiringProducts: expiringProducts,
+      pendingSyncCount: 0,
       sellerFilter: sellerFilter,
       window: window,
     );

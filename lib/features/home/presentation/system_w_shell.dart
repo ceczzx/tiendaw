@@ -13,16 +13,21 @@ class SystemWShell extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final session = ref.watch(sessionViewModelProvider);
+    final session = ref.watch(sessionViewModelProvider).valueOrNull;
+    final user = session?.currentUser;
+
+    if (user == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final isLaptop = constraints.maxWidth >= AppBreakpoints.laptop;
-        final body = _resolveBody(isLaptop, session.currentUser.role);
+        final body = _resolveBody(isLaptop, user.role);
 
         return Scaffold(
           appBar: AppBar(
-            toolbarHeight: isLaptop ? 88 : 110,
+            toolbarHeight: isLaptop ? 88 : 72,
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -39,60 +44,62 @@ class SystemWShell extends ConsumerWidget {
             ),
             actions: [
               Padding(
-                padding: const EdgeInsets.only(right: 20),
-                child: Row(
-                  children: [
-                    StatusPill(
-                      label:
-                          session.isOnline
-                              ? 'Online - ${session.pendingSyncCount} pendientes'
-                              : 'Offline - ${session.pendingSyncCount} pendientes',
-                      background:
-                          session.isOnline
-                              ? const Color(0xFFECFDF5)
-                              : const Color(0xFFFEF2F2),
-                      foreground:
-                          session.isOnline
-                              ? const Color(0xFF047857)
-                              : const Color(0xFFB91C1C),
-                    ),
-                    const SizedBox(width: 12),
-                    Switch(
-                      value: session.isOnline,
-                      onChanged: (value) {
-                        ref
-                            .read(sessionViewModelProvider.notifier)
-                            .toggleOnline(value);
-                      },
-                    ),
-                    const SizedBox(width: 12),
-                    SegmentedButton<UserRole>(
-                      segments: const [
-                        ButtonSegment(
-                          value: UserRole.admin,
-                          label: Text('Admin'),
-                          icon: Icon(Icons.admin_panel_settings_outlined),
-                        ),
-                        ButtonSegment(
-                          value: UserRole.seller,
-                          label: Text('Vendedor'),
-                          icon: Icon(Icons.point_of_sale_rounded),
-                        ),
-                      ],
-                      selected: {session.currentUser.role},
-                      onSelectionChanged:
-                          (selection) => ref
-                              .read(sessionViewModelProvider.notifier)
-                              .switchRole(selection.first),
-                    ),
-                  ],
+                padding: const EdgeInsets.only(right: 8),
+                child: IconButton(
+                  tooltip: 'Cerrar sesion',
+                  onPressed: () {
+                    ref.read(sessionViewModelProvider.notifier).signOut();
+                  },
+                  icon: const Icon(Icons.logout_rounded),
                 ),
               ),
             ],
           ),
-          body: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 250),
-            child: body,
+          body: Column(
+            children: [
+              Padding(
+                padding: EdgeInsets.fromLTRB(
+                  20,
+                  isLaptop ? 8 : 0,
+                  20,
+                  12,
+                ),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      StatusPill(
+                        label: user.name,
+                        background: const Color(0xFFFDF2E8),
+                        foreground: const Color(0xFF9A3412),
+                      ),
+                      StatusPill(
+                        label:
+                            user.role == UserRole.admin
+                                ? 'Rol: admin'
+                                : 'Rol: vendedor',
+                        background: const Color(0xFFECFDF5),
+                        foreground: const Color(0xFF047857),
+                      ),
+                      const StatusPill(
+                        label: 'Supabase conectado',
+                        background: Color(0xFFEFF6FF),
+                        foreground: Color(0xFF1D4ED8),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  child: body,
+                ),
+              ),
+            ],
           ),
         );
       },
@@ -134,7 +141,7 @@ class _LaptopAdminOnlyState extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Para vendedores se mantiene el flujo optimizado en celular. Cambia el rol a Admin para ver tablas, KPIs y alertas.',
+                  'Para vendedores se mantiene el flujo optimizado en celular. Inicia sesion con un perfil admin para ver tablas, KPIs y alertas.',
                   style: Theme.of(context).textTheme.bodyLarge,
                 ),
               ],

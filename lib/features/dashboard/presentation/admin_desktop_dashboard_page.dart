@@ -41,18 +41,12 @@ class AdminDesktopDashboardPage extends ConsumerWidget {
                         labelText: 'Filtro vendedor',
                       ),
                       items: [
-                        const DropdownMenuItem(
-                          value: 'all',
-                          child: Text('Todos'),
+                        ...state.sellerOptions.map(
+                          (seller) => DropdownMenuItem(
+                            value: seller['id'],
+                            child: Text(seller['name']!),
+                          ),
                         ),
-                        ...state.sales
-                            .map(
-                              (sale) => DropdownMenuItem(
-                                value: sale.sellerId,
-                                child: Text(sale.sellerName),
-                              ),
-                            )
-                            .toSet(),
                       ],
                       onChanged: (value) {
                         if (value != null) {
@@ -278,6 +272,13 @@ class _DesktopTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (rows.isEmpty) {
+      return const EmptyStateCard(
+        title: 'Sin registros en este rango',
+        caption: 'Ajusta el periodo o crea operaciones en Supabase.',
+      );
+    }
+
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: DataTable(

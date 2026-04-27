@@ -1,32 +1,187 @@
 import 'dart:async';
 
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:tiendaw/core/sync/sync_status.dart';
 import 'package:tiendaw/features/purchases/domain/purchase_entities.dart';
-import 'package:tiendaw/shared/demo/system_w_store.dart';
 
 class PurchaseLocalDataSource {
-  PurchaseLocalDataSource(this._store);
+  List<Purchase> _purchases = const [];
 
-  final SystemWStore _store;
+  Future<void> upsertPurchase(Purchase purchase) async {
+    final next = [..._purchases];
+    final index = next.indexWhere((item) => item.id == purchase.id);
+    if (index == -1) {
+      next.add(purchase);
+    } else {
+      next[index] = purchase;
+    }
 
-  Future<void> savePurchase(Purchase purchase) async =>
-      _store.savePurchase(purchase);
-  Future<List<Purchase>> getPurchases() async => _store.listPurchases();
-  Future<void> markPurchaseSynced(String purchaseId) async =>
-      _store.markPurchaseSynced(purchaseId);
-  Future<void> increaseSyncAttempts(String purchaseId) async =>
-      _store.increasePurchaseSyncAttempts(purchaseId);
+    next.sort((a, b) => b.receivedAt.compareTo(a.receivedAt));
+    _purchases = List<Purchase>.unmodifiable(next);
+  }
+
+  Future<void> savePurchases(List<Purchase> purchases) async {
+    final next =
+        [...purchases]..sort((a, b) => b.receivedAt.compareTo(a.receivedAt));
+    _purchases = List<Purchase>.unmodifiable(next);
+  }
+
+  Future<List<Purchase>> getPurchases() async => List.unmodifiable(_purchases);
+
+  Future<Purchase?> findPurchase(String purchaseId) async {
+    for (final purchase in _purchases) {
+      if (purchase.id == purchaseId) {
+        return purchase;
+      }
+    }
+    return null;
+  }
 }
 
 class PurchaseRemoteDataSource {
-  PurchaseRemoteDataSource(this._store);
+  PurchaseRemoteDataSource(this._client);
 
-  final SystemWStore _store;
+  final SupabaseClient _client;
+
+  Future<List<Purchase>> getPurchases() async {
+    final rows = await _client
+        .from('purchases')
+        .select(
+          'id, received_at, supplier:suppliers(name), admin:profiles(full_name), purchase_items(product_id, quantity, unit_cost, expiry_date, product:products(name))',
+        )
+        .order('received_at', ascending: false);
+
+    return _mapRows(rows).map((row) {
+      final supplier = _mapNullable(row['supplier']);
+      final admin = _mapNullable(row['admin']);
+      final items =
+          ((row['purchase_items'] as List?) ?? const [])
+              .map((item) => Map<String, dynamic>.from(item as Map))
+              .map((item) {
+                final product = _mapNullable(item['product']);
+                return PurchaseLine(
+                  productId: item['product_id'] as String,
+                  productName: product['name']?.toString() ?? 'Producto',
+                  quantity: item['quantity'] as int,
+                  unitCost: (item['unit_cost'] as num).toDouble(),
+                  expiryDate:
+                      item['expiry_date'] == null
+                          ? null
+                          : DateTime.parse(item['expiry_date'] as String),
+                );
+              })
+              .toList();
+
+      return Purchase(
+        id: row['id'] as String,
+        supplier: supplier['name']?.toString() ?? 'Proveedor',
+        registeredBy: admin['full_name']?.toString() ?? 'Administrador',
+        items: items,
+        receivedAt: DateTime.parse(row['received_at'] as String),
+        syncStatus: SyncStatus.synced,
+        syncAttempts: 0,
+      );
+    }).toList();
+  }
 
   Future<void> pushPurchase(Purchase purchase) async {
-    if (!_store.isOnline) {
-      throw StateError('No internet connection');
+    final currentUser = _client.auth.currentUser;
+    if (currentUser == null) {
+      throw StateError('No hay una sesion activa para registrar compras.');
     }
 
-    await Future<void>.delayed(const Duration(milliseconds: 250));
+    final supplierId = await _resolveSupplierId(purchase.supplier);
+    final warehouseId = await _resolveLocationId('warehouse');
+
+    await _client.from('purchases').insert({
+      'id': purchase.id,
+      'supplier_id': supplierId,
+      'admin_id': currentUser.id,
+      'warehouse_id': warehouseId,
+      'total': purchase.total,
+      'received_at': purchase.receivedAt.toIso8601String(),
+    });
+
+    await _client.from('purchase_items').insert(
+      purchase.items
+          .map(
+            (item) => {
+              'purchase_id': purchase.id,
+              'product_id': item.productId,
+              'quantity': item.quantity,
+              'unit_cost': item.unitCost,
+              'expiry_date': item.expiryDate?.toIso8601String(),
+            },
+          )
+          .toList(),
+    );
+
+    await _client.from('product_prices').insert(
+      purchase.items
+          .map(
+            (item) => {
+              'product_id': item.productId,
+              'supplier_id': supplierId,
+              'unit_cost': item.unitCost,
+              'effective_at': purchase.receivedAt.toIso8601String(),
+            },
+          )
+          .toList(),
+    );
+  }
+
+  Future<String> _resolveSupplierId(String supplierName) async {
+    final rows = await _client
+        .from('suppliers')
+        .select('id')
+        .eq('name', supplierName)
+        .limit(1);
+
+    final data = _mapRows(rows);
+    if (data.isNotEmpty) {
+      return data.first['id'] as String;
+    }
+
+    final inserted =
+        await _client
+            .from('suppliers')
+            .insert({'name': supplierName})
+            .select('id')
+            .maybeSingle();
+
+    if (inserted == null) {
+      throw StateError('No se pudo registrar el proveedor.');
+    }
+
+    return inserted['id'] as String;
+  }
+
+  Future<String> _resolveLocationId(String locationType) async {
+    final rows = await _client
+        .from('locations')
+        .select('id')
+        .eq('location_type', locationType)
+        .limit(1);
+
+    final data = _mapRows(rows);
+    if (data.isEmpty) {
+      throw StateError('No existe una ubicacion configurada para $locationType.');
+    }
+
+    return data.first['id'] as String;
+  }
+
+  List<Map<String, dynamic>> _mapRows(dynamic rows) {
+    return (rows as List)
+        .map((row) => Map<String, dynamic>.from(row as Map))
+        .toList();
+  }
+
+  Map<String, dynamic> _mapNullable(dynamic value) {
+    if (value == null) {
+      return const {};
+    }
+
+    return Map<String, dynamic>.from(value as Map);
   }
 }

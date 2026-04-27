@@ -11,10 +11,12 @@ class AdminMobileDashboardPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final dashboard = ref.watch(adminMobileDashboardViewModelProvider);
-    final session = ref.watch(sessionViewModelProvider);
+    final currentUser = ref.watch(sessionViewModelProvider).valueOrNull?.currentUser;
 
     return dashboard.when(
       data: (state) {
+        final selectedProduct = state.selectedProduct;
+
         return SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Column(
@@ -26,7 +28,7 @@ class AdminMobileDashboardPage extends ConsumerWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                'Compras, historial de costos y movimientos basicos desde celular.',
+                'Compras, costos y movimientos conectados a tus tablas de Supabase.',
                 style: Theme.of(context).textTheme.bodyLarge,
               ),
               const SizedBox(height: 20),
@@ -46,157 +48,307 @@ class AdminMobileDashboardPage extends ConsumerWidget {
               SectionCard(
                 title: 'Registrar compra',
                 subtitle: 'Producto, cantidad, costo, proveedor y vencimiento.',
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    DropdownButtonFormField<String>(
-                      value: state.selectedProductId,
-                      decoration: const InputDecoration(labelText: 'Producto'),
-                      items:
-                          state.products
-                              .map(
-                                (product) => DropdownMenuItem(
-                                  value: product.id,
-                                  child: Text(product.name),
-                                ),
-                              )
-                              .toList(),
-                      onChanged: (value) {
-                        if (value != null) {
-                          ref
-                              .read(
-                                adminMobileDashboardViewModelProvider.notifier,
-                              )
-                              .selectProduct(value);
-                        }
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            initialValue: '${state.quantity}',
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              labelText: 'Cantidad',
+                child:
+                    state.products.isEmpty
+                        ? const EmptyStateCard(
+                          title: 'Sin productos registrados',
+                          caption:
+                              'Agrega productos y stock en Supabase para poder comprar.',
+                        )
+                        : Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            DropdownButtonFormField<String>(
+                              value: state.selectedProductId,
+                              decoration: const InputDecoration(
+                                labelText: 'Producto',
+                              ),
+                              items:
+                                  state.products
+                                      .map(
+                                        (product) => DropdownMenuItem(
+                                          value: product.id,
+                                          child: Text(product.name),
+                                        ),
+                                      )
+                                      .toList(),
+                              onChanged: (value) {
+                                if (value != null) {
+                                  ref
+                                      .read(
+                                        adminMobileDashboardViewModelProvider
+                                            .notifier,
+                                      )
+                                      .selectProduct(value);
+                                }
+                              },
                             ),
-                            onChanged:
-                                (value) => ref
-                                    .read(
-                                      adminMobileDashboardViewModelProvider
-                                          .notifier,
-                                    )
-                                    .changeQuantity(
-                                      int.tryParse(value) ?? state.quantity,
+                            const SizedBox(height: 12),
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final compact = constraints.maxWidth < 360;
+
+                                if (compact) {
+                                  return Column(
+                                    children: [
+                                      TextFormField(
+                                        initialValue: '${state.quantity}',
+                                        keyboardType: TextInputType.number,
+                                        decoration: const InputDecoration(
+                                          labelText: 'Cantidad',
+                                        ),
+                                        onChanged:
+                                            (value) => ref
+                                                .read(
+                                                  adminMobileDashboardViewModelProvider
+                                                      .notifier,
+                                                )
+                                                .changeQuantity(
+                                                  int.tryParse(value) ??
+                                                      state.quantity,
+                                                ),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      TextFormField(
+                                        initialValue:
+                                            state.unitCost.toStringAsFixed(2),
+                                        keyboardType:
+                                            const TextInputType.numberWithOptions(
+                                              decimal: true,
+                                            ),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Costo unitario',
+                                        ),
+                                        onChanged:
+                                            (value) => ref
+                                                .read(
+                                                  adminMobileDashboardViewModelProvider
+                                                      .notifier,
+                                                )
+                                                .changeUnitCost(
+                                                  double.tryParse(value) ??
+                                                      state.unitCost,
+                                                ),
+                                      ),
+                                    ],
+                                  );
+                                }
+
+                                return Row(
+                                  children: [
+                                    Expanded(
+                                      child: TextFormField(
+                                        initialValue: '${state.quantity}',
+                                        keyboardType: TextInputType.number,
+                                        decoration: const InputDecoration(
+                                          labelText: 'Cantidad',
+                                        ),
+                                        onChanged:
+                                            (value) => ref
+                                                .read(
+                                                  adminMobileDashboardViewModelProvider
+                                                      .notifier,
+                                                )
+                                                .changeQuantity(
+                                                  int.tryParse(value) ??
+                                                      state.quantity,
+                                                ),
+                                      ),
                                     ),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: TextFormField(
-                            initialValue: state.unitCost.toStringAsFixed(2),
-                            keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                            decoration: const InputDecoration(
-                              labelText: 'Costo unitario',
-                            ),
-                            onChanged:
-                                (value) => ref
-                                    .read(
-                                      adminMobileDashboardViewModelProvider
-                                          .notifier,
-                                    )
-                                    .changeUnitCost(
-                                      double.tryParse(value) ?? state.unitCost,
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: TextFormField(
+                                        initialValue:
+                                            state.unitCost.toStringAsFixed(2),
+                                        keyboardType:
+                                            const TextInputType.numberWithOptions(
+                                              decimal: true,
+                                            ),
+                                        decoration: const InputDecoration(
+                                          labelText: 'Costo unitario',
+                                        ),
+                                        onChanged:
+                                            (value) => ref
+                                                .read(
+                                                  adminMobileDashboardViewModelProvider
+                                                      .notifier,
+                                                )
+                                                .changeUnitCost(
+                                                  double.tryParse(value) ??
+                                                      state.unitCost,
+                                                ),
+                                      ),
                                     ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      initialValue: state.supplier,
-                      decoration: const InputDecoration(labelText: 'Proveedor'),
-                      onChanged:
-                          (value) => ref
-                              .read(
-                                adminMobileDashboardViewModelProvider.notifier,
-                              )
-                              .changeSupplier(value),
-                    ),
-                    const SizedBox(height: 16),
-                    _InfoLine(
-                      label: 'Fecha vencimiento sugerida',
-                      value: SystemWFormatters.shortDate.format(
-                        state.expiryDate,
-                      ),
-                    ),
-                    _InfoLine(
-                      label: 'Total compra',
-                      value: SystemWFormatters.currency.format(
-                        state.quantity * state.unitCost,
-                      ),
-                      isStrong: true,
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed:
-                                () => ref
-                                    .read(
-                                      adminMobileDashboardViewModelProvider
-                                          .notifier,
-                                    )
-                                    .registerPurchase(session.currentUser),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF0F766E),
-                              foregroundColor: Colors.white,
+                                  ],
+                                );
+                              },
                             ),
-                            child: const Text('Guardar compra'),
-                          ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              initialValue: state.supplier,
+                              decoration: const InputDecoration(
+                                labelText: 'Proveedor',
+                              ),
+                              onChanged:
+                                  (value) => ref
+                                      .read(
+                                        adminMobileDashboardViewModelProvider
+                                            .notifier,
+                                      )
+                                      .changeSupplier(value),
+                            ),
+                            const SizedBox(height: 16),
+                            _InfoLine(
+                              label: 'Fecha vencimiento sugerida',
+                              value: SystemWFormatters.shortDate.format(
+                                state.expiryDate,
+                              ),
+                            ),
+                            _InfoLine(
+                              label: 'Total compra',
+                              value: SystemWFormatters.currency.format(
+                                state.quantity * state.unitCost,
+                              ),
+                              isStrong: true,
+                            ),
+                            if (selectedProduct != null) ...[
+                              const SizedBox(height: 6),
+                              _InfoLine(
+                                label: 'Stock almacen actual',
+                                value: '${selectedProduct.stockWarehouse} u.',
+                              ),
+                            ],
+                            const SizedBox(height: 16),
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final compact = constraints.maxWidth < 360;
+
+                                if (compact) {
+                                  return Column(
+                                    children: [
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: ElevatedButton(
+                                          onPressed:
+                                              currentUser == null
+                                                  ? null
+                                                  : () => ref
+                                                      .read(
+                                                        adminMobileDashboardViewModelProvider
+                                                            .notifier,
+                                                      )
+                                                      .registerPurchase(
+                                                        currentUser,
+                                                      ),
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: const Color(
+                                              0xFF0F766E,
+                                            ),
+                                            foregroundColor: Colors.white,
+                                          ),
+                                          child: const Text('Guardar compra'),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 12),
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: OutlinedButton(
+                                          onPressed:
+                                              currentUser == null
+                                                  ? null
+                                                  : () => ref
+                                                      .read(
+                                                        adminMobileDashboardViewModelProvider
+                                                            .notifier,
+                                                      )
+                                                      .transferToStore(
+                                                        currentUser,
+                                                      ),
+                                          child: const Text('Mover a tienda'),
+                                        ),
+                                      ),
+                                    ],
+                                  );
+                                }
+
+                                return Row(
+                                  children: [
+                                    Expanded(
+                                      child: ElevatedButton(
+                                        onPressed:
+                                            currentUser == null
+                                                ? null
+                                                : () => ref
+                                                    .read(
+                                                      adminMobileDashboardViewModelProvider
+                                                          .notifier,
+                                                    )
+                                                    .registerPurchase(
+                                                      currentUser,
+                                                    ),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(
+                                            0xFF0F766E,
+                                          ),
+                                          foregroundColor: Colors.white,
+                                        ),
+                                        child: const Text('Guardar compra'),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: OutlinedButton(
+                                        onPressed:
+                                            currentUser == null
+                                                ? null
+                                                : () => ref
+                                                    .read(
+                                                      adminMobileDashboardViewModelProvider
+                                                          .notifier,
+                                                    )
+                                                    .transferToStore(
+                                                      currentUser,
+                                                    ),
+                                        child: const Text('Mover a tienda'),
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed:
-                                () => ref
-                                    .read(
-                                      adminMobileDashboardViewModelProvider
-                                          .notifier,
-                                    )
-                                    .transferToStore(session.currentUser),
-                            child: const Text('Mover a tienda'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
               ),
               const SizedBox(height: 16),
               SectionCard(
                 title: 'Historial de precios',
-                subtitle: 'Ultimos costos para negociar mejor compra.',
-                child: Column(
-                  children:
-                      state.priceHistory.take(4).map((entry) {
-                        return ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(entry.productName),
-                          subtitle: Text(
-                            '${entry.supplier} - ${SystemWFormatters.shortDate.format(entry.registeredAt)}',
-                          ),
-                          trailing: Text(
-                            SystemWFormatters.currency.format(entry.unitCost),
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                        );
-                      }).toList(),
-                ),
+                subtitle: 'Ultimos costos registrados en product_prices.',
+                child:
+                    state.priceHistory.isEmpty
+                        ? const EmptyStateCard(
+                          title: 'Sin historial de precios',
+                          caption:
+                              'Las compras nuevas alimentaran este historial automaticamente.',
+                        )
+                        : Column(
+                          children:
+                              state.priceHistory.take(4).map((entry) {
+                                return ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  title: Text(entry.productName),
+                                  subtitle: Text(
+                                    '${entry.supplier} - ${SystemWFormatters.shortDate.format(entry.registeredAt)}',
+                                  ),
+                                  trailing: Text(
+                                    SystemWFormatters.currency.format(
+                                      entry.unitCost,
+                                    ),
+                                    style:
+                                        Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                );
+                              }).toList(),
+                        ),
               ),
               const SizedBox(height: 16),
               SectionCard(
@@ -232,25 +384,32 @@ class AdminMobileDashboardPage extends ConsumerWidget {
               SectionCard(
                 title: 'Movimientos',
                 subtitle: 'Transferencias simples entre almacen y tienda.',
-                child: Column(
-                  children:
-                      state.movements.take(4).map((movement) {
-                        return ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            '${movement.productName} - ${movement.quantity} u.',
-                          ),
-                          subtitle: Text(
-                            '${movement.fromLocation} -> ${movement.toLocation} - ${movement.actorName}',
-                          ),
-                          trailing: Text(
-                            SystemWFormatters.shortDate.format(
-                              movement.occurredAt,
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                ),
+                child:
+                    state.movements.isEmpty
+                        ? const EmptyStateCard(
+                          title: 'Sin movimientos registrados',
+                          caption:
+                              'Las compras, ventas y transferencias apareceran aqui.',
+                        )
+                        : Column(
+                          children:
+                              state.movements.take(4).map((movement) {
+                                return ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  title: Text(
+                                    '${movement.productName} - ${movement.quantity} u.',
+                                  ),
+                                  subtitle: Text(
+                                    '${movement.fromLocation} -> ${movement.toLocation} - ${movement.actorName}',
+                                  ),
+                                  trailing: Text(
+                                    SystemWFormatters.shortDate.format(
+                                      movement.occurredAt,
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                        ),
               ),
             ],
           ),
@@ -284,9 +443,11 @@ class _InfoLine extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(child: Text(label, style: style)),
-          Text(value, style: style),
+          const SizedBox(width: 12),
+          Flexible(child: Text(value, style: style, textAlign: TextAlign.right)),
         ],
       ),
     );

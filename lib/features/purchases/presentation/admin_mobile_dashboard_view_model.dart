@@ -2,7 +2,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tiendaw/app/providers.dart';
 import 'package:tiendaw/core/sync/sync_status.dart';
 import 'package:tiendaw/features/auth/domain/app_user.dart';
-import 'package:tiendaw/features/auth/presentation/session_view_model.dart';
 import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
 import 'package:tiendaw/features/dashboard/presentation/admin_desktop_dashboard_view_model.dart';
 import 'package:tiendaw/features/inventory/domain/inventory_entities.dart';
@@ -27,15 +26,25 @@ class AdminMobileDashboardState {
   final List<PriceHistoryEntry> priceHistory;
   final List<Purchase> purchases;
   final List<InventoryMovement> movements;
-  final String selectedProductId;
+  final String? selectedProductId;
   final int quantity;
   final double unitCost;
   final String supplier;
   final DateTime expiryDate;
   final String? feedbackMessage;
 
-  Product get selectedProduct =>
-      products.firstWhere((product) => product.id == selectedProductId);
+  Product? get selectedProduct {
+    if (selectedProductId == null) {
+      return null;
+    }
+
+    for (final product in products) {
+      if (product.id == selectedProductId) {
+        return product;
+      }
+    }
+    return null;
+  }
 
   AdminMobileDashboardState copyWith({
     List<Product>? products,
@@ -43,6 +52,7 @@ class AdminMobileDashboardState {
     List<Purchase>? purchases,
     List<InventoryMovement>? movements,
     String? selectedProductId,
+    bool clearSelectedProduct = false,
     int? quantity,
     double? unitCost,
     String? supplier,
@@ -54,7 +64,10 @@ class AdminMobileDashboardState {
       priceHistory: priceHistory ?? this.priceHistory,
       purchases: purchases ?? this.purchases,
       movements: movements ?? this.movements,
-      selectedProductId: selectedProductId ?? this.selectedProductId,
+      selectedProductId:
+          clearSelectedProduct
+              ? null
+              : selectedProductId ?? this.selectedProductId,
       quantity: quantity ?? this.quantity,
       unitCost: unitCost ?? this.unitCost,
       supplier: supplier ?? this.supplier,
@@ -122,66 +135,85 @@ class AdminMobileDashboardViewModel
 
   Future<void> registerPurchase(AppUser user) async {
     final current = state.valueOrNull;
-    if (current == null) {
+    final selectedProduct = current?.selectedProduct;
+
+    if (current == null || selectedProduct == null) {
+      return;
+    }
+
+    if (current.supplier.trim().isEmpty) {
+      state = AsyncData(
+        current.copyWith(feedbackMessage: 'Ingresa el nombre del proveedor.'),
+      );
       return;
     }
 
     final purchase = Purchase(
       id: _uuid.v4(),
-      supplier: current.supplier,
+      supplier: current.supplier.trim(),
       registeredBy: user.name,
       items: [
         PurchaseLine(
-          productId: current.selectedProduct.id,
-          productName: current.selectedProduct.name,
+          productId: selectedProduct.id,
+          productName: selectedProduct.name,
           quantity: current.quantity,
           unitCost: current.unitCost,
           expiryDate: current.expiryDate,
         ),
       ],
       receivedAt: DateTime.now(),
-      syncStatus:
-          ref.read(sessionViewModelProvider).isOnline
-              ? SyncStatus.synced
-              : SyncStatus.pending,
+      syncStatus: SyncStatus.synced,
       syncAttempts: 0,
     );
 
-    await ref.read(registerPurchaseUseCaseProvider)(purchase);
-    await _refreshAll();
+    try {
+      await ref.read(registerPurchaseUseCaseProvider)(purchase);
+      await _refreshAll();
 
-    final synced = ref.read(sessionViewModelProvider).isOnline;
-    state = AsyncData(
-      state.requireValue.copyWith(
-        quantity: 12,
-        feedbackMessage:
-            synced
-                ? 'Compra registrada y sincronizada.'
-                : 'Compra guardada offline. Se enviara al volver la conexion.',
-      ),
-    );
+      state = AsyncData(
+        state.requireValue.copyWith(
+          quantity: 1,
+          supplier: '',
+          feedbackMessage: 'Compra registrada en Supabase.',
+        ),
+      );
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'No se pudo registrar la compra: $error',
+        ),
+      );
+    }
   }
 
   Future<void> transferToStore(AppUser user) async {
     final current = state.valueOrNull;
-    if (current == null) {
+    final selectedProduct = current?.selectedProduct;
+
+    if (current == null || selectedProduct == null) {
       return;
     }
 
-    await ref
-        .read(catalogRepositoryProvider)
-        .transferWarehouseToStore(
-          productId: current.selectedProductId,
-          quantity: current.quantity,
-          actorName: user.name,
-        );
+    try {
+      await ref
+          .read(catalogRepositoryProvider)
+          .transferWarehouseToStore(
+            productId: selectedProduct.id,
+            quantity: current.quantity,
+            actorName: user.name,
+          );
 
-    await _refreshAll();
-    state = AsyncData(
-      state.requireValue.copyWith(
-        feedbackMessage: 'Movimiento registrado: stock enviado a tienda.',
-      ),
-    );
+      await _refreshAll();
+      state = AsyncData(
+        state.requireValue.copyWith(
+          feedbackMessage: 'Transferencia registrada en Supabase.',
+        ),
+      );
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(feedbackMessage: 'No se pudo mover el stock: $error'),
+      );
+    }
   }
 
   Future<AdminMobileDashboardState> _hydrate({
@@ -201,11 +233,14 @@ class AdminMobileDashboardViewModel
 
     final productId =
         catalog.products.any((product) => product.id == selectedProductId)
-            ? selectedProductId!
+            ? selectedProductId
+            : catalog.products.isEmpty
+            ? null
             : catalog.products.first.id;
-    final selectedProduct = catalog.products.firstWhere(
-      (product) => product.id == productId,
-    );
+    final selectedProduct =
+        productId == null
+            ? null
+            : catalog.products.firstWhere((product) => product.id == productId);
 
     return AdminMobileDashboardState(
       products: catalog.products,
@@ -213,9 +248,9 @@ class AdminMobileDashboardViewModel
       purchases: purchases,
       movements: movements,
       selectedProductId: productId,
-      quantity: quantity ?? 12,
-      unitCost: unitCost ?? selectedProduct.lastPurchaseCost,
-      supplier: supplier ?? 'Proveedor local',
+      quantity: quantity ?? 1,
+      unitCost: unitCost ?? selectedProduct?.lastPurchaseCost ?? 0,
+      supplier: supplier ?? '',
       expiryDate: expiryDate ?? DateTime.now().add(const Duration(days: 30)),
       feedbackMessage: feedbackMessage,
     );
@@ -233,7 +268,6 @@ class AdminMobileDashboardViewModel
       ),
     );
 
-    ref.read(sessionViewModelProvider.notifier).refreshStatus();
     ref.invalidate(adminDesktopDashboardViewModelProvider);
   }
 }

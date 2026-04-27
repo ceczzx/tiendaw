@@ -1,16 +1,20 @@
-# tiendaw
+# Sistema W
 
-A new Flutter project.
+Base Flutter para un sistema de ventas e inventario con enfoque en:
 
-## Getting Started
+- `Clean Architecture + MVVM`
+- `Riverpod`
+- `Supabase`
+- `SQLite offline`
+- dashboards diferenciados por rol y dispositivo
 
-This project is a starting point for a Flutter application.
+## Documentacion clave
 
-A few resources to get you started if this is your first Flutter project:
+- [Arquitectura](./docs/system_w_architecture.md)
+- [Flujo de sincronizacion](./docs/sync_flow.md)
+- [Esquema SQLite local](./docs/local_sqlite_schema.sql)
+- [Migracion Supabase](./supabase/migrations/20260426_system_w.sql)
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+## Nota de implementacion
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+La app queda ejecutable con un `store` demo en memoria para poder validar flujo, UI y capas sin depender de credenciales. Los contratos, repositorios y esquemas ya estan preparados para sustituir el `store` por adaptadores reales de `Supabase` y `SQLite`.

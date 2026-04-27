@@ -1,0 +1,176 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:tiendaw/app/providers.dart';
+import 'package:tiendaw/core/utils/formatters.dart';
+import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
+import 'package:tiendaw/features/inventory/domain/inventory_entities.dart';
+import 'package:tiendaw/features/purchases/domain/purchase_entities.dart';
+import 'package:tiendaw/features/sales/domain/sales_entities.dart';
+
+enum DashboardWindow { today, week, month }
+
+class AdminDesktopDashboardState {
+  const AdminDesktopDashboardState({
+    required this.sales,
+    required this.purchases,
+    required this.movements,
+    required this.lowStockProducts,
+    required this.expiringProducts,
+    required this.pendingSyncCount,
+    required this.sellerFilter,
+    required this.window,
+  });
+
+  final List<Sale> sales;
+  final List<Purchase> purchases;
+  final List<InventoryMovement> movements;
+  final List<Product> lowStockProducts;
+  final List<Product> expiringProducts;
+  final int pendingSyncCount;
+  final String sellerFilter;
+  final DashboardWindow window;
+
+  List<Sale> get filteredSales {
+    final days = switch (window) {
+      DashboardWindow.today => 1,
+      DashboardWindow.week => 7,
+      DashboardWindow.month => 30,
+    };
+    final threshold = DateTime.now().subtract(Duration(days: days));
+    return sales.where((sale) {
+      final sellerMatches =
+          sellerFilter == 'all' || sale.sellerId == sellerFilter;
+      return sellerMatches && sale.createdAt.isAfter(threshold);
+    }).toList();
+  }
+
+  List<Purchase> get filteredPurchases {
+    final days = switch (window) {
+      DashboardWindow.today => 1,
+      DashboardWindow.week => 7,
+      DashboardWindow.month => 30,
+    };
+    final threshold = DateTime.now().subtract(Duration(days: days));
+    return purchases
+        .where((purchase) => purchase.receivedAt.isAfter(threshold))
+        .toList();
+  }
+
+  List<InventoryMovement> get filteredMovements {
+    final days = switch (window) {
+      DashboardWindow.today => 1,
+      DashboardWindow.week => 7,
+      DashboardWindow.month => 30,
+    };
+    final threshold = DateTime.now().subtract(Duration(days: days));
+    return movements
+        .where((movement) => movement.occurredAt.isAfter(threshold))
+        .toList();
+  }
+
+  double get dailySalesTotal =>
+      filteredSales.fold(0, (sum, sale) => sum + sale.total);
+
+  String get topSeller {
+    if (filteredSales.isEmpty) {
+      return 'Sin ventas';
+    }
+
+    final totals = <String, double>{};
+    final names = <String, String>{};
+    for (final sale in filteredSales) {
+      totals.update(
+        sale.sellerId,
+        (value) => value + sale.total,
+        ifAbsent: () => sale.total,
+      );
+      names[sale.sellerId] = sale.sellerName;
+    }
+
+    final winnerEntry = totals.entries.reduce(
+      (current, next) => current.value >= next.value ? current : next,
+    );
+    return '${names[winnerEntry.key]} (${SystemWFormatters.currency.format(winnerEntry.value)})';
+  }
+
+  List<String> get sellerOptions {
+    final sellers =
+        sales
+            .map((sale) => {'id': sale.sellerId, 'name': sale.sellerName})
+            .toSet()
+            .toList();
+    return ['all', ...sellers.map((entry) => entry['id']!)];
+  }
+
+  AdminDesktopDashboardState copyWith({
+    List<Sale>? sales,
+    List<Purchase>? purchases,
+    List<InventoryMovement>? movements,
+    List<Product>? lowStockProducts,
+    List<Product>? expiringProducts,
+    int? pendingSyncCount,
+    String? sellerFilter,
+    DashboardWindow? window,
+  }) {
+    return AdminDesktopDashboardState(
+      sales: sales ?? this.sales,
+      purchases: purchases ?? this.purchases,
+      movements: movements ?? this.movements,
+      lowStockProducts: lowStockProducts ?? this.lowStockProducts,
+      expiringProducts: expiringProducts ?? this.expiringProducts,
+      pendingSyncCount: pendingSyncCount ?? this.pendingSyncCount,
+      sellerFilter: sellerFilter ?? this.sellerFilter,
+      window: window ?? this.window,
+    );
+  }
+}
+
+final adminDesktopDashboardViewModelProvider = AsyncNotifierProvider<
+  AdminDesktopDashboardViewModel,
+  AdminDesktopDashboardState
+>(AdminDesktopDashboardViewModel.new);
+
+class AdminDesktopDashboardViewModel
+    extends AsyncNotifier<AdminDesktopDashboardState> {
+  @override
+  Future<AdminDesktopDashboardState> build() async {
+    return _hydrate();
+  }
+
+  Future<void> setSellerFilter(String sellerId) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+    state = AsyncData(current.copyWith(sellerFilter: sellerId));
+  }
+
+  Future<void> setWindow(DashboardWindow window) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+    state = AsyncData(current.copyWith(window: window));
+  }
+
+  Future<AdminDesktopDashboardState> _hydrate({
+    String sellerFilter = 'all',
+    DashboardWindow window = DashboardWindow.week,
+  }) async {
+    final sales = await ref.read(salesRepositoryProvider).getSales();
+    final purchases = await ref.read(purchaseRepositoryProvider).getPurchases();
+    final movements =
+        await ref.read(catalogRepositoryProvider).getInventoryMovements();
+    final store = ref.read(systemWStoreProvider);
+
+    return AdminDesktopDashboardState(
+      sales: sales,
+      purchases: purchases,
+      movements: movements,
+      lowStockProducts: store.lowStockProducts(),
+      expiringProducts: store.expiringProducts(),
+      pendingSyncCount: store.pendingTransactionsCount,
+      sellerFilter: sellerFilter,
+      window: window,
+    );
+  }
+}

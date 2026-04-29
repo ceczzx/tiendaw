@@ -109,7 +109,9 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
 
     final productsInCategory =
-        current.products.where((product) => product.categoryId == categoryId).toList();
+        current.products
+            .where((product) => product.categoryId == categoryId)
+            .toList();
     final nextProductId =
         productsInCategory.isEmpty ? null : productsInCategory.first.id;
 
@@ -182,12 +184,14 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       state = AsyncData(
         state.requireValue.copyWith(
           quantity: 1,
-          feedbackMessage: 'Venta registrada en Supabase.',
+          feedbackMessage: 'Venta registrada.',
         ),
       );
     } catch (error) {
       state = AsyncData(
-        current.copyWith(feedbackMessage: 'No se pudo registrar la venta: $error'),
+        current.copyWith(
+          feedbackMessage: 'No se pudo registrar la venta: $error',
+        ),
       );
     }
   }

@@ -13,15 +13,27 @@ class AuthRepositoryImpl implements AuthRepository {
   }
 
   @override
-  Future<AppUser> signIn({
-    required String email,
-    required String password,
-  }) {
+  Future<AppUser> signIn({required String email, required String password}) {
     return _remote.signIn(email: email, password: password);
   }
 
   @override
   Future<void> signOut() {
     return _remote.signOut();
+  }
+
+  @override
+  Future<void> updatePassword({required String password}) {
+    return _remote.updatePassword(password: password);
+  }
+
+  @override
+  String? getCurrentAuthEmail() {
+    return _remote.getCurrentAuthEmail();
+  }
+
+  @override
+  bool hasPendingInvitePasswordSetup() {
+    return _remote.hasPendingInvitePasswordSetup();
   }
 }

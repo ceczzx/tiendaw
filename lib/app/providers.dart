@@ -23,6 +23,11 @@ final authRemoteDataSourceProvider = Provider<AuthRemoteDataSource>((ref) {
   return AuthRemoteDataSource(ref.read(supabaseClientProvider));
 });
 
+// Invitation link deshabilitado temporalmente.
+// final authInviteLinkSourceProvider = Provider<AuthInviteLinkSource>((ref) {
+//   return AuthInviteLinkSource();
+// });
+
 final authRepositoryProvider = Provider<AuthRepositoryImpl>((ref) {
   return AuthRepositoryImpl(ref.read(authRemoteDataSourceProvider));
 });
@@ -38,6 +43,14 @@ final signInUseCaseProvider = Provider<SignInUseCase>((ref) {
 final signOutUseCaseProvider = Provider<SignOutUseCase>((ref) {
   return SignOutUseCase(ref.read(authRepositoryProvider));
 });
+
+// Invitation link deshabilitado temporalmente.
+// final completeInvitedUserPasswordUseCaseProvider =
+//     Provider<CompleteInvitedUserPasswordUseCase>((ref) {
+//       return CompleteInvitedUserPasswordUseCase(
+//         ref.read(authRepositoryProvider),
+//       );
+//     });
 
 final catalogLocalDataSourceProvider = Provider<CatalogLocalDataSource>((ref) {
   return CatalogLocalDataSource();

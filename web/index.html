@@ -33,6 +33,29 @@
   <link rel="manifest" href="manifest.json">
 </head>
 <body>
-  <script src="flutter_bootstrap.js" async></script>
+  <script>
+    (function () {
+      const searchParams = new URLSearchParams(window.location.search);
+      const hash = window.location.hash.replace('#', '');
+      const type = searchParams.get('type');
+      const hasInvitePayload =
+        type === 'invite' &&
+        (hash.includes('access_token=') ||
+          hash.includes('refresh_token=') ||
+          hash.includes('token_hash='));
+
+      if (hasInvitePayload) {
+        const params = window.location.search.replace('?', '');
+        const appLink = 'tiendaw://confirmar#' + params + '&' + hash;
+        window.location.replace(appLink);
+        return;
+      }
+
+      const flutterScript = document.createElement('script');
+      flutterScript.src = 'flutter_bootstrap.js';
+      flutterScript.async = true;
+      document.body.appendChild(flutterScript);
+    })();
+  </script>
 </body>
 </html>

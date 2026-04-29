@@ -32,16 +32,24 @@ class _SessionGate extends ConsumerWidget {
     final session = ref.watch(sessionViewModelProvider);
 
     return session.when(
-      data:
-          (state) =>
-              state.isAuthenticated
-                  ? const SystemWShell()
-                  : SignInPage(errorMessage: state.errorMessage),
-      loading: () => const Scaffold(body: Center(child: CircularProgressIndicator())),
+      data: (state) {
+        // Invitation link deshabilitado temporalmente.
+        // if (state.isInviteFlow) {
+        //   // El onboarding del invitado siempre gana prioridad para
+        //   // impedir que entre al shell antes de definir su contrasena.
+        //   return const InvitePasswordPage();
+        // }
+
+        return state.isAuthenticated
+            ? const SystemWShell()
+            : SignInPage(errorMessage: state.errorMessage);
+      },
+      loading:
+          () =>
+              const Scaffold(body: Center(child: CircularProgressIndicator())),
       error:
-          (error, _) => SignInPage(
-            errorMessage: 'No se pudo cargar la sesion: $error',
-          ),
+          (error, _) =>
+              SignInPage(errorMessage: 'No se pudo cargar la sesion: $error'),
     );
   }
 }
@@ -68,7 +76,10 @@ class SetupRequiredPage extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Configura Supabase', style: theme.textTheme.headlineMedium),
+                    Text(
+                      'Configura Supabase',
+                      style: theme.textTheme.headlineMedium,
+                    ),
                     const SizedBox(height: 12),
                     Text(message, style: theme.textTheme.bodyLarge),
                     const SizedBox(height: 16),
@@ -78,7 +89,7 @@ class SetupRequiredPage extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     const SelectableText(
-                      'SUPABASE_URL=https://tu-proyecto.supabase.co\nSUPABASE_ANON_KEY=tu_anon_key',
+                      'SUPABASE_URL=https://tu-proyecto.supabase.co\nSUPABASE_PUBLISHABLE_KEY=tu_publishable_key\n# o tambien\nSUPABASE_ANON_KEY=tu_anon_key',
                     ),
                   ],
                 ),

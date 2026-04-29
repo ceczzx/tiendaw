@@ -35,41 +35,64 @@ class AuthRemoteDataSource {
     return _client.auth.signOut();
   }
 
+  Future<void> updatePassword({required String password}) async {
+    await _client.auth.updateUser(UserAttributes(password: password));
+  }
+
+  String? getCurrentAuthEmail() {
+    return _client.auth.currentUser?.email;
+  }
+
+  bool hasPendingInvitePasswordSetup() {
+    final authUser = _client.auth.currentUser;
+    if (authUser == null) {
+      return false;
+    }
+
+    // Mientras el correo invitado no confirme una contrasena propia,
+    // seguimos enviandolo al onboarding separado.
+    return authUser.invitedAt != null && authUser.emailConfirmedAt == null;
+  }
+
   Future<Map<String, dynamic>> _ensureProfile(User authUser) async {
-    final currentProfile =
-        await _client
-            .from('profiles')
-            .select('id, full_name, role')
-            .eq('id', authUser.id)
-            .maybeSingle();
+    try {
+      final currentProfile =
+          await _client
+              .from('profiles')
+              .select('id, full_name, role')
+              .eq('id', authUser.id)
+              .maybeSingle();
 
-    if (currentProfile != null) {
-      return Map<String, dynamic>.from(currentProfile);
+      if (currentProfile != null) {
+        return Map<String, dynamic>.from(currentProfile);
+      }
+
+      final metadata = authUser.userMetadata ?? const <String, dynamic>{};
+      final rawName = metadata['full_name']?.toString().trim();
+      final rawRole = metadata['role']?.toString().trim().toLowerCase();
+
+      final inserted =
+          await _client
+              .from('profiles')
+              .upsert({
+                'id': authUser.id,
+                'full_name':
+                    rawName != null && rawName.isNotEmpty
+                        ? rawName
+                        : _fallbackName(authUser.email),
+                'role': rawRole == 'admin' ? 'admin' : 'seller',
+              })
+              .select('id, full_name, role')
+              .maybeSingle();
+
+      if (inserted == null) {
+        throw StateError('No se pudo crear el perfil del usuario.');
+      }
+
+      return Map<String, dynamic>.from(inserted);
+    } on PostgrestException catch (error) {
+      throw StateError(_mapProfileError(error));
     }
-
-    final metadata = authUser.userMetadata ?? const <String, dynamic>{};
-    final rawName = metadata['full_name']?.toString().trim();
-    final rawRole = metadata['role']?.toString().trim().toLowerCase();
-
-    final inserted =
-        await _client
-            .from('profiles')
-            .upsert({
-              'id': authUser.id,
-              'full_name':
-                  rawName != null && rawName.isNotEmpty
-                      ? rawName
-                      : _fallbackName(authUser.email),
-              'role': rawRole == 'admin' ? 'admin' : 'seller',
-            })
-            .select('id, full_name, role')
-            .maybeSingle();
-
-    if (inserted == null) {
-      throw StateError('No se pudo crear el perfil del usuario.');
-    }
-
-    return Map<String, dynamic>.from(inserted);
   }
 
   AppUser _mapUser(Map<String, dynamic> profile) {
@@ -88,5 +111,18 @@ class AuthRemoteDataSource {
     }
 
     return email.split('@').first.replaceAll('.', ' ').trim();
+  }
+
+  String _mapProfileError(PostgrestException error) {
+    final rawMessage = error.message.toLowerCase();
+    final rawDetails = error.details?.toString().toLowerCase() ?? '';
+
+    if (error.code == '404' ||
+        rawMessage.contains('invalid path specified in request url') ||
+        rawDetails.contains('invalid path specified in request url')) {
+      return 'La app si pudo conectarse a Supabase, pero no encontro la ruta REST de public.profiles. Revisa que SUPABASE_URL sea la URL base del proyecto y que las migraciones esten ejecutadas en ese mismo proyecto.';
+    }
+
+    return 'No se pudo leer o crear el perfil del usuario en Supabase: ${error.message}';
   }
 }

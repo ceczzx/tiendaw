@@ -27,6 +27,7 @@ class _SignInPageState extends ConsumerState<SignInPage> {
   Widget build(BuildContext context) {
     final session = ref.watch(sessionViewModelProvider).valueOrNull;
     final errorMessage = session?.errorMessage ?? widget.errorMessage;
+    final infoMessage = session?.infoMessage;
     final isBusy = session?.isBusy ?? false;
     final theme = Theme.of(context);
 
@@ -68,6 +69,19 @@ class _SignInPageState extends ConsumerState<SignInPage> {
                         ),
                         const SizedBox(height: 16),
                       ],
+                      if (infoMessage != null && infoMessage.isNotEmpty) ...[
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0FDF4),
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(color: const Color(0xFF86EFAC)),
+                          ),
+                          child: Text(infoMessage),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
                       TextFormField(
                         controller: _emailController,
                         keyboardType: TextInputType.emailAddress,
@@ -83,7 +97,9 @@ class _SignInPageState extends ConsumerState<SignInPage> {
                       TextFormField(
                         controller: _passwordController,
                         obscureText: true,
-                        decoration: const InputDecoration(labelText: 'Contrasena'),
+                        decoration: const InputDecoration(
+                          labelText: 'Contrasena',
+                        ),
                         validator: (value) {
                           if (value == null || value.isEmpty) {
                             return 'Ingresa tu contrasena.';
@@ -102,7 +118,9 @@ class _SignInPageState extends ConsumerState<SignInPage> {
                                   ? const SizedBox(
                                     width: 20,
                                     height: 20,
-                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
                                   )
                                   : const Text('Ingresar con Supabase'),
                         ),

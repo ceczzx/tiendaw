@@ -57,12 +57,55 @@ Aplicacion Flutter para ventas e inventario conectada a Supabase, manteniendo la
      - `Almacen principal`
      - `Tienda principal`
 
+10. Se implemento el flujo separado para usuarios invitados desde Supabase.
+    Ahora la app detecta el link `type=invite` y prioriza un onboarding aparte antes de permitir acceso al shell principal.
+
+11. Se agrego una pantalla exclusiva para activar cuentas invitadas.
+    Archivo nuevo:
+    - `lib/features/auth/presentation/invite_password_page.dart`
+
+    Flujo:
+    - el usuario abre el link de invitacion
+    - define su contrasena
+    - la app cierra la sesion temporal del link
+    - vuelve al login normal para entrar con correo y contrasena
+
+12. Se extendio la capa `auth` respetando la arquitectura actual.
+    Se agregaron:
+    - `AuthInviteLinkSource`
+    - `CompleteInvitedUserPasswordUseCase`
+    - metodos nuevos en `AuthRepository`, `AuthRepositoryImpl` y `AuthRemoteDataSource`
+
+    Eso permite:
+    - detectar invitaciones pendientes
+    - leer el correo autenticado por el link
+    - actualizar la contrasena del invitado
+
+13. Se actualizo `SessionViewModel`.
+    Ahora escucha:
+    - cambios de sesion de Supabase
+    - deep links de invitacion
+
+    Y mantiene comentarios en el codigo para ubicar la parte critica del flujo.
+
+14. Se actualizo el login para mostrar mensaje de activacion completada.
+    Cuando el invitado termina de guardar su contrasena, vuelve al login con una confirmacion visual para ingresar normalmente.
+
+15. Se agrego una migracion de permisos SQL para el rol `authenticated`.
+    Archivo nuevo:
+    - `supabase/migrations/20260428_authenticated_table_grants.sql`
+
+    Esta migracion evita errores como:
+    - `permission denied for table profiles`
+    - accesos fallidos por permisos aunque las politicas RLS existan
+
 ## Archivos clave tocados
 
 - `lib/main.dart`
 - `lib/app/providers.dart`
 - `lib/app/system_w_app.dart`
 - `lib/features/auth/...`
+- `lib/features/auth/presentation/invite_password_page.dart`
 - `lib/features/catalog/data/...`
 - `lib/features/sales/data/...`
 - `lib/features/purchases/data/...`
@@ -87,6 +130,7 @@ Ejecuta estas migraciones en este orden:
 
 1. `supabase/migrations/20260426_system_w.sql`
 2. `supabase/migrations/20260427_supabase_app_policies.sql`
+3. `supabase/migrations/20260428_authenticated_table_grants.sql`
 
 Nota:
 El archivo que existe en el proyecto es `20260426_system_w.sql`. Ese es el que tome como base para la integracion.
@@ -95,9 +139,10 @@ El archivo que existe en el proyecto es `20260426_system_w.sql`. Ese es el que t
 
 1. Completa `.env`
 2. Ejecuta las migraciones
-3. Crea al menos un usuario en Supabase Auth
+3. Crea al menos un usuario en Supabase Auth o invitalo con el link de Supabase
 4. Inicia la app con `flutter run`
-5. Ingresa con ese usuario desde la pantalla de login
+5. Si el usuario entra por invitacion, define primero la contrasena
+6. Luego vuelve al login y entra con sus credenciales
 
 Si el usuario no tiene fila en `public.profiles`, la app intentara crearla automaticamente con rol `seller`.
 

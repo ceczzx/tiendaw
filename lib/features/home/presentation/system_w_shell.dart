@@ -8,11 +8,18 @@ import 'package:tiendaw/features/purchases/presentation/admin_mobile_dashboard_p
 import 'package:tiendaw/features/sales/presentation/seller_dashboard_page.dart';
 import 'package:tiendaw/shared/widgets/system_w_widgets.dart';
 
-class SystemWShell extends ConsumerWidget {
+class SystemWShell extends ConsumerStatefulWidget {
   const SystemWShell({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SystemWShell> createState() => _SystemWShellState();
+}
+
+class _SystemWShellState extends ConsumerState<SystemWShell> {
+  AdminDesktopSection _adminSection = AdminDesktopSection.sales;
+
+  @override
+  Widget build(BuildContext context) {
     final session = ref.watch(sessionViewModelProvider).valueOrNull;
     final user = session?.currentUser;
 
@@ -23,6 +30,7 @@ class SystemWShell extends ConsumerWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isLaptop = constraints.maxWidth >= AppBreakpoints.laptop;
+        final isLaptopAdmin = isLaptop && user.role == UserRole.admin;
         final body = _resolveBody(isLaptop, user.role);
 
         return Scaffold(
@@ -43,6 +51,46 @@ class SystemWShell extends ConsumerWidget {
               ],
             ),
             actions: [
+              if (isLaptopAdmin)
+                Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: Center(
+                    child: Wrap(
+                      spacing: 10,
+                      children: [
+                        _HeaderSectionButton(
+                          label: 'Ventas',
+                          selected: _adminSection == AdminDesktopSection.sales,
+                          onPressed:
+                              () => setState(
+                                () =>
+                                    _adminSection = AdminDesktopSection.sales,
+                              ),
+                        ),
+                        _HeaderSectionButton(
+                          label: 'Compras',
+                          selected:
+                              _adminSection == AdminDesktopSection.purchases,
+                          onPressed:
+                              () => setState(
+                                () => _adminSection =
+                                    AdminDesktopSection.purchases,
+                              ),
+                        ),
+                        _HeaderSectionButton(
+                          label: 'Movimientos',
+                          selected:
+                              _adminSection == AdminDesktopSection.movements,
+                          onPressed:
+                              () => setState(
+                                () => _adminSection =
+                                    AdminDesktopSection.movements,
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: IconButton(
@@ -108,7 +156,7 @@ class SystemWShell extends ConsumerWidget {
 
   Widget _resolveBody(bool isLaptop, UserRole role) {
     if (isLaptop && role == UserRole.admin) {
-      return const AdminDesktopDashboardPage();
+      return AdminDesktopDashboardPage(activeSection: _adminSection);
     }
 
     if (isLaptop && role == UserRole.seller) {
@@ -120,6 +168,41 @@ class SystemWShell extends ConsumerWidget {
     }
 
     return const AdminMobileDashboardPage();
+  }
+}
+
+class _HeaderSectionButton extends StatelessWidget {
+  const _HeaderSectionButton({
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = selected
+        ? FilledButton.styleFrom(
+          backgroundColor: const Color(0xFF0F766E),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        )
+        : OutlinedButton.styleFrom(
+          foregroundColor: const Color(0xFF0F172A),
+          side: const BorderSide(color: Color(0xFFD6D3D1)),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        );
+
+    final child = Text(label, maxLines: 1, overflow: TextOverflow.ellipsis);
+
+    if (selected) {
+      return FilledButton(onPressed: onPressed, style: style, child: child);
+    }
+
+    return OutlinedButton(onPressed: onPressed, style: style, child: child);
   }
 }
 

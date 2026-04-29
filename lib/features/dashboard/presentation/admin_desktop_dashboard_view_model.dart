@@ -63,6 +63,14 @@ class AdminDesktopDashboardState {
   double get dailySalesTotal =>
       filteredSales.fold(0, (sum, sale) => sum + sale.total);
 
+  double get cashSalesTotal => filteredSales
+      .where((sale) => sale.paymentMethod == PaymentMethod.cash)
+      .fold(0, (sum, sale) => sum + sale.total);
+
+  double get yapeSalesTotal => filteredSales
+      .where((sale) => sale.paymentMethod == PaymentMethod.yape)
+      .fold(0, (sum, sale) => sum + sale.total);
+
   String get topSeller {
     if (filteredSales.isEmpty) {
       return 'Sin ventas';
@@ -84,6 +92,40 @@ class AdminDesktopDashboardState {
     );
     return '${names[winnerEntry.key]} (${SystemWFormatters.currency.format(winnerEntry.value)})';
   }
+
+  double get purchaseTotal =>
+      filteredPurchases.fold(0, (sum, purchase) => sum + purchase.total);
+
+  String get topSupplier {
+    if (filteredPurchases.isEmpty) {
+      return 'Sin compras';
+    }
+
+    final totals = <String, double>{};
+    for (final purchase in filteredPurchases) {
+      totals.update(
+        purchase.supplier,
+        (value) => value + purchase.total,
+        ifAbsent: () => purchase.total,
+      );
+    }
+
+    final winnerEntry = totals.entries.reduce(
+      (current, next) => current.value >= next.value ? current : next,
+    );
+    return '${winnerEntry.key} (${SystemWFormatters.currency.format(winnerEntry.value)})';
+  }
+
+  int get movementUnitsTotal => filteredMovements.fold(
+    0,
+    (sum, movement) => sum + movement.quantity,
+  );
+
+  int get movementProductsCount =>
+      filteredMovements.map((movement) => movement.productId).toSet().length;
+
+  int get activeAlertCount =>
+      lowStockProducts.length + expiringProducts.length;
 
   List<Map<String, String>> get sellerOptions {
     final sellers = <String, String>{};

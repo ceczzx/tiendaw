@@ -22,7 +22,8 @@ class SellerDashboardPage extends ConsumerWidget {
                 ? const []
                 : state.products
                     .where(
-                      (product) => product.categoryId == state.selectedCategoryId,
+                      (product) =>
+                          product.categoryId == state.selectedCategoryId,
                     )
                     .toList();
 
@@ -56,13 +57,13 @@ class SellerDashboardPage extends ConsumerWidget {
               ],
               SectionCard(
                 title: 'Paso 1. Categoria',
-                subtitle: 'Selecciona una categoria existente en Supabase.',
+                subtitle: 'Selecciona una categoria existente.',
                 child:
                     state.categories.isEmpty
                         ? const EmptyStateCard(
                           title: 'Sin categorias registradas',
                           caption:
-                              'Crea registros en public.categories para empezar a vender.',
+                              'Crea registros de categorias para empezar a vender.',
                         )
                         : Wrap(
                           spacing: 10,
@@ -88,7 +89,7 @@ class SellerDashboardPage extends ConsumerWidget {
               const SizedBox(height: 16),
               SectionCard(
                 title: 'Paso 2. Producto',
-                subtitle: 'Stock de tienda y almacen calculado desde Supabase.',
+                subtitle: 'Stock de tienda y almacen calculado.',
                 child:
                     productsInCategory.isEmpty
                         ? const EmptyStateCard(
@@ -129,7 +130,8 @@ class SellerDashboardPage extends ConsumerWidget {
                                       ),
                                       child: LayoutBuilder(
                                         builder: (context, constraints) {
-                                          final compact = constraints.maxWidth < 340;
+                                          final compact =
+                                              constraints.maxWidth < 340;
 
                                           if (compact) {
                                             return Column(
@@ -152,7 +154,8 @@ class SellerDashboardPage extends ConsumerWidget {
                                                 Text(
                                                   'Tienda: ${product.stockStore}  |  Almacen: ${product.stockWarehouse}',
                                                   maxLines: 2,
-                                                  overflow: TextOverflow.ellipsis,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
                                                   style: Theme.of(context)
                                                       .textTheme
                                                       .bodyMedium
@@ -168,7 +171,9 @@ class SellerDashboardPage extends ConsumerWidget {
                                                 const SizedBox(height: 10),
                                                 Text(
                                                   SystemWFormatters.currency
-                                                      .format(product.salePrice),
+                                                      .format(
+                                                        product.salePrice,
+                                                      ),
                                                   style: Theme.of(context)
                                                       .textTheme
                                                       .titleLarge
@@ -229,9 +234,8 @@ class SellerDashboardPage extends ConsumerWidget {
                                               ),
                                               const SizedBox(width: 12),
                                               Text(
-                                                SystemWFormatters.currency.format(
-                                                  product.salePrice,
-                                                ),
+                                                SystemWFormatters.currency
+                                                    .format(product.salePrice),
                                                 style: Theme.of(context)
                                                     .textTheme
                                                     .titleLarge
@@ -257,7 +261,8 @@ class SellerDashboardPage extends ConsumerWidget {
               const SizedBox(height: 16),
               SectionCard(
                 title: 'Paso 3. Cantidad y pago',
-                subtitle: 'Controles adaptados para celular sin desbordamientos.',
+                subtitle:
+                    'Controles adaptados para celular sin desbordamientos.',
                 child:
                     state.selectedProduct == null
                         ? const EmptyStateCard(
@@ -304,7 +309,9 @@ class SellerDashboardPage extends ConsumerWidget {
                                         height: 56,
                                         decoration: BoxDecoration(
                                           color: const Color(0xFFF8FAFC),
-                                          borderRadius: BorderRadius.circular(18),
+                                          borderRadius: BorderRadius.circular(
+                                            18,
+                                          ),
                                           border: Border.all(
                                             color: const Color(0xFFE5E7EB),
                                           ),
@@ -374,7 +381,9 @@ class SellerDashboardPage extends ConsumerWidget {
                                         height: 56,
                                         decoration: BoxDecoration(
                                           color: const Color(0xFFF8FAFC),
-                                          borderRadius: BorderRadius.circular(18),
+                                          borderRadius: BorderRadius.circular(
+                                            18,
+                                          ),
                                           border: Border.all(
                                             color: const Color(0xFFE5E7EB),
                                           ),
@@ -473,7 +482,8 @@ class SellerDashboardPage extends ConsumerWidget {
                             _SummaryRow(
                               label: 'Total',
                               value: SystemWFormatters.currency.format(
-                                state.selectedProduct!.salePrice * state.quantity,
+                                state.selectedProduct!.salePrice *
+                                    state.quantity,
                               ),
                               isStrong: true,
                             ),
@@ -541,7 +551,9 @@ class SellerDashboardPage extends ConsumerWidget {
                                                         .notifier,
                                                   )
                                                   .closeShift(currentUser),
-                                      child: const Text('Cerrar caja del turno'),
+                                      child: const Text(
+                                        'Cerrar caja del turno',
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -584,7 +596,9 @@ class _SummaryRow extends StatelessWidget {
         children: [
           Expanded(child: Text(label, style: style)),
           const SizedBox(width: 12),
-          Flexible(child: Text(value, style: style, textAlign: TextAlign.right)),
+          Flexible(
+            child: Text(value, style: style, textAlign: TextAlign.right),
+          ),
         ],
       ),
     );

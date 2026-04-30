@@ -80,10 +80,11 @@ class SalesRemoteDataSource {
         sellerId: row['seller_id'] as String,
         sellerName: seller['full_name']?.toString() ?? 'Usuario',
         items: items,
-        paymentMethod:
-            row['payment_method'] == 'yape'
-                ? PaymentMethod.yape
-                : PaymentMethod.cash,
+        paymentMethod: switch (row['payment_method']?.toString()) {
+          'yape' => PaymentMethod.yape,
+          'transfer' => PaymentMethod.transfer,
+          _ => PaymentMethod.cash,
+        },
         createdAt: DateTime.parse(row['created_at'] as String),
         syncStatus: SyncStatus.synced,
         syncAttempts: 0,
@@ -151,12 +152,12 @@ class SalesRemoteDataSource {
     );
 
     final totalField =
-        sale.paymentMethod == PaymentMethod.cash ? 'cash_total' : 'yape_total';
+      sale.paymentMethod == PaymentMethod.cash ? 'cash_total' : 'yape_total';
     final nextTotal =
-        (sale.paymentMethod == PaymentMethod.cash
-                ? openShift.cashSales
-                : openShift.yapeSales) +
-            sale.total;
+      (sale.paymentMethod == PaymentMethod.cash
+          ? openShift.cashSales
+          : openShift.yapeSales) +
+        sale.total;
 
     await _client
         .from('cash_shifts')

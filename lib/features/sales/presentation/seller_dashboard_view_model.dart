@@ -21,6 +21,8 @@ class SellerDashboardState {
     required this.paymentMethod,
     required this.currentShift,
     required this.todaysSales,
+    required this.cartItems,
+    required this.searchQuery,
     this.feedbackMessage,
   });
 
@@ -32,6 +34,8 @@ class SellerDashboardState {
   final PaymentMethod paymentMethod;
   final CashShift currentShift;
   final List<Sale> todaysSales;
+  final List<SaleLine> cartItems;
+  final String searchQuery;
   final String? feedbackMessage;
 
   SellerDashboardState copyWith({
@@ -45,6 +49,8 @@ class SellerDashboardState {
     PaymentMethod? paymentMethod,
     CashShift? currentShift,
     List<Sale>? todaysSales,
+    List<SaleLine>? cartItems,
+    String? searchQuery,
     String? feedbackMessage,
   }) {
     return SellerDashboardState(
@@ -62,6 +68,8 @@ class SellerDashboardState {
       paymentMethod: paymentMethod ?? this.paymentMethod,
       currentShift: currentShift ?? this.currentShift,
       todaysSales: todaysSales ?? this.todaysSales,
+      cartItems: cartItems ?? this.cartItems,
+      searchQuery: searchQuery ?? this.searchQuery,
       feedbackMessage: feedbackMessage,
     );
   }
@@ -78,6 +86,12 @@ class SellerDashboardState {
     }
     return null;
   }
+
+  int get cartItemsCount =>
+      cartItems.fold(0, (sum, item) => sum + item.quantity);
+
+  double get cartTotal =>
+      cartItems.fold(0, (sum, item) => sum + item.subtotal);
 }
 
 final sellerDashboardViewModelProvider =
@@ -151,6 +165,93 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     state = AsyncData(current.copyWith(paymentMethod: paymentMethod));
   }
 
+  Future<void> setSearchQuery(String query) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(searchQuery: query));
+  }
+
+  Future<void> addToCart(Product product, int quantity) async {
+    final current = state.valueOrNull;
+    if (current == null || quantity <= 0) {
+      return;
+    }
+
+    final next = [...current.cartItems];
+    final index = next.indexWhere((item) => item.productId == product.id);
+    if (index == -1) {
+      next.add(
+        SaleLine(
+          productId: product.id,
+          productName: product.name,
+          quantity: quantity,
+          unitPrice: product.salePrice,
+        ),
+      );
+    } else {
+      final existing = next[index];
+      next[index] = SaleLine(
+        productId: existing.productId,
+        productName: existing.productName,
+        quantity: existing.quantity + quantity,
+        unitPrice: existing.unitPrice,
+      );
+    }
+
+    state = AsyncData(current.copyWith(cartItems: next));
+  }
+
+  Future<void> updateCartQuantity(String productId, int quantity) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    final next = [...current.cartItems];
+    final index = next.indexWhere((item) => item.productId == productId);
+    if (index == -1) {
+      return;
+    }
+
+    if (quantity <= 0) {
+      next.removeAt(index);
+    } else {
+      final existing = next[index];
+      next[index] = SaleLine(
+        productId: existing.productId,
+        productName: existing.productName,
+        quantity: quantity,
+        unitPrice: existing.unitPrice,
+      );
+    }
+
+    state = AsyncData(current.copyWith(cartItems: next));
+  }
+
+  Future<void> removeFromCart(String productId) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    final next = current.cartItems
+        .where((item) => item.productId != productId)
+        .toList();
+    state = AsyncData(current.copyWith(cartItems: next));
+  }
+
+  Future<void> clearCart() async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(cartItems: const []));
+  }
+
   Future<void> registerSale(AppUser user) async {
     final current = state.valueOrNull;
     final selectedProduct = current?.selectedProduct;
@@ -196,6 +297,44 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
   }
 
+  Future<void> registerCartSale(AppUser user, PaymentMethod paymentMethod)
+      async {
+    final current = state.valueOrNull;
+    if (current == null || current.cartItems.isEmpty) {
+      return;
+    }
+
+    final sale = Sale(
+      id: _uuid.v4(),
+      sellerId: user.id,
+      sellerName: user.name,
+      items: current.cartItems,
+      paymentMethod: paymentMethod,
+      createdAt: DateTime.now(),
+      syncStatus: SyncStatus.synced,
+      syncAttempts: 0,
+    );
+
+    try {
+      await _createSaleUseCase(sale);
+      await _refreshAll();
+
+      state = AsyncData(
+        state.requireValue.copyWith(
+          cartItems: const [],
+          quantity: 1,
+          feedbackMessage: 'Venta registrada.',
+        ),
+      );
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'No se pudo registrar la venta: $error',
+        ),
+      );
+    }
+  }
+
   Future<void> closeShift(AppUser user) async {
     try {
       await ref.read(salesRepositoryProvider).closeShift(user.id);
@@ -221,6 +360,8 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     String? selectedProductId,
     int? quantity,
     PaymentMethod? paymentMethod,
+    List<SaleLine>? cartItems,
+    String? searchQuery,
     String? feedbackMessage,
   }) async {
     final user = _currentUser;
@@ -270,6 +411,8 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       paymentMethod: paymentMethod ?? PaymentMethod.cash,
       currentShift: shift,
       todaysSales: todaysSales,
+      cartItems: cartItems ?? const [],
+      searchQuery: searchQuery ?? '',
       feedbackMessage: feedbackMessage,
     );
   }
@@ -282,6 +425,8 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
         selectedProductId: current?.selectedProductId,
         quantity: current?.quantity,
         paymentMethod: current?.paymentMethod,
+        cartItems: current?.cartItems,
+        searchQuery: current?.searchQuery,
       ),
     );
 

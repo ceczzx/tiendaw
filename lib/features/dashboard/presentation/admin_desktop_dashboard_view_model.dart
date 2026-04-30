@@ -68,7 +68,11 @@ class AdminDesktopDashboardState {
       .fold(0, (sum, sale) => sum + sale.total);
 
   double get yapeSalesTotal => filteredSales
-      .where((sale) => sale.paymentMethod == PaymentMethod.yape)
+      .where(
+        (sale) =>
+            sale.paymentMethod == PaymentMethod.yape ||
+            sale.paymentMethod == PaymentMethod.transfer,
+      )
       .fold(0, (sum, sale) => sum + sale.total);
 
   String get topSeller {

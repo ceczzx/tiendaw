@@ -128,7 +128,7 @@ class _SalesSection extends StatelessWidget {
                 value:
                     '${SystemWFormatters.currency.format(state.cashSalesTotal)} cash',
                 detail:
-                    '${SystemWFormatters.currency.format(state.yapeSalesTotal)} yape',
+                  '${SystemWFormatters.currency.format(state.yapeSalesTotal)} yape/transfer',
                 accent: const Color(0xFF2563EB),
               ),
             ],
@@ -145,9 +145,11 @@ class _SalesSection extends StatelessWidget {
                         (sale) => [
                           SystemWFormatters.shortDateTime.format(sale.createdAt),
                           sale.sellerName,
-                          sale.paymentMethod == PaymentMethod.cash
-                              ? 'Efectivo'
-                              : 'Yape',
+                          switch (sale.paymentMethod) {
+                            PaymentMethod.cash => 'Efectivo',
+                            PaymentMethod.yape => 'Yape',
+                            PaymentMethod.transfer => 'Transferencia',
+                          },
                           SystemWFormatters.currency.format(sale.total),
                           sale.syncStatus.name,
                         ],

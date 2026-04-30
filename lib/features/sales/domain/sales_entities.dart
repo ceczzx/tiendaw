@@ -1,6 +1,6 @@
 import 'package:tiendaw/core/sync/sync_status.dart';
 
-enum PaymentMethod { cash, yape }
+enum PaymentMethod { cash, yape, transfer }
 
 class SaleLine {
   const SaleLine({

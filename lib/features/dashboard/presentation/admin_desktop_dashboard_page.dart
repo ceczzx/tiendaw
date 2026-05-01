@@ -11,10 +11,7 @@ import 'package:tiendaw/shared/widgets/system_w_widgets.dart';
 enum AdminDesktopSection { sales, purchases, movements }
 
 class AdminDesktopDashboardPage extends ConsumerWidget {
-  const AdminDesktopDashboardPage({
-    required this.activeSection,
-    super.key,
-  });
+  const AdminDesktopDashboardPage({required this.activeSection, super.key});
 
   final AdminDesktopSection activeSection;
 
@@ -104,7 +101,8 @@ class _SalesSectionState extends State<_SalesSection> {
   @override
   Widget build(BuildContext context) {
     final state = widget.state;
-    final visibleShiftIds = state.filteredCashShifts.map((shift) => shift.id).toSet();
+    final visibleShiftIds =
+        state.filteredCashShifts.map((shift) => shift.id).toSet();
     final activeShiftId =
         _selectedShiftId != null && visibleShiftIds.contains(_selectedShiftId)
             ? _selectedShiftId
@@ -112,7 +110,9 @@ class _SalesSectionState extends State<_SalesSection> {
     final selectedShift =
         activeShiftId == null
             ? null
-            : state.filteredCashShifts.firstWhere((shift) => shift.id == activeShiftId);
+            : state.filteredCashShifts.firstWhere(
+              (shift) => shift.id == activeShiftId,
+            );
     final salesRows =
         activeShiftId == null
             ? state.filteredSales
@@ -185,7 +185,11 @@ class _SalesSectionState extends State<_SalesSection> {
                             _selectedShiftId = isSelected ? null : shift.id;
                           }),
                       cells: [
-                        Text(SystemWFormatters.shortDateTime.format(shift.openedAt)),
+                        Text(
+                          SystemWFormatters.shortDateTime.format(
+                            shift.openedAt,
+                          ),
+                        ),
                         Text(
                           shift.closedAt == null
                               ? 'Turno abierto'
@@ -194,8 +198,12 @@ class _SalesSectionState extends State<_SalesSection> {
                               ),
                         ),
                         Text(shift.sellerName ?? 'Vendedor'),
-                        Text(SystemWFormatters.currency.format(shift.cashSales)),
-                        Text(SystemWFormatters.currency.format(shift.yapeSales)),
+                        Text(
+                          SystemWFormatters.currency.format(shift.cashSales),
+                        ),
+                        Text(
+                          SystemWFormatters.currency.format(shift.yapeSales),
+                        ),
                         Text(SystemWFormatters.currency.format(shift.total)),
                         StatusPill(
                           label: shift.closedAt == null ? 'Abierto' : 'Cerrado',
@@ -279,10 +287,7 @@ class _SalesSectionState extends State<_SalesSection> {
 }
 
 class _PurchasesSection extends StatelessWidget {
-  const _PurchasesSection({
-    required this.state,
-    required this.onWindowChanged,
-  });
+  const _PurchasesSection({required this.state, required this.onWindowChanged});
 
   final AdminDesktopDashboardState state;
   final ValueChanged<DashboardWindow> onWindowChanged;
@@ -351,7 +356,9 @@ class _PurchasesSection extends StatelessWidget {
                             Text(purchase.supplier),
                             Text(_purchaseCategoriesLabel(state, purchase)),
                             Text(purchase.registeredBy),
-                            Text(SystemWFormatters.currency.format(purchase.total)),
+                            Text(
+                              SystemWFormatters.currency.format(purchase.total),
+                            ),
                             Text(purchase.syncStatus.name),
                           ],
                         ),
@@ -383,10 +390,7 @@ class _PurchasesSection extends StatelessWidget {
 }
 
 class _MovementsSection extends StatelessWidget {
-  const _MovementsSection({
-    required this.state,
-    required this.onWindowChanged,
-  });
+  const _MovementsSection({required this.state, required this.onWindowChanged});
 
   final AdminDesktopDashboardState state;
   final ValueChanged<DashboardWindow> onWindowChanged;
@@ -416,14 +420,14 @@ class _MovementsSection extends StatelessWidget {
           _MetricRow(
             children: [
               MetricCard(
-                label: 'Movimientos del periodo',
+                label: 'Movimientos del periodo | TIPO',
                 value: '${state.filteredMovements.length}',
                 detail:
                     'Compra ${state.purchaseMovementCount} | Venta ${state.saleMovementCount} | Transfer ${state.transferMovementCount}',
                 accent: const Color(0xFF0F766E),
               ),
               MetricCard(
-                label: 'Unidades movidas',
+                label: 'Unidades movidas | CANTIDAD',
                 value: '${state.movementUnitsTotal}',
                 detail:
                     'Compra ${state.purchaseMovementUnits} u. | Venta ${state.saleMovementUnits} u. | Transfer ${state.transferMovementUnits} u.',
@@ -524,10 +528,7 @@ class _MovementsSection extends StatelessWidget {
 }
 
 class _SectionHeading extends StatelessWidget {
-  const _SectionHeading({
-    required this.title,
-    required this.subtitle,
-  });
+  const _SectionHeading({required this.title, required this.subtitle});
 
   final String title;
   final String subtitle;
@@ -607,10 +608,7 @@ class _SectionToolbar extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: const Color(0xFFE2E8F0)),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: child,
-      ),
+      child: Padding(padding: const EdgeInsets.all(16), child: child),
     );
   }
 }
@@ -738,8 +736,7 @@ class _DesktopTableState extends State<_DesktopTable> {
                         selected: row.isSelected,
                         onSelectChanged:
                             row.onTap == null ? null : (_) => row.onTap!(),
-                        cells:
-                            row.cells.map((cell) => DataCell(cell)).toList(),
+                        cells: row.cells.map((cell) => DataCell(cell)).toList(),
                       ),
                     )
                     .toList(),
@@ -808,7 +805,10 @@ class _DetailDialogShell extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(title, style: Theme.of(context).textTheme.headlineSmall),
+                        Text(
+                          title,
+                          style: Theme.of(context).textTheme.headlineSmall,
+                        ),
                         const SizedBox(height: 6),
                         Text(
                           subtitle,
@@ -839,7 +839,8 @@ class _SupplierBreakdownDialog extends StatefulWidget {
   final AdminDesktopDashboardState state;
 
   @override
-  State<_SupplierBreakdownDialog> createState() => _SupplierBreakdownDialogState();
+  State<_SupplierBreakdownDialog> createState() =>
+      _SupplierBreakdownDialogState();
 }
 
 class _SupplierBreakdownDialogState extends State<_SupplierBreakdownDialog> {
@@ -865,7 +866,9 @@ class _SupplierBreakdownDialogState extends State<_SupplierBreakdownDialog> {
               width: 320,
               child: DropdownButtonFormField<String?>(
                 value: _selectedCategoryId,
-                decoration: const InputDecoration(labelText: 'Filtrar categoria'),
+                decoration: const InputDecoration(
+                  labelText: 'Filtrar categoria',
+                ),
                 items: [
                   const DropdownMenuItem<String?>(
                     value: null,
@@ -878,7 +881,8 @@ class _SupplierBreakdownDialogState extends State<_SupplierBreakdownDialog> {
                     ),
                   ),
                 ],
-                onChanged: (value) => setState(() => _selectedCategoryId = value),
+                onChanged:
+                    (value) => setState(() => _selectedCategoryId = value),
               ),
             ),
           ),
@@ -918,7 +922,8 @@ class _PurchaseBreakdownDialog extends StatefulWidget {
   final AdminDesktopDashboardState state;
 
   @override
-  State<_PurchaseBreakdownDialog> createState() => _PurchaseBreakdownDialogState();
+  State<_PurchaseBreakdownDialog> createState() =>
+      _PurchaseBreakdownDialogState();
 }
 
 class _PurchaseBreakdownDialogState extends State<_PurchaseBreakdownDialog> {
@@ -950,7 +955,9 @@ class _PurchaseBreakdownDialogState extends State<_PurchaseBreakdownDialog> {
               width: 320,
               child: DropdownButtonFormField<String?>(
                 value: _selectedCategoryId,
-                decoration: const InputDecoration(labelText: 'Filtrar categoria'),
+                decoration: const InputDecoration(
+                  labelText: 'Filtrar categoria',
+                ),
                 items: [
                   const DropdownMenuItem<String?>(
                     value: null,
@@ -963,7 +970,8 @@ class _PurchaseBreakdownDialogState extends State<_PurchaseBreakdownDialog> {
                     ),
                   ),
                 ],
-                onChanged: (value) => setState(() => _selectedCategoryId = value),
+                onChanged:
+                    (value) => setState(() => _selectedCategoryId = value),
               ),
             ),
           ),
@@ -993,7 +1001,9 @@ class _PurchaseBreakdownDialogState extends State<_PurchaseBreakdownDialog> {
                               _purchaseCategoriesLabel(widget.state, purchase),
                             ),
                             Text(purchase.registeredBy),
-                            Text(SystemWFormatters.currency.format(purchase.total)),
+                            Text(
+                              SystemWFormatters.currency.format(purchase.total),
+                            ),
                             Text(purchase.syncStatus.name),
                           ],
                         ),
@@ -1036,8 +1046,12 @@ String _purchaseCategoriesLabel(
   AdminDesktopDashboardState state,
   Purchase purchase,
 ) {
-  final productById = {for (final product in state.products) product.id: product};
-  final categoryById = {for (final category in state.categories) category.id: category.name};
+  final productById = {
+    for (final product in state.products) product.id: product,
+  };
+  final categoryById = {
+    for (final category in state.categories) category.id: category.name,
+  };
   final categoryNames = <String>{};
 
   for (final item in purchase.items) {
@@ -1067,7 +1081,9 @@ bool _purchaseMatchesCategory(
     return true;
   }
 
-  final productById = {for (final product in state.products) product.id: product};
+  final productById = {
+    for (final product in state.products) product.id: product,
+  };
   return purchase.items.any(
     (item) => productById[item.productId]?.categoryId == categoryId,
   );
@@ -1088,21 +1104,23 @@ List<_SupplierSummary> _buildSupplierSummaries(
 
   final summaries =
       grouped.entries.map((entry) {
-        final purchases = entry.value;
-        final categories = <String>{};
-        for (final purchase in purchases) {
-          categories.addAll(_purchaseCategoriesLabel(state, purchase).split(', '));
-        }
-        categories.removeWhere((label) => label.trim().isEmpty);
+          final purchases = entry.value;
+          final categories = <String>{};
+          for (final purchase in purchases) {
+            categories.addAll(
+              _purchaseCategoriesLabel(state, purchase).split(', '),
+            );
+          }
+          categories.removeWhere((label) => label.trim().isEmpty);
 
-        return _SupplierSummary(
-          supplier: entry.key,
-          purchaseCount: purchases.length,
-          total: purchases.fold(0, (sum, purchase) => sum + purchase.total),
-          categoriesLabel:
-              categories.isEmpty ? 'Sin categoria' : categories.join(', '),
-        );
-      }).toList()
+          return _SupplierSummary(
+            supplier: entry.key,
+            purchaseCount: purchases.length,
+            total: purchases.fold(0, (sum, purchase) => sum + purchase.total),
+            categoriesLabel:
+                categories.isEmpty ? 'Sin categoria' : categories.join(', '),
+          );
+        }).toList()
         ..sort((a, b) => b.total.compareTo(a.total));
 
   return summaries;
@@ -1117,8 +1135,9 @@ List<Product> _collectAlertProducts(AdminDesktopDashboardState state) {
     products[product.id] = product;
   }
 
-  final result = products.values.toList()
-    ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  final result =
+      products.values.toList()
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   return result;
 }
 

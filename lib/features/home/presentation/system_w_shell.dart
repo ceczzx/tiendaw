@@ -124,7 +124,10 @@ class _SystemWShellState extends ConsumerState<SystemWShell> {
                 child: IconButton(
                   tooltip: 'Cerrar sesion',
                   onPressed:
-                      user == null ? null : () => _confirmSignOut(context, user),
+                      // ignore: unnecessary_null_comparison
+                      user == null
+                          ? null
+                          : () => _confirmSignOut(context, user),
                   icon: const Icon(Icons.logout_rounded),
                 ),
               ),
@@ -157,7 +160,7 @@ class _SystemWShellState extends ConsumerState<SystemWShell> {
                         StatusPill(
                           label:
                               infoMessage == null || infoMessage.isEmpty
-                                  ? 'Supabase conectado'
+                                  ? 'Conectado a DB'
                                   : 'Modo sin conexion',
                           background:
                               infoMessage == null || infoMessage.isEmpty

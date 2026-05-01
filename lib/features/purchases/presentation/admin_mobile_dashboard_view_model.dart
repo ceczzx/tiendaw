@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 
 class AdminMobileDashboardState {
   const AdminMobileDashboardState({
+    required this.categories,
     required this.products,
     required this.priceHistory,
     required this.purchases,
@@ -22,6 +23,7 @@ class AdminMobileDashboardState {
     this.feedbackMessage,
   });
 
+  final List<Category> categories;
   final List<Product> products;
   final List<PriceHistoryEntry> priceHistory;
   final List<Purchase> purchases;
@@ -47,6 +49,7 @@ class AdminMobileDashboardState {
   }
 
   AdminMobileDashboardState copyWith({
+    List<Category>? categories,
     List<Product>? products,
     List<PriceHistoryEntry>? priceHistory,
     List<Purchase>? purchases,
@@ -60,6 +63,7 @@ class AdminMobileDashboardState {
     String? feedbackMessage,
   }) {
     return AdminMobileDashboardState(
+      categories: categories ?? this.categories,
       products: products ?? this.products,
       priceHistory: priceHistory ?? this.priceHistory,
       purchases: purchases ?? this.purchases,
@@ -133,19 +137,19 @@ class AdminMobileDashboardViewModel
     state = AsyncData(current.copyWith(supplier: supplier));
   }
 
-  Future<void> registerPurchase(AppUser user) async {
+  Future<bool> registerPurchase(AppUser user) async {
     final current = state.valueOrNull;
     final selectedProduct = current?.selectedProduct;
 
     if (current == null || selectedProduct == null) {
-      return;
+      return false;
     }
 
     if (current.supplier.trim().isEmpty) {
       state = AsyncData(
         current.copyWith(feedbackMessage: 'Ingresa el nombre del proveedor.'),
       );
-      return;
+      return false;
     }
 
     final purchase = Purchase(
@@ -174,24 +178,26 @@ class AdminMobileDashboardViewModel
         state.requireValue.copyWith(
           quantity: 1,
           supplier: '',
-          feedbackMessage: 'Compra registrada en Supabase.',
+          feedbackMessage: 'Compra registrada.',
         ),
       );
+      return true;
     } catch (error) {
       state = AsyncData(
         current.copyWith(
           feedbackMessage: 'No se pudo registrar la compra: $error',
         ),
       );
+      return false;
     }
   }
 
-  Future<void> transferToStore(AppUser user) async {
+  Future<bool> transferToStore(AppUser user) async {
     final current = state.valueOrNull;
     final selectedProduct = current?.selectedProduct;
 
     if (current == null || selectedProduct == null) {
-      return;
+      return false;
     }
 
     try {
@@ -206,13 +212,15 @@ class AdminMobileDashboardViewModel
       await _refreshAll();
       state = AsyncData(
         state.requireValue.copyWith(
-          feedbackMessage: 'Transferencia registrada en Supabase.',
+          feedbackMessage: 'Transferencia registrada.',
         ),
       );
+      return true;
     } catch (error) {
       state = AsyncData(
         current.copyWith(feedbackMessage: 'No se pudo mover el stock: $error'),
       );
+      return false;
     }
   }
 
@@ -243,6 +251,7 @@ class AdminMobileDashboardViewModel
             : catalog.products.firstWhere((product) => product.id == productId);
 
     return AdminMobileDashboardState(
+      categories: catalog.categories,
       products: catalog.products,
       priceHistory: priceHistory,
       purchases: purchases,

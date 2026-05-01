@@ -409,7 +409,10 @@ class SellerDashboardPage extends ConsumerWidget {
         );
       },
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (error, _) => Center(child: Text('Error cargando ventas: $error')),
+      error:
+          (_, _) => const Center(
+            child: Text('No pudimos cargar ventas en este momento.'),
+          ),
     );
   }
 

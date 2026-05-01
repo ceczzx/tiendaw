@@ -25,6 +25,31 @@ class _SignInPageState extends ConsumerState<SignInPage> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<AsyncValue<SessionState>>(sessionViewModelProvider, (
+      previous,
+      next,
+    ) {
+      if (!mounted) {
+        return;
+      }
+
+      final previousState = previous?.valueOrNull;
+      final nextState = next.valueOrNull;
+
+      _showSessionNotice(
+        context: context,
+        previousMessage: previousState?.errorMessage,
+        nextMessage: nextState?.errorMessage,
+        backgroundColor: const Color(0xFF991B1B),
+      );
+      _showSessionNotice(
+        context: context,
+        previousMessage: previousState?.infoMessage,
+        nextMessage: nextState?.infoMessage,
+        backgroundColor: const Color(0xFF9A3412),
+      );
+    });
+
     final session = ref.watch(sessionViewModelProvider).valueOrNull;
     final errorMessage = session?.errorMessage ?? widget.errorMessage;
     final infoMessage = session?.infoMessage;
@@ -152,5 +177,35 @@ class _SignInPageState extends ConsumerState<SignInPage> {
           email: _emailController.text.trim(),
           password: _passwordController.text,
         );
+  }
+
+  void _showSessionNotice({
+    required BuildContext context,
+    required String? previousMessage,
+    required String? nextMessage,
+    required Color backgroundColor,
+  }) {
+    if (nextMessage == null ||
+        nextMessage.isEmpty ||
+        nextMessage == previousMessage) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+
+      final messenger = ScaffoldMessenger.of(context);
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text(nextMessage),
+            backgroundColor: backgroundColor,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    });
   }
 }

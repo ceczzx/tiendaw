@@ -23,6 +23,7 @@ class Sale {
     required this.id,
     required this.sellerId,
     required this.sellerName,
+    this.cashShiftId,
     required this.items,
     required this.paymentMethod,
     required this.createdAt,
@@ -33,6 +34,7 @@ class Sale {
   final String id;
   final String sellerId;
   final String sellerName;
+  final String? cashShiftId;
   final List<SaleLine> items;
   final PaymentMethod paymentMethod;
   final DateTime createdAt;
@@ -45,6 +47,8 @@ class Sale {
     String? id,
     String? sellerId,
     String? sellerName,
+    String? cashShiftId,
+    bool clearCashShiftId = false,
     List<SaleLine>? items,
     PaymentMethod? paymentMethod,
     DateTime? createdAt,
@@ -55,6 +59,7 @@ class Sale {
       id: id ?? this.id,
       sellerId: sellerId ?? this.sellerId,
       sellerName: sellerName ?? this.sellerName,
+      cashShiftId: clearCashShiftId ? null : cashShiftId ?? this.cashShiftId,
       items: items ?? this.items,
       paymentMethod: paymentMethod ?? this.paymentMethod,
       createdAt: createdAt ?? this.createdAt,
@@ -71,11 +76,13 @@ class CashShift {
     required this.openedAt,
     required this.cashSales,
     required this.yapeSales,
+    this.sellerName,
     this.closedAt,
   });
 
   final String id;
   final String sellerId;
+  final String? sellerName;
   final DateTime openedAt;
   final DateTime? closedAt;
   final double cashSales;
@@ -87,6 +94,7 @@ class CashShift {
   CashShift copyWith({
     String? id,
     String? sellerId,
+    String? sellerName,
     DateTime? openedAt,
     DateTime? closedAt,
     double? cashSales,
@@ -95,6 +103,7 @@ class CashShift {
     return CashShift(
       id: id ?? this.id,
       sellerId: sellerId ?? this.sellerId,
+      sellerName: sellerName ?? this.sellerName,
       openedAt: openedAt ?? this.openedAt,
       closedAt: closedAt ?? this.closedAt,
       cashSales: cashSales ?? this.cashSales,

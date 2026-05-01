@@ -6,6 +6,7 @@ import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 
 class SalesLocalDataSource {
   List<Sale> _sales = const [];
+  List<CashShift> _cashShifts = const [];
   final Map<String, CashShift> _openShiftsBySeller = {};
 
   Future<void> upsertSale(Sale sale) async {
@@ -27,6 +28,13 @@ class SalesLocalDataSource {
   }
 
   Future<List<Sale>> getSales() async => List.unmodifiable(_sales);
+
+  Future<void> saveCashShifts(List<CashShift> shifts) async {
+    final next = [...shifts]..sort((a, b) => b.openedAt.compareTo(a.openedAt));
+    _cashShifts = List<CashShift>.unmodifiable(next);
+  }
+
+  Future<List<CashShift>> getCashShifts() async => List.unmodifiable(_cashShifts);
 
   Future<Sale?> findSale(String saleId) async {
     for (final sale in _sales) {
@@ -55,7 +63,7 @@ class SalesRemoteDataSource {
     final rows = await _client
         .from('sales')
         .select(
-          'id, seller_id, payment_method, created_at, seller:profiles(full_name), sale_items(product_id, quantity, unit_price, product:products(name))',
+          'id, seller_id, cash_shift_id, payment_method, created_at, seller:profiles(full_name), sale_items(product_id, quantity, unit_price, product:products(name))',
         )
         .order('created_at', ascending: false);
 
@@ -79,6 +87,7 @@ class SalesRemoteDataSource {
         id: row['id'] as String,
         sellerId: row['seller_id'] as String,
         sellerName: seller['full_name']?.toString() ?? 'Usuario',
+        cashShiftId: row['cash_shift_id'] as String?,
         items: items,
         paymentMethod: switch (row['payment_method']?.toString()) {
           'yape' => PaymentMethod.yape,
@@ -90,6 +99,17 @@ class SalesRemoteDataSource {
         syncAttempts: 0,
       );
     }).toList();
+  }
+
+  Future<List<CashShift>> getCashShifts() async {
+    final rows = await _client
+        .from('cash_shifts')
+        .select(
+          'id, seller_id, opened_at, closed_at, cash_total, yape_total, seller:profiles(full_name)',
+        )
+        .order('opened_at', ascending: false);
+
+    return _mapRows(rows).map(_mapCashShift).toList();
   }
 
   Future<CashShift> getOpenShift(String sellerId) async {
@@ -119,7 +139,7 @@ class SalesRemoteDataSource {
     return _mapCashShift(Map<String, dynamic>.from(inserted));
   }
 
-  Future<void> pushSale(Sale sale) async {
+  Future<String> pushSale(Sale sale) async {
     final currentUser = _client.auth.currentUser;
     if (currentUser == null) {
       throw StateError('No hay una sesion activa para registrar ventas.');
@@ -163,6 +183,8 @@ class SalesRemoteDataSource {
         .from('cash_shifts')
         .update({totalField: nextTotal})
         .eq('id', openShift.id);
+
+    return openShift.id;
   }
 
   Future<void> closeShift(String sellerId) async {
@@ -215,9 +237,11 @@ class SalesRemoteDataSource {
   }
 
   CashShift _mapCashShift(Map<String, dynamic> row) {
+    final seller = _mapNullable(row['seller']);
     return CashShift(
       id: row['id'] as String,
       sellerId: row['seller_id'] as String,
+      sellerName: seller['full_name']?.toString(),
       openedAt: DateTime.parse(row['opened_at'] as String),
       closedAt:
           row['closed_at'] == null

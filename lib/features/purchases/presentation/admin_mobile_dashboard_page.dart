@@ -417,8 +417,9 @@ class AdminMobileDashboardPage extends ConsumerWidget {
       },
       loading: () => const Center(child: CircularProgressIndicator()),
       error:
-          (error, _) =>
-              Center(child: Text('Error cargando operaciones: $error')),
+          (_, _) => const Center(
+            child: Text('No pudimos cargar operaciones en este momento.'),
+          ),
     );
   }
 }

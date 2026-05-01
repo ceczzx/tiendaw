@@ -10,7 +10,10 @@ enum DashboardWindow { today, week, month }
 
 class AdminDesktopDashboardState {
   const AdminDesktopDashboardState({
+    required this.categories,
+    required this.products,
     required this.sales,
+    required this.cashShifts,
     required this.purchases,
     required this.movements,
     required this.lowStockProducts,
@@ -20,7 +23,10 @@ class AdminDesktopDashboardState {
     required this.window,
   });
 
+  final List<Category> categories;
+  final List<Product> products;
   final List<Sale> sales;
+  final List<CashShift> cashShifts;
   final List<Purchase> purchases;
   final List<InventoryMovement> movements;
   final List<Product> lowStockProducts;
@@ -43,6 +49,20 @@ class AdminDesktopDashboardState {
     return purchases
         .where((purchase) => purchase.receivedAt.isAfter(threshold))
         .toList();
+  }
+
+  List<CashShift> get filteredCashShifts {
+    final threshold = DateTime.now().subtract(Duration(days: _windowDays));
+    return cashShifts.where((shift) {
+      final sellerMatches =
+          sellerFilter == 'all' || shift.sellerId == sellerFilter;
+      final closedAt = shift.closedAt;
+      final overlapsWindow =
+          shift.openedAt.isAfter(threshold) ||
+          (closedAt != null && closedAt.isAfter(threshold)) ||
+          (closedAt == null && shift.openedAt.isBefore(threshold));
+      return sellerMatches && overlapsWindow;
+    }).toList();
   }
 
   List<InventoryMovement> get filteredMovements {
@@ -128,13 +148,41 @@ class AdminDesktopDashboardState {
   int get movementProductsCount =>
       filteredMovements.map((movement) => movement.productId).toSet().length;
 
+  int get purchaseMovementCount =>
+      filteredMovements.where((movement) => _movementBucket(movement) == 'purchase').length;
+
+  int get saleMovementCount =>
+      filteredMovements.where((movement) => _movementBucket(movement) == 'sale').length;
+
+  int get transferMovementCount =>
+      filteredMovements.where((movement) => _movementBucket(movement) == 'transfer').length;
+
+  int get purchaseMovementUnits => filteredMovements
+      .where((movement) => _movementBucket(movement) == 'purchase')
+      .fold(0, (sum, movement) => sum + movement.quantity);
+
+  int get saleMovementUnits => filteredMovements
+      .where((movement) => _movementBucket(movement) == 'sale')
+      .fold(0, (sum, movement) => sum + movement.quantity);
+
+  int get transferMovementUnits => filteredMovements
+      .where((movement) => _movementBucket(movement) == 'transfer')
+      .fold(0, (sum, movement) => sum + movement.quantity);
+
   int get activeAlertCount =>
       lowStockProducts.length + expiringProducts.length;
 
   List<Map<String, String>> get sellerOptions {
     final sellers = <String, String>{};
+    for (final shift in cashShifts) {
+      final sellerName = shift.sellerName?.trim();
+      if (sellerName != null && sellerName.isNotEmpty) {
+        sellers[shift.sellerId] = sellerName;
+      }
+    }
+
     for (final sale in sales) {
-      sellers[sale.sellerId] = sale.sellerName;
+      sellers[sale.sellerId] = sellers[sale.sellerId] ?? sale.sellerName;
     }
 
     return [
@@ -144,7 +192,10 @@ class AdminDesktopDashboardState {
   }
 
   AdminDesktopDashboardState copyWith({
+    List<Category>? categories,
+    List<Product>? products,
     List<Sale>? sales,
+    List<CashShift>? cashShifts,
     List<Purchase>? purchases,
     List<InventoryMovement>? movements,
     List<Product>? lowStockProducts,
@@ -154,7 +205,10 @@ class AdminDesktopDashboardState {
     DashboardWindow? window,
   }) {
     return AdminDesktopDashboardState(
+      categories: categories ?? this.categories,
+      products: products ?? this.products,
       sales: sales ?? this.sales,
+      cashShifts: cashShifts ?? this.cashShifts,
       purchases: purchases ?? this.purchases,
       movements: movements ?? this.movements,
       lowStockProducts: lowStockProducts ?? this.lowStockProducts,
@@ -163,6 +217,18 @@ class AdminDesktopDashboardState {
       sellerFilter: sellerFilter ?? this.sellerFilter,
       window: window ?? this.window,
     );
+  }
+
+  String _movementBucket(InventoryMovement movement) {
+    final fromLocation = movement.fromLocation.toLowerCase();
+    final toLocation = movement.toLocation.toLowerCase();
+    if (fromLocation.contains('sin origen')) {
+      return 'purchase';
+    }
+    if (toLocation.contains('sin destino')) {
+      return 'sale';
+    }
+    return movement.type.toLowerCase();
   }
 }
 
@@ -200,6 +266,7 @@ class AdminDesktopDashboardViewModel
   }) async {
     final catalog = await ref.read(loadCatalogOverviewUseCaseProvider)();
     final sales = await ref.read(salesRepositoryProvider).getSales();
+    final cashShifts = await ref.read(salesRepositoryProvider).getCashShifts();
     final purchases = await ref.read(purchaseRepositoryProvider).getPurchases();
     final movements =
         await ref.read(catalogRepositoryProvider).getInventoryMovements();
@@ -221,7 +288,10 @@ class AdminDesktopDashboardViewModel
         }).toList();
 
     return AdminDesktopDashboardState(
+      categories: catalog.categories,
+      products: catalog.products,
       sales: sales,
+      cashShifts: cashShifts,
       purchases: purchases,
       movements: movements,
       lowStockProducts: lowStockProducts,

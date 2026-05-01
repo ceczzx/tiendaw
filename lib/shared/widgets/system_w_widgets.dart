@@ -55,41 +55,63 @@ class MetricCard extends StatelessWidget {
     required this.accent,
     super.key,
     this.detail,
+    this.onTap,
   });
 
   final String label;
   final String value;
   final String? detail;
   final Color accent;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: accent.withAlpha(31),
-                borderRadius: BorderRadius.circular(14),
+    final content = Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: accent.withAlpha(31),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(Icons.insights_rounded, color: accent),
               ),
-              child: Icon(Icons.insights_rounded, color: accent),
-            ),
-            const Spacer(),
-            Text(label, style: Theme.of(context).textTheme.bodyMedium),
-            const SizedBox(height: 8),
-            Text(value, style: Theme.of(context).textTheme.headlineMedium),
-            if (detail != null) ...[
-              const SizedBox(height: 6),
-              Text(detail!, style: Theme.of(context).textTheme.bodyMedium),
+              const Spacer(),
+              if (onTap != null)
+                Icon(
+                  Icons.open_in_new_rounded,
+                  size: 18,
+                  color: accent.withAlpha(190),
+                ),
             ],
+          ),
+          const Spacer(),
+          Text(label, style: Theme.of(context).textTheme.bodyMedium),
+          const SizedBox(height: 8),
+          Text(value, style: Theme.of(context).textTheme.headlineMedium),
+          if (detail != null) ...[
+            const SizedBox(height: 6),
+            Text(detail!, style: Theme.of(context).textTheme.bodyMedium),
           ],
-        ),
+        ],
       ),
+    );
+
+    return Card(
+      child:
+          onTap == null
+              ? content
+              : InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: onTap,
+                child: content,
+              ),
     );
   }
 }

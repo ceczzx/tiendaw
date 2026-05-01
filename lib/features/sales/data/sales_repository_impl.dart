@@ -36,6 +36,21 @@ class SalesRepositoryImpl implements SalesRepository {
   }
 
   @override
+  Future<List<CashShift>> getCashShifts() async {
+    try {
+      final shifts = await _remote.getCashShifts();
+      await _local.saveCashShifts(shifts);
+      return shifts;
+    } catch (_) {
+      final cached = await _local.getCashShifts();
+      if (cached.isEmpty) {
+        rethrow;
+      }
+      return cached;
+    }
+  }
+
+  @override
   Future<List<Sale>> getSales() async {
     try {
       final sales = await _remote.getSales();
@@ -52,9 +67,13 @@ class SalesRepositoryImpl implements SalesRepository {
 
   @override
   Future<void> registerSale(Sale sale) async {
-    await _remote.pushSale(sale);
+    final cashShiftId = await _remote.pushSale(sale);
     await _local.upsertSale(
-      sale.copyWith(syncStatus: SyncStatus.synced, syncAttempts: 0),
+      sale.copyWith(
+        cashShiftId: cashShiftId,
+        syncStatus: SyncStatus.synced,
+        syncAttempts: 0,
+      ),
     );
   }
 
@@ -65,9 +84,13 @@ class SalesRepositoryImpl implements SalesRepository {
       return;
     }
 
-    await _remote.pushSale(sale);
+    final cashShiftId = await _remote.pushSale(sale);
     await _local.upsertSale(
-      sale.copyWith(syncStatus: SyncStatus.synced, syncAttempts: 0),
+      sale.copyWith(
+        cashShiftId: cashShiftId,
+        syncStatus: SyncStatus.synced,
+        syncAttempts: 0,
+      ),
     );
   }
 }

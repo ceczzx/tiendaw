@@ -15,11 +15,15 @@ class ProductModel extends Product {
     required super.id,
     required super.categoryId,
     required super.name,
+    required super.unitsPerPackage,
+    required super.specs,
     required super.salePrice,
     required super.lastPurchaseCost,
     required super.stockStore,
     required super.stockWarehouse,
     required super.lowStockThreshold,
+    required super.packageName,
+    required super.unitName,
     super.nextExpiryDate,
   });
 
@@ -33,11 +37,18 @@ class ProductModel extends Product {
       id: map['id'] as String,
       categoryId: map['category_id'] as String,
       name: map['name'] as String,
+      unitsPerPackage: (map['units_per_package'] as num?)?.toInt() ?? 1,
+      specs:
+          map['specs'] is Map
+              ? Map<String, dynamic>.from(map['specs'] as Map)
+              : const <String, dynamic>{},
       salePrice: (map['sale_price'] as num).toDouble(),
       lastPurchaseCost: (map['last_purchase_cost'] as num).toDouble(),
       stockStore: stockStore,
       stockWarehouse: stockWarehouse,
       lowStockThreshold: map['low_stock_threshold'] as int,
+      packageName: map['package_name']?.toString() ?? 'caja',
+      unitName: map['unit_name']?.toString() ?? 'unid',
       nextExpiryDate: nextExpiryDate,
     );
   }
@@ -94,11 +105,37 @@ class CatalogRemoteDataSource {
     return _mapRows(rows).map(CategoryModel.fromMap).toList();
   }
 
+  Future<Category> ensureCategory(String name) async {
+    final normalizedName = name.trim();
+    if (normalizedName.isEmpty) {
+      throw StateError('La categoria no puede estar vacia.');
+    }
+
+    final rows = await _client
+        .from('categories')
+        .select('id, name')
+        .eq('name', normalizedName)
+        .limit(1);
+    final data = _mapRows(rows);
+    if (data.isNotEmpty) {
+      return CategoryModel.fromMap(data.first);
+    }
+
+    final inserted =
+        await _client
+            .from('categories')
+            .insert({'name': normalizedName})
+            .select('id, name')
+            .single();
+
+    return CategoryModel.fromMap(Map<String, dynamic>.from(inserted));
+  }
+
   Future<List<Product>> getProducts() async {
     final productRows = await _client
         .from('products')
         .select(
-          'id, category_id, name, sale_price, last_purchase_cost, low_stock_threshold',
+          'id, category_id, name, units_per_package, package_name, unit_name, specs, sale_price, last_purchase_cost, low_stock_threshold',
         )
         .order('name');
     final stockByProduct = await _loadStockByProduct();
@@ -113,6 +150,91 @@ class CatalogRemoteDataSource {
         nextExpiryDate: nextExpiryByProduct[row['id']],
       );
     }).toList();
+  }
+
+  Future<Product> ensureProduct({
+    required String categoryId,
+    required String name,
+    required double salePrice,
+    required double lastPurchaseCost,
+    required int lowStockThreshold,
+  }) async {
+    final normalizedName = name.trim();
+    if (normalizedName.isEmpty) {
+      throw StateError('El producto no puede estar vacio.');
+    }
+
+    final rows = await _client
+        .from('products')
+        .select(
+          'id, category_id, name, units_per_package, package_name, unit_name, specs, sale_price, last_purchase_cost, low_stock_threshold',
+        )
+        .eq('category_id', categoryId)
+        .eq('name', normalizedName)
+        .limit(1);
+    final data = _mapRows(rows);
+    if (data.isNotEmpty) {
+      if ((data.first['low_stock_threshold'] as int) != lowStockThreshold) {
+        final updated =
+            await _client
+                .from('products')
+                .update({'low_stock_threshold': lowStockThreshold})
+                .eq('id', data.first['id'] as String)
+                .select(
+                  'id, category_id, name, units_per_package, package_name, unit_name, specs, sale_price, last_purchase_cost, low_stock_threshold',
+                )
+                .single();
+        return ProductModel.fromSupabase(
+          Map<String, dynamic>.from(updated),
+          stockStore: 0,
+          stockWarehouse: 0,
+          nextExpiryDate: null,
+        );
+      }
+
+      return ProductModel.fromSupabase(
+        data.first,
+        stockStore: 0,
+        stockWarehouse: 0,
+        nextExpiryDate: null,
+      );
+    }
+
+    final inserted =
+        await _client
+            .from('products')
+            .insert({
+              'category_id': categoryId,
+              'name': normalizedName,
+              'units_per_package': 1,
+              'package_name': 'caja',
+              'unit_name': 'unid',
+              'specs': const <String, dynamic>{},
+              'sale_price': salePrice,
+              'last_purchase_cost': lastPurchaseCost,
+              'low_stock_threshold': lowStockThreshold,
+            })
+            .select(
+              'id, category_id, name, units_per_package, package_name, unit_name, specs, sale_price, last_purchase_cost, low_stock_threshold',
+            )
+            .single();
+
+    return ProductModel.fromSupabase(
+      Map<String, dynamic>.from(inserted),
+      stockStore: 0,
+      stockWarehouse: 0,
+      nextExpiryDate: null,
+    );
+  }
+
+  Future<void> updateProductLowStockThreshold({
+    required String productId,
+    required int lowStockThreshold,
+  }) async {
+    await _client
+        .from('products')
+        .update({'low_stock_threshold': lowStockThreshold})
+        .eq('id', productId);
   }
 
   Future<List<PriceHistoryEntry>> getPriceHistory({String? productId}) async {

@@ -67,10 +67,11 @@ class SalesRepositoryImpl implements SalesRepository {
 
   @override
   Future<void> registerSale(Sale sale) async {
-    final cashShiftId = await _remote.pushSale(sale);
+    final persistedSale = await _remote.pushSale(sale);
     await _local.upsertSale(
       sale.copyWith(
-        cashShiftId: cashShiftId,
+        id: persistedSale.id,
+        cashShiftId: persistedSale.cashShiftId,
         syncStatus: SyncStatus.synced,
         syncAttempts: 0,
       ),
@@ -84,10 +85,11 @@ class SalesRepositoryImpl implements SalesRepository {
       return;
     }
 
-    final cashShiftId = await _remote.pushSale(sale);
+    final persistedSale = await _remote.pushSale(sale);
     await _local.upsertSale(
       sale.copyWith(
-        cashShiftId: cashShiftId,
+        id: persistedSale.id,
+        cashShiftId: persistedSale.cashShiftId,
         syncStatus: SyncStatus.synced,
         syncAttempts: 0,
       ),

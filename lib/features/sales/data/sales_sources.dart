@@ -139,7 +139,7 @@ class SalesRemoteDataSource {
     return _mapCashShift(Map<String, dynamic>.from(inserted));
   }
 
-  Future<String> pushSale(Sale sale) async {
+  Future<_PersistedSale> pushSale(Sale sale) async {
     final currentUser = _client.auth.currentUser;
     if (currentUser == null) {
       throw StateError('No hay una sesion activa para registrar ventas.');
@@ -148,28 +148,35 @@ class SalesRemoteDataSource {
     final openShift = await getOpenShift(currentUser.id);
     final storeLocationId = await _resolveLocationId('store');
 
-    await _client.from('sales').insert({
-      'id': sale.id,
-      'seller_id': currentUser.id,
-      'location_id': storeLocationId,
-      'cash_shift_id': openShift.id,
-      'payment_method': sale.paymentMethod.name,
-      'total': sale.total,
-      'created_at': sale.createdAt.toIso8601String(),
-    });
+    final inserted =
+        await _client
+            .from('sales')
+            .insert({
+              'id': sale.id,
+              'seller_id': currentUser.id,
+              'location_id': storeLocationId,
+              'cash_shift_id': openShift.id,
+              'payment_method': sale.paymentMethod.name,
+              'total': sale.total,
+              'created_at': sale.createdAt.toIso8601String(),
+            })
+            .select('id')
+            .single();
+    final saleId = inserted['id'] as String;
 
-    await _client.from('sale_items').insert(
-      sale.items
-          .map(
-            (item) => {
-              'sale_id': sale.id,
-              'product_id': item.productId,
-              'quantity': item.quantity,
-              'unit_price': item.unitPrice,
-            },
-          )
-          .toList(),
-    );
+    final saleItemsPayload =
+        sale.items
+            .map(
+              (item) => {
+                'sale_id': saleId,
+                'product_id': item.productId,
+                'quantity': item.quantity,
+                'unit_price': item.unitPrice,
+              },
+            )
+            .toList();
+
+    await _client.from('sale_items').insert(saleItemsPayload);
 
     final totalField =
       sale.paymentMethod == PaymentMethod.cash ? 'cash_total' : 'yape_total';
@@ -184,7 +191,7 @@ class SalesRemoteDataSource {
         .update({totalField: nextTotal})
         .eq('id', openShift.id);
 
-    return openShift.id;
+    return _PersistedSale(id: saleId, cashShiftId: openShift.id);
   }
 
   Future<void> closeShift(String sellerId) async {
@@ -265,4 +272,14 @@ class SalesRemoteDataSource {
 
     return Map<String, dynamic>.from(value as Map);
   }
+}
+
+class _PersistedSale {
+  const _PersistedSale({
+    required this.id,
+    required this.cashShiftId,
+  });
+
+  final String id;
+  final String cashShiftId;
 }

@@ -29,6 +29,11 @@ class CatalogRepositoryImpl implements CatalogRepository {
   }
 
   @override
+  Future<Category> ensureCategory(String name) {
+    return _remote.ensureCategory(name);
+  }
+
+  @override
   Future<List<InventoryMovement>> getInventoryMovements() async {
     try {
       final movements = await _remote.getInventoryMovements();
@@ -71,6 +76,34 @@ class CatalogRepositoryImpl implements CatalogRepository {
       }
       return cached;
     }
+  }
+
+  @override
+  Future<Product> ensureProduct({
+    required String categoryId,
+    required String name,
+    required double salePrice,
+    required double lastPurchaseCost,
+    required int lowStockThreshold,
+  }) {
+    return _remote.ensureProduct(
+      categoryId: categoryId,
+      name: name,
+      salePrice: salePrice,
+      lastPurchaseCost: lastPurchaseCost,
+      lowStockThreshold: lowStockThreshold,
+    );
+  }
+
+  @override
+  Future<void> updateProductLowStockThreshold({
+    required String productId,
+    required int lowStockThreshold,
+  }) {
+    return _remote.updateProductLowStockThreshold(
+      productId: productId,
+      lowStockThreshold: lowStockThreshold,
+    );
   }
 
   @override

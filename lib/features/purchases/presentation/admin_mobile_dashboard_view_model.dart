@@ -17,6 +17,7 @@ class AdminMobileDashboardState {
     required this.movements,
     required this.selectedProductId,
     required this.quantity,
+    required this.lowStockThreshold,
     required this.unitCost,
     required this.supplier,
     required this.expiryDate,
@@ -30,6 +31,7 @@ class AdminMobileDashboardState {
   final List<InventoryMovement> movements;
   final String? selectedProductId;
   final int quantity;
+  final int lowStockThreshold;
   final double unitCost;
   final String supplier;
   final DateTime expiryDate;
@@ -57,6 +59,7 @@ class AdminMobileDashboardState {
     String? selectedProductId,
     bool clearSelectedProduct = false,
     int? quantity,
+    int? lowStockThreshold,
     double? unitCost,
     String? supplier,
     DateTime? expiryDate,
@@ -73,6 +76,7 @@ class AdminMobileDashboardState {
               ? null
               : selectedProductId ?? this.selectedProductId,
       quantity: quantity ?? this.quantity,
+      lowStockThreshold: lowStockThreshold ?? this.lowStockThreshold,
       unitCost: unitCost ?? this.unitCost,
       supplier: supplier ?? this.supplier,
       expiryDate: expiryDate ?? this.expiryDate,
@@ -105,6 +109,7 @@ class AdminMobileDashboardViewModel
     state = AsyncData(
       current.copyWith(
         selectedProductId: productId,
+        lowStockThreshold: product.lowStockThreshold,
         unitCost: product.lastPurchaseCost,
       ),
     );
@@ -117,6 +122,17 @@ class AdminMobileDashboardViewModel
     }
 
     state = AsyncData(current.copyWith(quantity: quantity.clamp(1, 999)));
+  }
+
+  Future<void> changeLowStockThreshold(int lowStockThreshold) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(
+      current.copyWith(lowStockThreshold: lowStockThreshold.clamp(0, 9999)),
+    );
   }
 
   Future<void> changeUnitCost(double unitCost) async {
@@ -137,17 +153,67 @@ class AdminMobileDashboardViewModel
     state = AsyncData(current.copyWith(supplier: supplier));
   }
 
-  Future<bool> registerPurchase(AppUser user) async {
+  Future<bool> registerPurchase(
+    AppUser user, {
+    String? categoryName,
+    String? productName,
+  }) async {
     final current = state.valueOrNull;
-    final selectedProduct = current?.selectedProduct;
+    var selectedProduct = current?.selectedProduct;
 
-    if (current == null || selectedProduct == null) {
+    if (current == null) {
       return false;
     }
 
     if (current.supplier.trim().isEmpty) {
       state = AsyncData(
         current.copyWith(feedbackMessage: 'Ingresa el nombre del proveedor.'),
+      );
+      return false;
+    }
+
+    final trimmedCategoryName = categoryName?.trim() ?? '';
+    final trimmedProductName = productName?.trim() ?? '';
+
+    if (trimmedCategoryName.isNotEmpty || trimmedProductName.isNotEmpty) {
+      if (trimmedCategoryName.isEmpty || trimmedProductName.isEmpty) {
+        state = AsyncData(
+          current.copyWith(
+            feedbackMessage:
+                'Completa categoria y producto cuando quieras crear uno nuevo.',
+          ),
+        );
+        return false;
+      }
+
+      final category = await ref
+          .read(catalogRepositoryProvider)
+          .ensureCategory(trimmedCategoryName);
+      selectedProduct = await ref.read(catalogRepositoryProvider).ensureProduct(
+        categoryId: category.id,
+        name: trimmedProductName,
+        salePrice: current.unitCost,
+        lastPurchaseCost: current.unitCost,
+        lowStockThreshold: current.lowStockThreshold,
+      );
+    } else if (selectedProduct != null &&
+        selectedProduct.lowStockThreshold != current.lowStockThreshold) {
+      await ref
+          .read(catalogRepositoryProvider)
+          .updateProductLowStockThreshold(
+            productId: selectedProduct.id,
+            lowStockThreshold: current.lowStockThreshold,
+          );
+      selectedProduct = selectedProduct.copyWith(
+        lowStockThreshold: current.lowStockThreshold,
+      );
+    }
+
+    if (selectedProduct == null) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'Selecciona un producto o crea uno nuevo.',
+        ),
       );
       return false;
     }
@@ -172,10 +238,11 @@ class AdminMobileDashboardViewModel
 
     try {
       await ref.read(registerPurchaseUseCaseProvider)(purchase);
-      await _refreshAll();
+      await _refreshAll(selectedProductId: selectedProduct.id);
 
       state = AsyncData(
         state.requireValue.copyWith(
+          selectedProductId: selectedProduct.id,
           quantity: 1,
           supplier: '',
           feedbackMessage: 'Compra registrada.',
@@ -227,6 +294,7 @@ class AdminMobileDashboardViewModel
   Future<AdminMobileDashboardState> _hydrate({
     String? selectedProductId,
     int? quantity,
+    int? lowStockThreshold,
     double? unitCost,
     String? supplier,
     DateTime? expiryDate,
@@ -258,6 +326,8 @@ class AdminMobileDashboardViewModel
       movements: movements,
       selectedProductId: productId,
       quantity: quantity ?? 1,
+      lowStockThreshold:
+          lowStockThreshold ?? selectedProduct?.lowStockThreshold ?? 20,
       unitCost: unitCost ?? selectedProduct?.lastPurchaseCost ?? 0,
       supplier: supplier ?? '',
       expiryDate: expiryDate ?? DateTime.now().add(const Duration(days: 30)),
@@ -265,12 +335,13 @@ class AdminMobileDashboardViewModel
     );
   }
 
-  Future<void> _refreshAll() async {
+  Future<void> _refreshAll({String? selectedProductId}) async {
     final current = state.valueOrNull;
     state = AsyncData(
       await _hydrate(
-        selectedProductId: current?.selectedProductId,
+        selectedProductId: selectedProductId ?? current?.selectedProductId,
         quantity: current?.quantity,
+        lowStockThreshold: current?.lowStockThreshold,
         unitCost: current?.unitCost,
         supplier: current?.supplier,
         expiryDate: current?.expiryDate,

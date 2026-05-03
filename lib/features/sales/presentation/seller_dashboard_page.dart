@@ -8,11 +8,36 @@ import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 import 'package:tiendaw/features/sales/presentation/seller_dashboard_view_model.dart';
 import 'package:tiendaw/shared/widgets/system_w_widgets.dart';
 
-class SellerDashboardPage extends ConsumerWidget {
+class SellerDashboardPage extends ConsumerStatefulWidget {
   const SellerDashboardPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SellerDashboardPage> createState() =>
+      _SellerDashboardPageState();
+}
+
+class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
+  bool _initialShiftPromptHandled = false;
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen<AsyncValue<SellerDashboardState>>(
+      sellerDashboardViewModelProvider,
+      (previous, next) {
+        if (!mounted) {
+          return;
+        }
+
+        final previousState = previous?.valueOrNull;
+        final nextState = next.valueOrNull;
+        _handleFeedback(
+          previousState?.feedbackMessage,
+          nextState?.feedbackMessage,
+        );
+        _handleShiftLifecycle(previousState, nextState);
+      },
+    );
+
     final dashboard = ref.watch(sellerDashboardViewModelProvider);
     final session = ref.watch(sessionViewModelProvider).valueOrNull;
     final currentUser = session?.currentUser;
@@ -21,10 +46,12 @@ class SellerDashboardPage extends ConsumerWidget {
       data: (state) {
         final rawQuery = state.searchQuery.trim();
         final query = rawQuery.toLowerCase();
+        final sellableProducts =
+            state.products.where((product) => product.stockStore > 0).toList();
         final productsInCategory =
             state.selectedCategoryId == null
-                ? state.products
-                : state.products
+                ? sellableProducts
+                : sellableProducts
                     .where(
                       (product) =>
                           product.categoryId == state.selectedCategoryId,
@@ -33,7 +60,7 @@ class SellerDashboardPage extends ConsumerWidget {
         final filteredProducts =
             query.isEmpty
                 ? productsInCategory
-                : state.products
+                : productsInCategory
                     .where(
                       (product) => product.name.toLowerCase().contains(query),
                     )
@@ -52,27 +79,96 @@ class SellerDashboardPage extends ConsumerWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Busca, agrega y cobra todo en una sola lista de venta.',
+                    state.hasOpenShift
+                        ? 'Busca, agrega y cobra todo en una sola lista de venta.'
+                        : 'Inicia caja para habilitar ventas y movimientos del turno.',
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
                   const SizedBox(height: 20),
-                  if (state.feedbackMessage != null) ...[
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFECFDF5),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(color: const Color(0xFF6EE7B7)),
-                      ),
-                      child: Text(state.feedbackMessage!),
-                    ),
-                    const SizedBox(height: 20),
-                  ],
+                  SectionCard(
+                    title: 'Caja del turno',
+                    subtitle:
+                        state.hasOpenShift
+                            ? 'Resumen del turno abierto en caja.'
+                            : 'No hay caja abierta. Inicia una para empezar a vender.',
+                    child:
+                        state.hasOpenShift
+                            ? Column(
+                              children: [
+                                _SummaryRow(
+                                  label: 'Caja efectivo',
+                                  value: SystemWFormatters.currency.format(
+                                    state.currentShift?.cashSales ?? 0,
+                                  ),
+                                ),
+                                _SummaryRow(
+                                  label: 'Caja Yape/Transfer',
+                                  value: SystemWFormatters.currency.format(
+                                    state.currentShift?.yapeSales ?? 0,
+                                  ),
+                                ),
+                                _SummaryRow(
+                                  label: 'Total turno',
+                                  value: SystemWFormatters.currency.format(
+                                    state.currentShift?.total ?? 0,
+                                  ),
+                                  isStrong: true,
+                                ),
+                                const SizedBox(height: 12),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: OutlinedButton(
+                                    onPressed:
+                                        currentUser == null
+                                            ? null
+                                            : () => _confirmCloseShift(
+                                              context,
+                                              currentUser,
+                                            ),
+                                    child: const Text('Cerrar caja del turno'),
+                                  ),
+                                ),
+                              ],
+                            )
+                            : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Hasta que no abras caja, la venta queda bloqueada para evitar movimientos fuera del turno.',
+                                  style: Theme.of(context).textTheme.bodyLarge,
+                                ),
+                                const SizedBox(height: 16),
+                                Wrap(
+                                  spacing: 12,
+                                  runSpacing: 12,
+                                  children: [
+                                    FilledButton.icon(
+                                      onPressed:
+                                          currentUser == null
+                                              ? null
+                                              : () => _startShift(currentUser),
+                                      icon: const Icon(
+                                        Icons.play_arrow_rounded,
+                                      ),
+                                      label: const Text('Iniciar caja'),
+                                    ),
+                                    OutlinedButton.icon(
+                                      onPressed:
+                                          currentUser == null ? null : _signOut,
+                                      icon: const Icon(Icons.logout_rounded),
+                                      label: const Text('Cerrar sesion'),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                  ),
+                  const SizedBox(height: 16),
                   SectionCard(
                     title: 'Buscador global',
                     subtitle: 'Encuentra productos por nombre al instante.',
                     child: TextField(
+                      enabled: state.hasOpenShift,
                       onChanged:
                           (value) => ref
                               .read(sellerDashboardViewModelProvider.notifier)
@@ -118,12 +214,16 @@ class SellerDashboardPage extends ConsumerWidget {
                                           label: Text(category.name),
                                           selected: selected,
                                           onSelected:
-                                              (_) => ref
-                                                  .read(
-                                                    sellerDashboardViewModelProvider
-                                                        .notifier,
-                                                  )
-                                                  .selectCategory(category.id),
+                                              state.hasOpenShift
+                                                  ? (_) => ref
+                                                      .read(
+                                                        sellerDashboardViewModelProvider
+                                                            .notifier,
+                                                      )
+                                                      .selectCategory(
+                                                        category.id,
+                                                      )
+                                                  : null,
                                         ),
                                       );
                                     }).toList(),
@@ -134,18 +234,24 @@ class SellerDashboardPage extends ConsumerWidget {
                   SectionCard(
                     title:
                         query.isEmpty
-                            ? 'Productos'
+                            ? 'Productos de tienda'
                             : 'Resultados para "$rawQuery"',
                     subtitle:
-                        query.isEmpty
-                            ? 'Toca un producto para definir cantidad.'
-                            : 'Agrega rapidamente con el boton de anadir.',
+                        state.hasOpenShift
+                            ? 'Solo se muestran productos con stock disponible en tienda.'
+                            : 'La lista se habilita apenas inicies caja.',
                     child:
-                        filteredProducts.isEmpty
+                        !state.hasOpenShift
                             ? const EmptyStateCard(
-                              title: 'Sin productos disponibles',
+                              title: 'Caja pendiente',
                               caption:
-                                  'Agrega productos y stock para la categoria seleccionada.',
+                                  'Inicia caja para poder elegir productos y registrar ventas.',
+                            )
+                            : filteredProducts.isEmpty
+                            ? const EmptyStateCard(
+                              title: 'Sin productos disponibles en tienda',
+                              caption:
+                                  'Abastece la tienda o cambia la categoria seleccionada.',
                             )
                             : LayoutBuilder(
                               builder: (context, constraints) {
@@ -172,15 +278,22 @@ class SellerDashboardPage extends ConsumerWidget {
                                     final product = filteredProducts[index];
                                     final selected =
                                         product.id == state.selectedProductId;
+                                    final remainingStock =
+                                        product.stockStore -
+                                        state.quantityInCart(product.id);
+                                    final canAddMore = remainingStock > 0;
 
                                     return InkWell(
                                       borderRadius: BorderRadius.circular(18),
                                       onTap:
-                                          () => _openQuantitySheet(
-                                            context,
-                                            ref,
-                                            product,
-                                          ),
+                                          canAddMore
+                                              ? () => _openQuantitySheet(
+                                                context,
+                                                state,
+                                                ref,
+                                                product,
+                                              )
+                                              : null,
                                       child: Ink(
                                         padding: const EdgeInsets.all(12),
                                         decoration: BoxDecoration(
@@ -229,19 +342,6 @@ class SellerDashboardPage extends ConsumerWidget {
                                                         ),
                                               ),
                                             ),
-                                            Text(
-                                              'Almacen: ${product.stockWarehouse}',
-                                              style: Theme.of(
-                                                context,
-                                              ).textTheme.bodySmall?.copyWith(
-                                                color:
-                                                    selected
-                                                        ? Colors.white70
-                                                        : const Color(
-                                                          0xFF6B7280,
-                                                        ),
-                                              ),
-                                            ),
                                             const Spacer(),
                                             Text(
                                               SystemWFormatters.currency.format(
@@ -263,11 +363,15 @@ class SellerDashboardPage extends ConsumerWidget {
                                               width: double.infinity,
                                               child: ElevatedButton(
                                                 onPressed:
-                                                    () => _openQuantitySheet(
-                                                      context,
-                                                      ref,
-                                                      product,
-                                                    ),
+                                                    canAddMore
+                                                        ? () =>
+                                                            _openQuantitySheet(
+                                                              context,
+                                                              state,
+                                                              ref,
+                                                              product,
+                                                            )
+                                                        : null,
                                                 style: ElevatedButton.styleFrom(
                                                   backgroundColor:
                                                       selected
@@ -282,7 +386,11 @@ class SellerDashboardPage extends ConsumerWidget {
                                                           )
                                                           : Colors.white,
                                                 ),
-                                                child: const Text('Anadir'),
+                                                child: Text(
+                                                  canAddMore
+                                                      ? 'Anadir'
+                                                      : 'Sin stock',
+                                                ),
                                               ),
                                             ),
                                           ],
@@ -299,7 +407,13 @@ class SellerDashboardPage extends ConsumerWidget {
                     title: 'Lista de venta',
                     subtitle: 'Revisa cantidades antes de cobrar.',
                     child:
-                        state.cartItems.isEmpty
+                        !state.hasOpenShift
+                            ? const EmptyStateCard(
+                              title: 'Venta bloqueada',
+                              caption:
+                                  'Abre la caja del turno para empezar a armar el carrito.',
+                            )
+                            : state.cartItems.isEmpty
                             ? const EmptyStateCard(
                               title: 'Carrito vacio',
                               caption:
@@ -308,12 +422,17 @@ class SellerDashboardPage extends ConsumerWidget {
                             : Column(
                               children:
                                   state.cartItems.map((item) {
+                                    final stockStore = _storeStockForItem(
+                                      state,
+                                      item.productId,
+                                    );
                                     return Padding(
                                       padding: const EdgeInsets.only(
                                         bottom: 12,
                                       ),
                                       child: _CartItemRow(
                                         item: item,
+                                        stockStore: stockStore,
                                         onDecrease:
                                             () => ref
                                                 .read(
@@ -325,15 +444,17 @@ class SellerDashboardPage extends ConsumerWidget {
                                                   item.quantity - 1,
                                                 ),
                                         onIncrease:
-                                            () => ref
-                                                .read(
-                                                  sellerDashboardViewModelProvider
-                                                      .notifier,
-                                                )
-                                                .updateCartQuantity(
-                                                  item.productId,
-                                                  item.quantity + 1,
-                                                ),
+                                            item.quantity >= stockStore
+                                                ? null
+                                                : () => ref
+                                                    .read(
+                                                      sellerDashboardViewModelProvider
+                                                          .notifier,
+                                                    )
+                                                    .updateCartQuantity(
+                                                      item.productId,
+                                                      item.quantity + 1,
+                                                    ),
                                         onRemove:
                                             () => ref
                                                 .read(
@@ -346,50 +467,6 @@ class SellerDashboardPage extends ConsumerWidget {
                                   }).toList(),
                             ),
                   ),
-                  const SizedBox(height: 16),
-                  SectionCard(
-                    title: 'Caja del turno',
-                    subtitle: 'Resumen del turno abierto en caja.',
-                    child: Column(
-                      children: [
-                        _SummaryRow(
-                          label: 'Caja efectivo',
-                          value: SystemWFormatters.currency.format(
-                            state.currentShift.cashSales,
-                          ),
-                        ),
-                        _SummaryRow(
-                          label: 'Caja Yape/Transfer',
-                          value: SystemWFormatters.currency.format(
-                            state.currentShift.yapeSales,
-                          ),
-                        ),
-                        _SummaryRow(
-                          label: 'Total turno',
-                          value: SystemWFormatters.currency.format(
-                            state.currentShift.total,
-                          ),
-                          isStrong: true,
-                        ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton(
-                            onPressed:
-                                currentUser == null
-                                    ? null
-                                    : () => ref
-                                        .read(
-                                          sellerDashboardViewModelProvider
-                                              .notifier,
-                                        )
-                                        .closeShift(currentUser),
-                            child: const Text('Cerrar caja del turno'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ],
               ),
             ),
@@ -400,7 +477,10 @@ class SellerDashboardPage extends ConsumerWidget {
               child: _CartSummaryBar(
                 itemCount: state.cartItemsCount,
                 total: state.cartTotal,
-                enabled: state.cartItems.isNotEmpty && currentUser != null,
+                enabled:
+                    state.cartItems.isNotEmpty &&
+                    currentUser != null &&
+                    state.hasOpenShift,
                 onCheckout:
                     () => _openCheckoutSheet(context, ref, state, currentUser),
               ),
@@ -416,11 +496,198 @@ class SellerDashboardPage extends ConsumerWidget {
     );
   }
 
+  void _handleFeedback(String? previousMessage, String? nextMessage) {
+    if (nextMessage == null ||
+        nextMessage.isEmpty ||
+        nextMessage == previousMessage) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) {
+        return;
+      }
+
+      await showSystemWActionDialog(
+        context,
+        message: nextMessage,
+        isError: _isErrorFeedback(nextMessage),
+      );
+      if (!mounted) {
+        return;
+      }
+      await ref.read(sellerDashboardViewModelProvider.notifier).clearFeedback();
+    });
+  }
+
+  void _handleShiftLifecycle(
+    SellerDashboardState? previousState,
+    SellerDashboardState? nextState,
+  ) {
+    if (nextState == null) {
+      return;
+    }
+
+    final currentUser =
+        ref.read(sessionViewModelProvider).valueOrNull?.currentUser;
+    if (currentUser == null) {
+      return;
+    }
+
+    if (nextState.hasOpenShift) {
+      _initialShiftPromptHandled = false;
+      return;
+    }
+
+    final hadOpenShift = previousState?.hasOpenShift ?? false;
+    if (hadOpenShift) {
+      _initialShiftPromptHandled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        _showPostCloseOptions(currentUser);
+      });
+      return;
+    }
+
+    if (_initialShiftPromptHandled) {
+      return;
+    }
+
+    _initialShiftPromptHandled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _promptStartShift(currentUser);
+    });
+  }
+
+  Future<void> _startShift(AppUser user) async {
+    await ref.read(sellerDashboardViewModelProvider.notifier).openShift(user);
+  }
+
+  Future<void> _promptStartShift(AppUser user) async {
+    final decision = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Iniciar caja'),
+            content: const Text(
+              'Todavia no abriste caja. Inicia el turno para registrar ventas o cierra sesion si aun no vas a operar.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cerrar sesion'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Iniciar caja'),
+              ),
+            ],
+          ),
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (decision == true) {
+      await _startShift(user);
+      return;
+    }
+
+    await _signOut();
+  }
+
+  Future<void> _confirmCloseShift(BuildContext context, AppUser user) async {
+    final shouldClose = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Cerrar caja'),
+            content: const Text(
+              'Se cerrara la caja actual y ya no podras registrar ventas hasta abrir una nueva.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Cerrar caja'),
+              ),
+            ],
+          ),
+    );
+
+    if (shouldClose != true || !mounted) {
+      return;
+    }
+
+    await ref.read(sellerDashboardViewModelProvider.notifier).closeShift(user);
+  }
+
+  Future<void> _showPostCloseOptions(AppUser user) async {
+    final decision = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Caja cerrada'),
+            content: const Text(
+              'La caja ya se cerro correctamente. Ahora elige si quieres abrir una nueva caja o cerrar sesion.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop('logout'),
+                child: const Text('Cerrar sesion'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop('open'),
+                child: const Text('Iniciar otra caja'),
+              ),
+            ],
+          ),
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (decision == 'open') {
+      await _startShift(user);
+      return;
+    }
+
+    await _signOut();
+  }
+
+  Future<void> _signOut() async {
+    await ref.read(sessionViewModelProvider.notifier).signOut();
+  }
+
   Future<void> _openQuantitySheet(
     BuildContext context,
+    SellerDashboardState state,
     WidgetRef ref,
     Product product,
   ) async {
+    final maxAddable = product.stockStore - state.quantityInCart(product.id);
+    if (maxAddable <= 0) {
+      await showSystemWActionDialog(
+        context,
+        message:
+            'Ya no queda stock disponible en tienda para seguir agregando ${product.name}.',
+        isError: true,
+      );
+      return;
+    }
+
     ref
         .read(sellerDashboardViewModelProvider.notifier)
         .selectProduct(product.id);
@@ -457,6 +724,11 @@ class SellerDashboardPage extends ConsumerWidget {
                       color: const Color(0xFF0F766E),
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Disponible en tienda: $maxAddable unidades',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
                   const SizedBox(height: 16),
                   Row(
                     children: [
@@ -483,7 +755,10 @@ class SellerDashboardPage extends ConsumerWidget {
                         ),
                       ),
                       IconButton(
-                        onPressed: () => setState(() => quantity += 1),
+                        onPressed:
+                            quantity >= maxAddable
+                                ? null
+                                : () => setState(() => quantity += 1),
                         icon: const Icon(Icons.add_circle_outline),
                       ),
                     ],
@@ -620,7 +895,7 @@ class SellerDashboardPage extends ConsumerWidget {
                           currentUser == null || state.cartItems.isEmpty
                               ? null
                               : () async {
-                                await ref
+                                final success = await ref
                                     .read(
                                       sellerDashboardViewModelProvider.notifier,
                                     )
@@ -628,7 +903,9 @@ class SellerDashboardPage extends ConsumerWidget {
                                       currentUser,
                                       selectedMethod,
                                     );
-                                Navigator.of(context).pop();
+                                if (success && mounted) {
+                                  Navigator.of(context).pop();
+                                }
                               },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFEA580C),
@@ -645,19 +922,30 @@ class SellerDashboardPage extends ConsumerWidget {
       },
     );
   }
+
+  int _storeStockForItem(SellerDashboardState state, String productId) {
+    for (final product in state.products) {
+      if (product.id == productId) {
+        return product.stockStore;
+      }
+    }
+    return 0;
+  }
 }
 
 class _CartItemRow extends StatelessWidget {
   const _CartItemRow({
     required this.item,
+    required this.stockStore,
     required this.onDecrease,
     required this.onIncrease,
     required this.onRemove,
   });
 
   final SaleLine item;
+  final int stockStore;
   final VoidCallback onDecrease;
-  final VoidCallback onIncrease;
+  final VoidCallback? onIncrease;
   final VoidCallback onRemove;
 
   @override
@@ -680,6 +968,11 @@ class _CartItemRow extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Tienda: $stockStore u.',
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 4),
                 Text(
@@ -808,4 +1101,12 @@ class _SummaryRow extends StatelessWidget {
       ),
     );
   }
+}
+
+bool _isErrorFeedback(String message) {
+  return message.trim().toLowerCase().startsWith('no se pudo') ||
+      message.trim().toLowerCase().startsWith('solo tienes') ||
+      message.trim().toLowerCase().startsWith('la tienda solo tiene') ||
+      message.trim().toLowerCase().startsWith('inicia la caja') ||
+      message.trim().toLowerCase().startsWith('no hay una caja');
 }

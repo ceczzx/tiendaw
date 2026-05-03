@@ -315,18 +315,14 @@ class _PurchasesSection extends StatelessWidget {
           _MetricRow(
             children: [
               MetricCard(
-                label: 'Compras del periodo',
+                label: 'Resumen del periodo',
                 value: SystemWFormatters.currency.format(state.purchaseTotal),
-                detail: '${state.filteredPurchases.length} registros',
+                detail:
+                    state.filteredPurchases.isEmpty
+                        ? 'Sin compras registradas para este rango'
+                        : 'Proveedor principal: ${state.topSupplier}',
                 accent: const Color(0xFF0F766E),
-                onTap: () => _showPurchaseDialog(context),
-              ),
-              MetricCard(
-                label: 'Proveedor principal',
-                value: state.topSupplier,
-                detail: 'Haz clic para ver proveedores por categoria',
-                accent: const Color(0xFFEA580C),
-                onTap: () => _showSupplierDialog(context),
+                onTap: () => _showPurchaseOverviewDialog(context),
               ),
             ],
           ),
@@ -374,17 +370,10 @@ class _PurchasesSection extends StatelessWidget {
     );
   }
 
-  Future<void> _showSupplierDialog(BuildContext context) async {
+  Future<void> _showPurchaseOverviewDialog(BuildContext context) async {
     await showDialog<void>(
       context: context,
-      builder: (context) => _SupplierBreakdownDialog(state: state),
-    );
-  }
-
-  Future<void> _showPurchaseDialog(BuildContext context) async {
-    await showDialog<void>(
-      context: context,
-      builder: (context) => _PurchaseBreakdownDialog(state: state),
+      builder: (context) => _PurchaseOverviewDialog(state: state),
     );
   }
 }
@@ -833,6 +822,165 @@ class _DetailDialogShell extends StatelessWidget {
   }
 }
 
+enum _PurchaseOverviewMode { purchases, suppliers }
+
+class _PurchaseOverviewDialog extends StatefulWidget {
+  const _PurchaseOverviewDialog({required this.state});
+
+  final AdminDesktopDashboardState state;
+
+  @override
+  State<_PurchaseOverviewDialog> createState() => _PurchaseOverviewDialogState();
+}
+
+class _PurchaseOverviewDialogState extends State<_PurchaseOverviewDialog> {
+  String? _selectedCategoryId;
+  _PurchaseOverviewMode _mode = _PurchaseOverviewMode.purchases;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = widget.state;
+    final categoryOptions = state.categories;
+    final summaries = _buildSupplierSummaries(
+      state,
+      categoryId: _selectedCategoryId,
+    );
+    final purchases =
+        state.filteredPurchases
+            .where(
+              (purchase) => _purchaseMatchesCategory(
+                state,
+                purchase,
+                _selectedCategoryId,
+              ),
+            )
+            .toList();
+
+    return _DetailDialogShell(
+      title: 'Compras del periodo',
+      subtitle:
+          'Cambia la vista para separar el detalle de compras del resumen por proveedor sin mezclar ambas lecturas.',
+      child: Column(
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              spacing: 16,
+              runSpacing: 16,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                SegmentedButton<_PurchaseOverviewMode>(
+                  segments: const [
+                    ButtonSegment(
+                      value: _PurchaseOverviewMode.purchases,
+                      label: Text('Compras'),
+                    ),
+                    ButtonSegment(
+                      value: _PurchaseOverviewMode.suppliers,
+                      label: Text('Proveedores'),
+                    ),
+                  ],
+                  selected: {_mode},
+                  onSelectionChanged:
+                      (selection) => setState(() => _mode = selection.first),
+                ),
+                SizedBox(
+                  width: 320,
+                  child: DropdownButtonFormField<String?>(
+                    value: _selectedCategoryId,
+                    decoration: const InputDecoration(
+                      labelText: 'Filtrar categoria',
+                    ),
+                    items: [
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text('Todas las categorias'),
+                      ),
+                      ...categoryOptions.map(
+                        (category) => DropdownMenuItem<String?>(
+                          value: category.id,
+                          child: Text(category.name),
+                        ),
+                      ),
+                    ],
+                    onChanged:
+                        (value) => setState(() => _selectedCategoryId = value),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          Expanded(
+            child:
+                _mode == _PurchaseOverviewMode.purchases
+                    ? _DesktopTable(
+                      columns: const [
+                        'Fecha',
+                        'Proveedor',
+                        'Categorias',
+                        'Registrado por',
+                        'Total',
+                        'Sync',
+                      ],
+                      rows:
+                          purchases
+                              .map(
+                                (purchase) => _DesktopTableRow(
+                                  cells: [
+                                    Text(
+                                      SystemWFormatters.shortDateTime.format(
+                                        purchase.receivedAt,
+                                      ),
+                                    ),
+                                    Text(purchase.supplier),
+                                    Text(
+                                      _purchaseCategoriesLabel(state, purchase),
+                                    ),
+                                    Text(purchase.registeredBy),
+                                    Text(
+                                      SystemWFormatters.currency.format(
+                                        purchase.total,
+                                      ),
+                                    ),
+                                    Text(purchase.syncStatus.name),
+                                  ],
+                                ),
+                              )
+                              .toList(),
+                      emptyTitle: 'Sin compras para este filtro',
+                      emptyCaption:
+                          'Selecciona otra categoria o amplia el rango del periodo.',
+                    )
+                    : _DesktopTable(
+                      columns: const ['Proveedor', 'Categorias', 'Total'],
+                      rows:
+                          summaries
+                              .map(
+                                (summary) => _DesktopTableRow(
+                                  cells: [
+                                    Text(summary.supplier),
+                                    Text(summary.categoriesLabel),
+                                    Text(
+                                      SystemWFormatters.currency.format(
+                                        summary.total,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                              .toList(),
+                      emptyTitle: 'Sin proveedores para este filtro',
+                      emptyCaption:
+                          'Cambia la categoria o registra compras en este periodo.',
+                    ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _SupplierBreakdownDialog extends StatefulWidget {
   const _SupplierBreakdownDialog({required this.state});
 
@@ -889,7 +1037,7 @@ class _SupplierBreakdownDialogState extends State<_SupplierBreakdownDialog> {
           const SizedBox(height: 18),
           Expanded(
             child: _DesktopTable(
-              columns: const ['Proveedor', 'Categorias', 'Compras', 'Total'],
+              columns: const ['Proveedor', 'Categorias', 'Total'],
               rows:
                   summaries
                       .map(
@@ -897,7 +1045,6 @@ class _SupplierBreakdownDialogState extends State<_SupplierBreakdownDialog> {
                           cells: [
                             Text(summary.supplier),
                             Text(summary.categoriesLabel),
-                            Text('${summary.purchaseCount}'),
                             Text(
                               SystemWFormatters.currency.format(summary.total),
                             ),
@@ -1023,13 +1170,11 @@ class _PurchaseBreakdownDialogState extends State<_PurchaseBreakdownDialog> {
 class _SupplierSummary {
   const _SupplierSummary({
     required this.supplier,
-    required this.purchaseCount,
     required this.total,
     required this.categoriesLabel,
   });
 
   final String supplier;
-  final int purchaseCount;
   final double total;
   final String categoriesLabel;
 }
@@ -1115,7 +1260,6 @@ List<_SupplierSummary> _buildSupplierSummaries(
 
           return _SupplierSummary(
             supplier: entry.key,
-            purchaseCount: purchases.length,
             total: purchases.fold(0, (sum, purchase) => sum + purchase.total),
             categoriesLabel:
                 categories.isEmpty ? 'Sin categoria' : categories.join(', '),

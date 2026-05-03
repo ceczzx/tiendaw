@@ -12,7 +12,15 @@ import 'package:tiendaw/shared/widgets/system_w_widgets.dart';
 enum _AdminMobileSection { home, purchases, suppliers, movements }
 
 typedef _PurchaseSubmit =
-    Future<void> Function({String? categoryName, String? productName});
+    Future<void> Function({
+      String? categoryName,
+      String? categoryPrefix,
+      String? productName,
+      String? productType,
+      double? salePrice,
+      Map<String, dynamic>? productCostDetails,
+      String? supplierPhone,
+    });
 
 class AdminMobileDashboardPage extends ConsumerStatefulWidget {
   const AdminMobileDashboardPage({super.key});
@@ -29,6 +37,21 @@ class _AdminMobileDashboardPageState
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<AsyncValue<AdminMobileDashboardState>>(
+      adminMobileDashboardViewModelProvider,
+      (previous, next) {
+        if (!mounted) {
+          return;
+        }
+
+        _showActionFeedback(
+          context: context,
+          previousMessage: previous?.valueOrNull?.feedbackMessage,
+          nextMessage: next.valueOrNull?.feedbackMessage,
+        );
+      },
+    );
+
     final dashboard = ref.watch(adminMobileDashboardViewModelProvider);
     final currentUser =
         ref.watch(sessionViewModelProvider).valueOrNull?.currentUser;
@@ -140,14 +163,24 @@ class _AdminMobileDashboardPageState
   Future<void> _handlePurchase(
     AppUser currentUser, {
     String? categoryName,
+    String? categoryPrefix,
     String? productName,
+    String? productType,
+    double? salePrice,
+    Map<String, dynamic>? productCostDetails,
+    String? supplierPhone,
   }) async {
     final success = await ref
         .read(adminMobileDashboardViewModelProvider.notifier)
         .registerPurchase(
           currentUser,
           categoryName: categoryName,
+          categoryPrefix: categoryPrefix,
           productName: productName,
+          productType: productType,
+          salePrice: salePrice,
+          productCostDetails: productCostDetails,
+          supplierPhone: supplierPhone,
         );
 
     if (!mounted || !success) {
@@ -166,13 +199,56 @@ class _AdminMobileDashboardPageState
   }
 
   _PurchaseSubmit _buildPurchaseSubmit(AppUser currentUser) {
-    return ({String? categoryName, String? productName}) {
+    return ({
+      String? categoryName,
+      String? categoryPrefix,
+      String? productName,
+      String? productType,
+      double? salePrice,
+      Map<String, dynamic>? productCostDetails,
+      String? supplierPhone,
+    }) {
       return _handlePurchase(
         currentUser,
         categoryName: categoryName,
+        categoryPrefix: categoryPrefix,
         productName: productName,
+        productType: productType,
+        salePrice: salePrice,
+        productCostDetails: productCostDetails,
+        supplierPhone: supplierPhone,
       );
     };
+  }
+
+  void _showActionFeedback({
+    required BuildContext context,
+    required String? previousMessage,
+    required String? nextMessage,
+  }) {
+    if (nextMessage == null ||
+        nextMessage.isEmpty ||
+        nextMessage == previousMessage) {
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) {
+        return;
+      }
+
+      await showSystemWActionDialog(
+        context,
+        message: nextMessage,
+        isError: _isErrorFeedback(nextMessage),
+      );
+      if (!mounted) {
+        return;
+      }
+      await ref
+          .read(adminMobileDashboardViewModelProvider.notifier)
+          .clearFeedback();
+    });
   }
 }
 
@@ -207,7 +283,9 @@ class _HomeSectionState extends State<_HomeSection> {
   @override
   void didUpdateWidget(covariant _HomeSection oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!widget.state.products.any((product) => product.id == _selectedProductId)) {
+    if (!widget.state.products.any(
+      (product) => product.id == _selectedProductId,
+    )) {
       _selectedProductId =
           widget.state.products.isEmpty ? null : widget.state.products.first.id;
     }
@@ -236,10 +314,6 @@ class _HomeSectionState extends State<_HomeSection> {
             subtitle:
                 'Anade compra de productos, revisa proveedores y mueve stock sin mezclar todo en una sola pantalla.',
           ),
-          if (state.feedbackMessage != null) ...[
-            const SizedBox(height: 16),
-            _FeedbackBanner(message: state.feedbackMessage!),
-          ],
           const SizedBox(height: 16),
           SectionCard(
             title: 'Flujo rapido',
@@ -317,6 +391,7 @@ class _HomeSectionState extends State<_HomeSection> {
                       children: [
                         DropdownButtonFormField<String>(
                           value: selectedProduct?.id,
+                          isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Producto',
                           ),
@@ -380,10 +455,6 @@ class _PurchasesSection extends StatelessWidget {
             subtitle:
                 'Abastecimiento con formulario guiado y listas paginadas cuando el historial supera 10 registros.',
           ),
-          if (state.feedbackMessage != null) ...[
-            const SizedBox(height: 16),
-            _FeedbackBanner(message: state.feedbackMessage!),
-          ],
           const SizedBox(height: 16),
           SectionCard(
             title: 'Agregar cosas',
@@ -498,7 +569,9 @@ class _SuppliersSectionState extends State<_SuppliersSection> {
   void initState() {
     super.initState();
     _selectedCategoryId =
-        widget.state.categories.isEmpty ? null : widget.state.categories.first.id;
+        widget.state.categories.isEmpty
+            ? null
+            : widget.state.categories.first.id;
   }
 
   @override
@@ -526,10 +599,6 @@ class _SuppliersSectionState extends State<_SuppliersSection> {
             subtitle:
                 'Selecciona una categoria y revisa a detalle sus proveedores, productos comprados, cantidades y precios.',
           ),
-          if (state.feedbackMessage != null) ...[
-            const SizedBox(height: 16),
-            _FeedbackBanner(message: state.feedbackMessage!),
-          ],
           const SizedBox(height: 16),
           _MetricWrap(
             children: [
@@ -572,14 +641,18 @@ class _SuppliersSectionState extends State<_SuppliersSection> {
                           contentPadding: EdgeInsets.zero,
                           title: Text(summary.name),
                           subtitle: Text(
-                            '${summary.categoriesLabel} - ${summary.purchaseCount} compras',
+                            summary.phone == null || summary.phone!.isEmpty
+                                ? '${summary.categoriesLabel} - ${summary.purchaseCount} compras'
+                                : '${summary.categoriesLabel}\nTel: ${summary.phone}',
                           ),
                           trailing: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
                               Text(
-                                SystemWFormatters.currency.format(summary.total),
+                                SystemWFormatters.currency.format(
+                                  summary.total,
+                                ),
                                 style: Theme.of(context).textTheme.titleSmall,
                               ),
                               Text(
@@ -609,7 +682,7 @@ class _SuppliersSectionState extends State<_SuppliersSection> {
                           .map(
                             (category) => DropdownMenuItem(
                               value: category.id,
-                              child: Text(category.name),
+                              child: Text(_categoryOptionLabel(category)),
                             ),
                           )
                           .toList(),
@@ -654,10 +727,25 @@ class _SuppliersSectionState extends State<_SuppliersSection> {
                               'Proveedor: ${detail.supplierName}',
                               style: Theme.of(context).textTheme.bodyMedium,
                             ),
+                            if (detail.supplierPhone != null &&
+                                detail.supplierPhone!.isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'Tel: ${detail.supplierPhone}',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                              ),
+                            ],
                             const SizedBox(height: 8),
                             _InfoLine(
-                              label: 'Cantidad comprada',
-                              value: '${detail.quantity} u.',
+                              label: _purchaseQuantityInfoLabel(
+                                detail.productType,
+                              ),
+                              value:
+                                  '${detail.packageQuantity} ${_purchaseQuantityNoun(detail.productType)}',
+                            ),
+                            _InfoLine(
+                              label: 'Unidades resultantes',
+                              value: '${detail.totalUnits} u.',
                             ),
                             _InfoLine(
                               label: 'Precio costo',
@@ -670,6 +758,22 @@ class _SuppliersSectionState extends State<_SuppliersSection> {
                               value: SystemWFormatters.currency.format(
                                 detail.salePrice,
                               ),
+                            ),
+                            _InfoLine(
+                              label: 'Inicio',
+                              value: SystemWFormatters.shortDate.format(
+                                detail.firstPurchaseAt,
+                              ),
+                            ),
+                            _InfoLine(
+                              label: 'Ultima compra',
+                              value: SystemWFormatters.shortDateTime.format(
+                                detail.latestPurchaseAt,
+                              ),
+                            ),
+                            _InfoLine(
+                              label: 'Proximo vencimiento',
+                              value: _formatOptionalDate(detail.nextExpiryDate),
                             ),
                           ],
                         ),
@@ -723,7 +827,9 @@ class _MovementsSectionState extends State<_MovementsSection> {
                 product.name.toLowerCase().contains(_searchQuery.toLowerCase());
             return matchesCategory && matchesQuery;
           }).toList()
-          ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+          ..sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
     final totalStoreUnits = filteredProducts.fold<int>(
       0,
       (sum, product) => sum + product.stockStore,
@@ -733,6 +839,9 @@ class _MovementsSectionState extends State<_MovementsSection> {
       (sum, product) => sum + product.stockWarehouse,
     );
     final supplierOptions = _supplierOptionsForProduct(state, selectedProduct);
+    final requiresSupplierReference =
+        selectedProduct != null &&
+        _isSupplierProductType(selectedProduct.productType);
     final effectiveSupplier =
         supplierOptions.contains(_selectedSupplier) ? _selectedSupplier : null;
     final quantity = state.quantity;
@@ -752,10 +861,6 @@ class _MovementsSectionState extends State<_MovementsSection> {
             subtitle:
                 'Define producto, proveedor de referencia y revisa un resumen final antes de mover stock de almacen a tienda.',
           ),
-          if (state.feedbackMessage != null) ...[
-            const SizedBox(height: 16),
-            _FeedbackBanner(message: state.feedbackMessage!),
-          ],
           const SizedBox(height: 16),
           SectionCard(
             title: 'Panorama de stock',
@@ -794,7 +899,7 @@ class _MovementsSectionState extends State<_MovementsSection> {
                     ...state.categories.map(
                       (category) => DropdownMenuItem<String?>(
                         value: category.id,
-                        child: Text(category.name),
+                        child: Text(_categoryOptionLabel(category)),
                       ),
                     ),
                   ],
@@ -899,7 +1004,10 @@ class _MovementsSectionState extends State<_MovementsSection> {
                     else ...[
                       DropdownButtonFormField<String>(
                         value: state.selectedProductId,
-                        decoration: const InputDecoration(labelText: 'Producto'),
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Producto',
+                        ),
                         items:
                             state.products
                                 .map(
@@ -924,37 +1032,54 @@ class _MovementsSectionState extends State<_MovementsSection> {
                         },
                       ),
                       const SizedBox(height: 12),
-                      DropdownButtonFormField<String>(
-                        value: effectiveSupplier,
-                        decoration: const InputDecoration(
-                          labelText: 'Proveedor de referencia',
-                        ),
-                        items:
-                            supplierOptions
-                                .map(
-                                  (supplier) => DropdownMenuItem(
-                                    value: supplier,
-                                    child: Text(supplier),
-                                  ),
-                                )
-                                .toList(),
-                        onChanged:
-                            supplierOptions.isEmpty
-                                ? null
-                                : (value) {
-                                  setState(() {
-                                    _selectedSupplier = value;
-                                  });
-                                },
-                      ),
-                      if (supplierOptions.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Text(
-                            'Aun no hay proveedores relacionados con este producto en compras o historial de precios.',
-                            style: Theme.of(context).textTheme.bodySmall,
+                      if (!requiresSupplierReference &&
+                          selectedProduct != null)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
                           ),
+                          child: Text(
+                            'Producto artesanal: no requiere proveedor para mover stock.',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        )
+                      else ...[
+                        DropdownButtonFormField<String>(
+                          value: effectiveSupplier,
+                          decoration: const InputDecoration(
+                            labelText: 'Proveedor de referencia',
+                          ),
+                          items:
+                              supplierOptions
+                                  .map(
+                                    (supplier) => DropdownMenuItem(
+                                      value: supplier,
+                                      child: Text(supplier),
+                                    ),
+                                  )
+                                  .toList(),
+                          onChanged:
+                              supplierOptions.isEmpty
+                                  ? null
+                                  : (value) {
+                                    setState(() {
+                                      _selectedSupplier = value;
+                                    });
+                                  },
                         ),
+                        if (supplierOptions.isEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text(
+                              'Aun no hay proveedores relacionados con este producto en compras o historial de precios.',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                      ],
                       const SizedBox(height: 12),
                       TextFormField(
                         initialValue: '${state.quantity}',
@@ -975,7 +1100,10 @@ class _MovementsSectionState extends State<_MovementsSection> {
                       const SizedBox(height: 16),
                       _MovementPreviewCard(
                         productName: selectedProduct?.name,
-                        supplierName: effectiveSupplier,
+                        supplierName:
+                            requiresSupplierReference
+                                ? effectiveSupplier
+                                : 'No aplica',
                         quantity: quantity,
                         warehouseBefore: warehouseStock,
                         warehouseAfter: remainingWarehouse,
@@ -991,7 +1119,8 @@ class _MovementsSectionState extends State<_MovementsSection> {
                               widget.currentUser == null ||
                                       widget.onTransfer == null ||
                                       !hasEnoughStock ||
-                                      (supplierOptions.isNotEmpty &&
+                                      (requiresSupplierReference &&
+                                          supplierOptions.isNotEmpty &&
                                           effectiveSupplier == null)
                                   ? null
                                   : () => widget.onTransfer!(),
@@ -1062,13 +1191,23 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
   static const _newCategoryValue = '__new_category__';
   static const _newProductValue = '__new_product__';
   static const _newSupplierValue = '__new_supplier__';
+  static const _artisanType = 'artesanal';
+  static const _supplierType = 'proveedor';
 
   late final TextEditingController _newCategoryController;
+  late final TextEditingController _newCategoryPrefixController;
   late final TextEditingController _newProductController;
+  late final TextEditingController _salePriceController;
+  late final TextEditingController _brandController;
+  late final TextEditingController _presentationController;
+  late final TextEditingController _packageCostController;
+  late final TextEditingController _costNotesController;
   late final TextEditingController _newSupplierController;
+  late final TextEditingController _supplierPhoneController;
   String? _selectedCategoryValue;
   String? _selectedProductValue;
   String? _selectedSupplierValue;
+  String _selectedProductType = _supplierType;
   String? _formError;
 
   @override
@@ -1076,20 +1215,114 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
     super.initState();
     final selectedProduct = widget.state.selectedProduct;
     _newCategoryController = TextEditingController();
+    _newCategoryPrefixController = TextEditingController();
     _newProductController = TextEditingController();
+    _salePriceController = TextEditingController();
+    _brandController = TextEditingController();
+    _presentationController = TextEditingController();
+    _packageCostController = TextEditingController();
+    _costNotesController = TextEditingController();
     _newSupplierController = TextEditingController();
+    _supplierPhoneController = TextEditingController();
+    final supplierOptions = _allSupplierOptions(widget.state);
     _selectedCategoryValue = selectedProduct?.categoryId;
     _selectedProductValue = selectedProduct?.id;
     _selectedSupplierValue =
-        widget.state.supplier.trim().isEmpty ? null : widget.state.supplier.trim();
+        widget.state.supplier.trim().isEmpty
+            ? (supplierOptions.isEmpty ? null : supplierOptions.first)
+            : widget.state.supplier.trim();
+    _syncSupplierPhone();
+    _loadProductFields(selectedProduct);
   }
 
   @override
   void dispose() {
     _newCategoryController.dispose();
+    _newCategoryPrefixController.dispose();
     _newProductController.dispose();
+    _salePriceController.dispose();
+    _brandController.dispose();
+    _presentationController.dispose();
+    _packageCostController.dispose();
+    _costNotesController.dispose();
     _newSupplierController.dispose();
+    _supplierPhoneController.dispose();
     super.dispose();
+  }
+
+  void _loadProductFields(Product? product) {
+    if (product == null) {
+      _selectedProductType = _supplierType;
+      _salePriceController.clear();
+      _brandController.clear();
+      _presentationController.clear();
+      _packageCostController.clear();
+      _costNotesController.clear();
+      return;
+    }
+
+    final costDetails = product.costDetails;
+    final packageCost =
+        _toDouble(costDetails['precio_caja']) ??
+        (product.lastPurchaseCost * product.unitsPerPackage);
+
+    _selectedProductType = product.productType;
+    _salePriceController.text =
+        product.salePrice > 0 ? product.salePrice.toStringAsFixed(2) : '';
+    _brandController.text = costDetails['marca']?.toString() ?? '';
+    _presentationController.text =
+        costDetails['presentacion']?.toString() ?? '';
+    _packageCostController.text =
+        packageCost > 0 ? packageCost.toStringAsFixed(2) : '';
+    _costNotesController.text =
+        product.productType == _artisanType
+            ? product.specs['observaciones']?.toString() ?? ''
+            : costDetails['observaciones']?.toString() ?? '';
+  }
+
+  void _applySuggestedUnitCost(int unitsPerPackage) {
+    final packageCost = double.tryParse(_packageCostController.text);
+    if (packageCost == null || packageCost <= 0 || unitsPerPackage <= 0) {
+      return;
+    }
+
+    ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .changeUnitCost(packageCost / unitsPerPackage);
+  }
+
+  void _resetExpirySuggestion() {
+    ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .changeExpiryDate(DateTime.now().add(const Duration(days: 30)));
+  }
+
+  void _syncSupplierPhone() {
+    final supplierName =
+        _selectedSupplierValue == null ||
+                _selectedSupplierValue == _newSupplierValue
+            ? _newSupplierController.text.trim()
+            : _selectedSupplierValue!;
+    _supplierPhoneController.text = _supplierPhoneForName(
+      widget.state,
+      supplierName,
+    );
+  }
+
+  Future<void> _pickExpiryDate(DateTime initialDate) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null) {
+      return;
+    }
+
+    await ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .changeExpiryDate(picked);
   }
 
   @override
@@ -1100,8 +1333,7 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
     late final String categoryValue;
     if (_selectedCategoryValue == _newCategoryValue) {
       categoryValue = _newCategoryValue;
-    } else if (
-        _selectedCategoryValue != null &&
+    } else if (_selectedCategoryValue != null &&
         categories.any((category) => category.id == _selectedCategoryValue)) {
       categoryValue = _selectedCategoryValue!;
     } else if (categories.isEmpty) {
@@ -1122,8 +1354,7 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
     late final String productValue;
     if (_selectedProductValue == _newProductValue) {
       productValue = _newProductValue;
-    } else if (
-        _selectedProductValue != null &&
+    } else if (_selectedProductValue != null &&
         productsForCategory.any(
           (product) => product.id == _selectedProductValue,
         )) {
@@ -1137,8 +1368,7 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
     late final String supplierValue;
     if (_selectedSupplierValue == _newSupplierValue) {
       supplierValue = _newSupplierValue;
-    } else if (
-        _selectedSupplierValue != null &&
+    } else if (_selectedSupplierValue != null &&
         supplierOptions.contains(_selectedSupplierValue)) {
       supplierValue = _selectedSupplierValue!;
     } else if (supplierOptions.isEmpty) {
@@ -1150,13 +1380,32 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
     final selectedProduct =
         isNewProduct
             ? null
-            : productsForCategory.firstWhere((product) => product.id == productValue);
-    final packageLabel = selectedProduct?.packageName ?? 'paquetes';
+            : productsForCategory.firstWhere(
+              (product) => product.id == productValue,
+            );
+    final effectiveProductType = _normalizePurchaseProductType(
+      _selectedProductType,
+    );
+    final isSupplierProduct = _isSupplierProductType(effectiveProductType);
+    final quantityLabel =
+        isSupplierProduct ? 'Cajas compradas' : 'Cantidad producida';
+    final unitsLabel =
+        isSupplierProduct ? 'Unidades por caja' : 'Unidades por lote';
+    final quantityNoun = isSupplierProduct ? 'cajas' : 'lotes';
     final unitLabel = selectedProduct?.unitName ?? 'unidades';
-    final unitsPerPackage = selectedProduct?.unitsPerPackage ?? 1;
+    final unitsPerPackage = state.unitsPerPackage;
     final totalUnits = state.quantity * unitsPerPackage;
     final currentMissingUnits =
         selectedProduct == null ? 0 : _missingUnits(selectedProduct);
+    final packageCost = double.tryParse(_packageCostController.text) ?? 0;
+    final salePriceValue = double.tryParse(_salePriceController.text) ?? 0;
+    final effectiveUnitCost =
+        isSupplierProduct && packageCost > 0 && unitsPerPackage > 0
+            ? packageCost / unitsPerPackage
+            : state.unitCost;
+    final estimatedProfit = salePriceValue - effectiveUnitCost;
+    final estimatedMargin =
+        salePriceValue > 0 ? (estimatedProfit / salePriceValue) * 100 : 0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1168,7 +1417,7 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
             ...categories.map(
               (category) => DropdownMenuItem(
                 value: category.id,
-                child: Text(category.name),
+                child: Text(_categoryOptionLabel(category)),
               ),
             ),
             const DropdownMenuItem(
@@ -1186,6 +1435,14 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
               _selectedCategoryValue = value;
               if (value == _newCategoryValue) {
                 _selectedProductValue = _newProductValue;
+                _loadProductFields(null);
+                _resetExpirySuggestion();
+                ref
+                    .read(adminMobileDashboardViewModelProvider.notifier)
+                    .changeUnitsPerPackage(1);
+                ref
+                    .read(adminMobileDashboardViewModelProvider.notifier)
+                    .changeUnitCost(0);
               } else {
                 Product? firstProduct;
                 for (final product in state.products) {
@@ -1197,9 +1454,19 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
                 _selectedProductValue =
                     firstProduct == null ? _newProductValue : firstProduct.id;
                 if (firstProduct != null) {
+                  _loadProductFields(firstProduct);
                   ref
                       .read(adminMobileDashboardViewModelProvider.notifier)
                       .selectProduct(firstProduct.id);
+                } else {
+                  _loadProductFields(null);
+                  _resetExpirySuggestion();
+                  ref
+                      .read(adminMobileDashboardViewModelProvider.notifier)
+                      .changeUnitsPerPackage(1);
+                  ref
+                      .read(adminMobileDashboardViewModelProvider.notifier)
+                      .changeUnitCost(0);
                 }
               }
             });
@@ -1211,6 +1478,15 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
             controller: _newCategoryController,
             decoration: const InputDecoration(
               labelText: 'Nombre de la nueva categoria',
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _newCategoryPrefixController,
+            textCapitalization: TextCapitalization.characters,
+            decoration: const InputDecoration(
+              labelText: 'Prefix de la categoria',
+              helperText: 'Usa entre 3 y 5 letras mayusculas.',
             ),
           ),
         ],
@@ -1241,9 +1517,22 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
             });
 
             if (value != _newProductValue) {
+              final product = state.products.firstWhere(
+                (item) => item.id == value,
+              );
+              _loadProductFields(product);
               ref
                   .read(adminMobileDashboardViewModelProvider.notifier)
                   .selectProduct(value);
+            } else {
+              _loadProductFields(null);
+              _resetExpirySuggestion();
+              ref
+                  .read(adminMobileDashboardViewModelProvider.notifier)
+                  .changeUnitsPerPackage(1);
+              ref
+                  .read(adminMobileDashboardViewModelProvider.notifier)
+                  .changeUnitCost(0);
             }
           },
         ),
@@ -1258,19 +1547,11 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
         ],
         const SizedBox(height: 12),
         DropdownButtonFormField<String>(
-          value: supplierValue,
-          decoration: const InputDecoration(labelText: 'Proveedor'),
-          items: [
-            ...supplierOptions.map(
-              (supplier) => DropdownMenuItem(
-                value: supplier,
-                child: Text(supplier),
-              ),
-            ),
-            const DropdownMenuItem(
-              value: _newSupplierValue,
-              child: Text('Crear nuevo proveedor'),
-            ),
+          value: _selectedProductType,
+          decoration: const InputDecoration(labelText: 'Tipo'),
+          items: const [
+            DropdownMenuItem(value: _supplierType, child: Text('Proveedor')),
+            DropdownMenuItem(value: _artisanType, child: Text('Artesanal')),
           ],
           onChanged: (value) {
             if (value == null) {
@@ -1278,26 +1559,121 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
             }
 
             setState(() {
-              _formError = null;
-              _selectedSupplierValue = value;
+              _selectedProductType = value;
             });
-
-            if (value != _newSupplierValue) {
+            if (value == _artisanType) {
               ref
                   .read(adminMobileDashboardViewModelProvider.notifier)
-                  .changeSupplier(value);
+                  .changeSupplier('');
             }
           },
         ),
-        if (supplierValue == _newSupplierValue) ...[
+        if (isSupplierProduct) ...[
           const SizedBox(height: 12),
           TextFormField(
-            controller: _newSupplierController,
+            controller: _brandController,
+            decoration: const InputDecoration(labelText: 'Marca'),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _presentationController,
             decoration: const InputDecoration(
-              labelText: 'Nombre del nuevo proveedor',
+              labelText: 'Presentacion',
+              helperText: 'Ejemplo: 500 ml, 1 kg, bolsa x 24.',
             ),
           ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _packageCostController,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: const InputDecoration(labelText: 'Precio caja/bolsa'),
+            onChanged: (_) => _applySuggestedUnitCost(unitsPerPackage),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _costNotesController,
+            decoration: const InputDecoration(
+              labelText: 'Observaciones de costo',
+            ),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<String>(
+            value: supplierValue,
+            decoration: const InputDecoration(labelText: 'Proveedor'),
+            items: [
+              ...supplierOptions.map(
+                (supplier) =>
+                    DropdownMenuItem(value: supplier, child: Text(supplier)),
+              ),
+              const DropdownMenuItem(
+                value: _newSupplierValue,
+                child: Text('Crear nuevo proveedor'),
+              ),
+            ],
+            onChanged: (value) {
+              if (value == null) {
+                return;
+              }
+
+              setState(() {
+                _formError = null;
+                _selectedSupplierValue = value;
+              });
+
+              if (value != _newSupplierValue) {
+                ref
+                    .read(adminMobileDashboardViewModelProvider.notifier)
+                    .changeSupplier(value);
+              }
+              _syncSupplierPhone();
+            },
+          ),
+          const SizedBox(height: 12),
+          if (supplierValue == _newSupplierValue)
+            TextFormField(
+              controller: _newSupplierController,
+              decoration: const InputDecoration(
+                labelText: 'Nombre del nuevo proveedor',
+              ),
+              onChanged: (_) => _syncSupplierPhone(),
+            ),
+          if (supplierValue == _newSupplierValue) const SizedBox(height: 12),
+          TextFormField(
+            controller: _supplierPhoneController,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+              labelText: 'Numero del proveedor',
+              helperText: 'Opcional, util para contacto rapido.',
+            ),
+          ),
+        ] else ...[
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _costNotesController,
+            decoration: const InputDecoration(
+              labelText: 'Observaciones del producto',
+            ),
+            maxLines: 3,
+          ),
         ],
+        const SizedBox(height: 12),
+        InkWell(
+          onTap: () => _pickExpiryDate(state.expiryDate),
+          borderRadius: BorderRadius.circular(16),
+          child: InputDecorator(
+            decoration: const InputDecoration(
+              labelText: 'Fecha de vencimiento',
+              helperText: 'Se guardara en el registro de esta compra.',
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(SystemWFormatters.shortDate.format(state.expiryDate)),
+                const Icon(Icons.calendar_month_rounded),
+              ],
+            ),
+          ),
+        ),
         const SizedBox(height: 12),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -1306,9 +1682,7 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
             final quantityField = TextFormField(
               initialValue: '${state.quantity}',
               keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                labelText: 'Cantidad ($packageLabel)',
-              ),
+              decoration: InputDecoration(labelText: quantityLabel),
               onChanged: (value) {
                 ref
                     .read(adminMobileDashboardViewModelProvider.notifier)
@@ -1316,20 +1690,22 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
               },
             );
 
-            final missingField = TextFormField(
-              initialValue: '${state.lowStockThreshold}',
+            final unitsField = TextFormField(
+              key: ValueKey('units-$productValue'),
+              initialValue: '${state.unitsPerPackage}',
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Faltantes'),
+              decoration: InputDecoration(labelText: unitsLabel),
               onChanged: (value) {
+                final nextUnits = int.tryParse(value) ?? state.unitsPerPackage;
                 ref
                     .read(adminMobileDashboardViewModelProvider.notifier)
-                    .changeLowStockThreshold(
-                      int.tryParse(value) ?? state.lowStockThreshold,
-                    );
+                    .changeUnitsPerPackage(nextUnits);
+                _applySuggestedUnitCost(nextUnits);
               },
             );
 
             final costField = TextFormField(
+              key: ValueKey('cost-$productValue'),
               initialValue: state.unitCost.toStringAsFixed(2),
               keyboardType: const TextInputType.numberWithOptions(
                 decimal: true,
@@ -1342,6 +1718,18 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
               },
             );
 
+            final salePriceField = TextFormField(
+              controller: _salePriceController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Precio venta',
+                helperText: 'Usa multiplos de S/ 0.10: 1.00, 1.20, 1.50.',
+              ),
+              onChanged: (_) => setState(() {}),
+            );
+
             if (compact) {
               return Column(
                 children: [
@@ -1349,11 +1737,17 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
                     children: [
                       Expanded(child: quantityField),
                       const SizedBox(width: 12),
-                      Expanded(child: missingField),
+                      Expanded(child: unitsField),
                     ],
                   ),
                   const SizedBox(height: 12),
-                  costField,
+                  Row(
+                    children: [
+                      Expanded(child: costField),
+                      const SizedBox(width: 12),
+                      Expanded(child: salePriceField),
+                    ],
+                  ),
                 ],
               );
             }
@@ -1363,22 +1757,36 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
               children: [
                 Expanded(child: quantityField),
                 const SizedBox(width: 12),
-                Expanded(child: missingField),
+                Expanded(child: unitsField),
                 const SizedBox(width: 12),
                 Expanded(child: costField),
+                const SizedBox(width: 12),
+                Expanded(child: salePriceField),
               ],
             );
           },
         ),
         const SizedBox(height: 16),
         _InfoLine(
-          label: 'Fecha vencimiento sugerida',
+          label: 'Fecha vencimiento',
           value: SystemWFormatters.shortDate.format(state.expiryDate),
         ),
         _InfoLine(
           label: 'Conversion a unidades',
           value:
-              '${state.quantity} x $unitsPerPackage = $totalUnits $unitLabel',
+              '${state.quantity} $quantityNoun x $unitsPerPackage = $totalUnits $unitLabel',
+        ),
+        _InfoLine(
+          label: 'Costo unitario',
+          value: SystemWFormatters.currency.format(effectiveUnitCost),
+        ),
+        _InfoLine(
+          label: 'Ganancia unitaria',
+          value: SystemWFormatters.currency.format(estimatedProfit),
+        ),
+        _InfoLine(
+          label: 'Margen estimado',
+          value: '${estimatedMargin.toStringAsFixed(1)}%',
         ),
         _InfoLine(
           label: 'Faltantes actuales',
@@ -1390,8 +1798,9 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
             value: '${selectedProduct.stockWarehouse} u.',
           ),
           _InfoLine(
-            label: 'Presentacion',
-            value: '1 $packageLabel = $unitsPerPackage $unitLabel',
+            label: isSupplierProduct ? 'Presentacion' : 'Produccion base',
+            value:
+                '1 ${_purchaseQuantitySingleLabel(effectiveProductType)} = $unitsPerPackage $unitLabel',
           ),
           _InfoLine(
             label: 'Costo anterior',
@@ -1407,7 +1816,7 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
         _InfoLine(
           label: 'Total compra',
           value: SystemWFormatters.currency.format(
-            state.quantity * state.unitCost,
+            totalUnits * effectiveUnitCost,
           ),
           isStrong: true,
         ),
@@ -1415,9 +1824,9 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
           const SizedBox(height: 12),
           Text(
             _formError!,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: const Color(0xFFB91C1C),
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: const Color(0xFFB91C1C)),
           ),
         ],
         const SizedBox(height: 16),
@@ -1449,7 +1858,11 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
     required String productValue,
     required String supplierValue,
   }) async {
+    final currentState =
+        ref.read(adminMobileDashboardViewModelProvider).valueOrNull ??
+        widget.state;
     String? categoryNameForCreation;
+    String? categoryPrefixForCreation;
     String? productNameForCreation;
 
     if (categoryValue == _newCategoryValue) {
@@ -1460,15 +1873,32 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
         });
         return;
       }
+      final newCategoryPrefix =
+          _newCategoryPrefixController.text.trim().toUpperCase();
+      if (newCategoryPrefix.isEmpty) {
+        setState(() {
+          _formError = 'Ingresa el prefix de la nueva categoria.';
+        });
+        return;
+      }
+      if (!RegExp(r'^[A-Z]{3,5}$').hasMatch(newCategoryPrefix)) {
+        setState(() {
+          _formError = 'El prefix debe tener entre 3 y 5 letras mayusculas.';
+        });
+        return;
+      }
       categoryNameForCreation = newCategoryName;
+      categoryPrefixForCreation = newCategoryPrefix;
     } else {
       final selectedCategory = widget.state.categories.firstWhere(
         (category) => category.id == categoryValue,
       );
       categoryNameForCreation = selectedCategory.name;
+      categoryPrefixForCreation = selectedCategory.prefix;
     }
 
-    if (productValue == _newProductValue || categoryValue == _newCategoryValue) {
+    if (productValue == _newProductValue ||
+        categoryValue == _newCategoryValue) {
       final newProductName = _newProductController.text.trim();
       if (newProductName.isEmpty) {
         setState(() {
@@ -1479,13 +1909,90 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
       productNameForCreation = newProductName;
     }
 
-    final supplierName =
-        supplierValue == _newSupplierValue
-            ? _newSupplierController.text.trim()
-            : supplierValue;
-    if (supplierName.isEmpty) {
+    final salePrice = double.tryParse(_salePriceController.text);
+    if (salePrice == null || salePrice <= 0) {
       setState(() {
-        _formError = 'Selecciona o crea un proveedor.';
+        _formError = 'Ingresa un precio de venta valido.';
+      });
+      return;
+    }
+    if (!_isSalePriceStepValid(salePrice)) {
+      setState(() {
+        _formError =
+            'El precio de venta debe ser multiplo de S/ 0.10. Usa valores como 1.00, 1.20 o 1.50.';
+      });
+      return;
+    }
+
+    final effectiveProductType = _normalizePurchaseProductType(
+      _selectedProductType,
+    );
+    final isSupplierProduct = _isSupplierProductType(effectiveProductType);
+    late final double effectiveUnitCost;
+    late final Map<String, dynamic> productCostDetails;
+    late final String supplierName;
+    String? supplierPhone;
+
+    if (isSupplierProduct) {
+      final brand = _brandController.text.trim();
+      if (brand.isEmpty) {
+        setState(() {
+          _formError = 'Ingresa la marca para detallar el costo.';
+        });
+        return;
+      }
+
+      final presentation = _presentationController.text.trim();
+      if (presentation.isEmpty) {
+        setState(() {
+          _formError = 'Ingresa la presentacion del producto.';
+        });
+        return;
+      }
+
+      final packageCost = double.tryParse(_packageCostController.text);
+      if (packageCost == null || packageCost <= 0) {
+        setState(() {
+          _formError = 'Ingresa un precio de caja valido.';
+        });
+        return;
+      }
+
+      supplierName =
+          supplierValue == _newSupplierValue
+              ? _newSupplierController.text.trim()
+              : supplierValue;
+      if (supplierName.isEmpty) {
+        setState(() {
+          _formError = 'Selecciona o crea un proveedor.';
+        });
+        return;
+      }
+
+      supplierPhone = _supplierPhoneController.text.trim();
+      if (supplierPhone != null && supplierPhone.isEmpty) {
+        supplierPhone = null;
+      }
+
+      effectiveUnitCost = packageCost / currentState.unitsPerPackage;
+      productCostDetails = <String, dynamic>{
+        'marca': brand,
+        'presentacion': presentation,
+        'precio_caja': packageCost,
+        'cantidad_caja': currentState.unitsPerPackage,
+        'observaciones': _costNotesController.text.trim(),
+      };
+    } else {
+      supplierName = '';
+      effectiveUnitCost = currentState.unitCost;
+      productCostDetails = <String, dynamic>{
+        'observaciones_producto': _costNotesController.text.trim(),
+      };
+    }
+
+    if (effectiveUnitCost <= 0) {
+      setState(() {
+        _formError = 'Ingresa un costo unitario valido.';
       });
       return;
     }
@@ -1497,19 +2004,26 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
     await ref
         .read(adminMobileDashboardViewModelProvider.notifier)
         .changeSupplier(supplierName);
+    await ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .changeUnitCost(effectiveUnitCost);
 
     await widget.onSubmitPurchase!(
-      categoryName: productNameForCreation == null ? null : categoryNameForCreation,
+      categoryName:
+          productNameForCreation == null ? null : categoryNameForCreation,
+      categoryPrefix:
+          productNameForCreation == null ? null : categoryPrefixForCreation,
       productName: productNameForCreation,
+      productType: effectiveProductType,
+      salePrice: salePrice,
+      productCostDetails: productCostDetails,
+      supplierPhone: supplierPhone,
     );
   }
 }
 
 class _MobileSectionHeading extends StatelessWidget {
-  const _MobileSectionHeading({
-    required this.title,
-    required this.subtitle,
-  });
+  const _MobileSectionHeading({required this.title, required this.subtitle});
 
   final String title;
   final String subtitle;
@@ -1527,39 +2041,19 @@ class _MobileSectionHeading extends StatelessWidget {
   }
 }
 
-class _FeedbackBanner extends StatelessWidget {
-  const _FeedbackBanner({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF93C5FD)),
-      ),
-      child: Text(message),
-    );
-  }
-}
-
 class _ProductInsightCard extends StatelessWidget {
-  const _ProductInsightCard({
-    required this.state,
-    required this.product,
-  });
+  const _ProductInsightCard({required this.state, required this.product});
 
   final AdminMobileDashboardState state;
   final Product product;
 
   @override
   Widget build(BuildContext context) {
-    final specsEntries = product.specs.entries.toList()
-      ..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
+    final specsEntries =
+        product.specs.entries.toList()
+          ..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
+    final purchaseSnapshot = _buildProductPurchaseSnapshot(state, product);
+    final isSupplierProduct = _isSupplierProductType(product.productType);
 
     return Container(
       width: double.infinity,
@@ -1587,22 +2081,59 @@ class _ProductInsightCard extends StatelessWidget {
             value: SystemWFormatters.currency.format(product.lastPurchaseCost),
           ),
           _InfoLine(
-            label: 'Tienda',
-            value: '${product.stockStore} u.',
+            label: 'Ganancia unitaria',
+            value: SystemWFormatters.currency.format(_unitProfit(product)),
           ),
           _InfoLine(
-            label: 'Almacen',
-            value: '${product.stockWarehouse} u.',
+            label: 'Margen estimado',
+            value: '${_unitMargin(product).toStringAsFixed(1)}%',
           ),
-          _InfoLine(
-            label: 'Faltantes',
-            value: '${_missingUnits(product)} u.',
-          ),
-          _InfoLine(
-            label: 'Presentacion',
-            value:
-                '1 ${product.packageName} = ${product.unitsPerPackage} ${product.unitName}',
-          ),
+          _InfoLine(label: 'Tienda', value: '${product.stockStore} u.'),
+          _InfoLine(label: 'Almacen', value: '${product.stockWarehouse} u.'),
+          _InfoLine(label: 'Faltantes', value: '${_missingUnits(product)} u.'),
+          if (isSupplierProduct && _packageCostForProduct(product) > 0)
+            _InfoLine(
+              label: 'Precio caja',
+              value: SystemWFormatters.currency.format(
+                _packageCostForProduct(product),
+              ),
+            ),
+          if (isSupplierProduct)
+            _InfoLine(
+              label: 'Presentacion',
+              value: _presentationForProduct(product),
+            ),
+          if (purchaseSnapshot != null) ...[
+            _InfoLine(
+              label: _purchaseQuantityInfoLabel(product.productType),
+              value:
+                  '${purchaseSnapshot.latestPackageQuantity} ${_purchaseQuantityNoun(product.productType)}'
+                  ' | ${purchaseSnapshot.latestTotalUnits} ${product.unitName}',
+            ),
+            _InfoLine(
+              label: 'Inicio',
+              value: SystemWFormatters.shortDate.format(
+                purchaseSnapshot.firstPurchaseAt,
+              ),
+            ),
+            _InfoLine(
+              label: 'Ultima compra',
+              value: SystemWFormatters.shortDateTime.format(
+                purchaseSnapshot.latestPurchaseAt,
+              ),
+            ),
+            if (isSupplierProduct)
+              _InfoLine(
+                label: 'Proveedor reciente',
+                value: purchaseSnapshot.latestSupplierName,
+              ),
+            _InfoLine(
+              label: 'Proximo vencimiento',
+              value: _formatOptionalDate(
+                product.nextExpiryDate ?? purchaseSnapshot.nextExpiryDate,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Text(
             'Especificaciones',
@@ -1632,10 +2163,7 @@ class _ProductInsightCard extends StatelessWidget {
 }
 
 class _SpecPill extends StatelessWidget {
-  const _SpecPill({
-    required this.label,
-    required this.value,
-  });
+  const _SpecPill({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -1809,10 +2337,7 @@ class _MovementPreviewCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Resumen final',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
+          Text('Resumen final', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 12),
           _InfoLine(label: 'Producto', value: productName ?? 'Sin seleccionar'),
           _InfoLine(
@@ -1833,9 +2358,9 @@ class _MovementPreviewCard extends StatelessWidget {
               padding: const EdgeInsets.only(top: 8),
               child: Text(
                 'La cantidad supera el stock disponible en almacen.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFFB91C1C),
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: const Color(0xFFB91C1C)),
               ),
             ),
         ],
@@ -1884,6 +2409,7 @@ class _SupplierSummary {
     required this.total,
     required this.lastPurchaseAt,
     required this.categoriesLabel,
+    this.phone,
   });
 
   final String name;
@@ -1891,22 +2417,35 @@ class _SupplierSummary {
   final double total;
   final DateTime lastPurchaseAt;
   final String categoriesLabel;
+  final String? phone;
 }
 
 class _CategoryDetailRow {
   const _CategoryDetailRow({
     required this.supplierName,
+    this.supplierPhone,
     required this.productName,
-    required this.quantity,
+    required this.productType,
+    required this.packageQuantity,
+    required this.totalUnits,
     required this.costPrice,
     required this.salePrice,
+    required this.firstPurchaseAt,
+    required this.latestPurchaseAt,
+    this.nextExpiryDate,
   });
 
   final String supplierName;
+  final String? supplierPhone;
   final String productName;
-  final int quantity;
+  final String productType;
+  final int packageQuantity;
+  final int totalUnits;
   final double costPrice;
   final double salePrice;
+  final DateTime firstPurchaseAt;
+  final DateTime latestPurchaseAt;
+  final DateTime? nextExpiryDate;
 }
 
 String _categoryNameForProduct(
@@ -1915,16 +2454,82 @@ String _categoryNameForProduct(
 ) {
   for (final category in state.categories) {
     if (category.id == product.categoryId) {
-      return category.name;
+      return _categoryOptionLabel(category);
     }
   }
 
   return 'Sin categoria';
 }
 
+String _categoryOptionLabel(Category category) {
+  final prefix = category.prefix.trim();
+  if (prefix.isEmpty) {
+    return category.name;
+  }
+
+  return '${category.name} ($prefix)';
+}
+
 int _missingUnits(Product product) {
   final missing = product.lowStockThreshold - product.stockWarehouse;
   return missing > 0 ? missing : 0;
+}
+
+double? _toDouble(dynamic value) {
+  if (value is num) {
+    return value.toDouble();
+  }
+
+  return double.tryParse(value?.toString() ?? '');
+}
+
+double _packageCostForProduct(Product product) {
+  return _toDouble(product.costDetails['precio_caja']) ??
+      (product.lastPurchaseCost * product.unitsPerPackage);
+}
+
+double _unitProfit(Product product) {
+  return product.salePrice - product.lastPurchaseCost;
+}
+
+double _unitMargin(Product product) {
+  if (product.salePrice <= 0) {
+    return 0;
+  }
+
+  return (_unitProfit(product) / product.salePrice) * 100;
+}
+
+String _productTypeLabel(String type) {
+  return type.trim().toLowerCase() == 'artesanal' ? 'Artesanal' : 'Proveedor';
+}
+
+String _presentationForProduct(Product product) {
+  final presentation =
+      product.costDetails['presentacion']?.toString().trim() ?? '';
+  if (presentation.isNotEmpty) {
+    return presentation;
+  }
+
+  return '1 ${product.packageName} = ${product.unitsPerPackage} ${product.unitName}';
+}
+
+String _formatSpecsSummary(Map<String, dynamic> specs) {
+  if (specs.isEmpty) {
+    return 'Sin especificar';
+  }
+
+  if (specs.length == 1) {
+    final entry = specs.entries.first;
+    final key = entry.key.trim().toLowerCase();
+    if (key == 'specs' || key == 'detalle' || key == 'descripcion') {
+      return _formatSpecValue(entry.value);
+    }
+  }
+
+  return specs.entries
+      .map((entry) => '${entry.key}: ${_formatSpecValue(entry.value)}')
+      .join(' | ');
 }
 
 String _formatSpecValue(dynamic value) {
@@ -1935,9 +2540,115 @@ String _formatSpecValue(dynamic value) {
     return value.join(', ');
   }
   if (value is Map) {
-    return value.entries.map((entry) => '${entry.key}: ${entry.value}').join(', ');
+    return value.entries
+        .map((entry) => '${entry.key}: ${entry.value}')
+        .join(', ');
   }
   return value.toString();
+}
+
+String _formatOptionalDate(DateTime? value) {
+  if (value == null) {
+    return 'Sin fecha registrada';
+  }
+
+  return SystemWFormatters.shortDate.format(value);
+}
+
+String _normalizePurchaseProductType(String rawType) {
+  return rawType.trim().toLowerCase() == 'artesanal'
+      ? 'artesanal'
+      : 'proveedor';
+}
+
+bool _isSupplierProductType(String rawType) {
+  return _normalizePurchaseProductType(rawType) == 'proveedor';
+}
+
+String _purchaseQuantityInfoLabel(String rawType) {
+  return _isSupplierProductType(rawType)
+      ? 'Cajas compradas'
+      : 'Cantidad producida';
+}
+
+String _purchaseQuantityNoun(String rawType) {
+  return _isSupplierProductType(rawType) ? 'cajas' : 'lotes';
+}
+
+String _purchaseQuantitySingleLabel(String rawType) {
+  return _isSupplierProductType(rawType) ? 'caja' : 'lote';
+}
+
+bool _isErrorFeedback(String message) {
+  final normalized = message.trim().toLowerCase();
+  return normalized.startsWith('no se pudo') ||
+      normalized.startsWith('ingresa ') ||
+      normalized.startsWith('selecciona ') ||
+      normalized.startsWith('completa ');
+}
+
+bool _isSalePriceStepValid(double value) {
+  final stepped = value * 10;
+  return (stepped - stepped.round()).abs() < 0.000001;
+}
+
+bool _hasOperationalSupplier(String value) {
+  final normalized = value.trim();
+  return normalized.isNotEmpty && normalized != 'Produccion artesanal';
+}
+
+_ProductPurchaseSnapshot? _buildProductPurchaseSnapshot(
+  AdminMobileDashboardState state,
+  Product product,
+) {
+  DateTime? firstPurchaseAt;
+  DateTime? latestPurchaseAt;
+  String latestSupplierName = '';
+  int latestPackageQuantity = 0;
+  int latestTotalUnits = 0;
+  DateTime? nextExpiryDate;
+
+  for (final purchase in state.purchases) {
+    for (final item in purchase.items) {
+      if (item.productId != product.id) {
+        continue;
+      }
+
+      if (firstPurchaseAt == null ||
+          purchase.receivedAt.isBefore(firstPurchaseAt)) {
+        firstPurchaseAt = purchase.receivedAt;
+      }
+      if (latestPurchaseAt == null ||
+          purchase.receivedAt.isAfter(latestPurchaseAt)) {
+        latestPurchaseAt = purchase.receivedAt;
+        latestSupplierName = purchase.supplier;
+        latestPackageQuantity = item.quantity;
+        latestTotalUnits = item.totalUnits;
+      }
+
+      final expiryDate = item.expiryDate;
+      if (expiryDate != null &&
+          (nextExpiryDate == null || expiryDate.isBefore(nextExpiryDate))) {
+        nextExpiryDate = expiryDate;
+      }
+    }
+  }
+
+  if (firstPurchaseAt == null || latestPurchaseAt == null) {
+    return null;
+  }
+
+  return _ProductPurchaseSnapshot(
+    firstPurchaseAt: firstPurchaseAt,
+    latestPurchaseAt: latestPurchaseAt,
+    latestSupplierName:
+        latestSupplierName.trim().isEmpty
+            ? 'Sin proveedor relacionado'
+            : latestSupplierName,
+    latestPackageQuantity: latestPackageQuantity,
+    latestTotalUnits: latestTotalUnits,
+    nextExpiryDate: nextExpiryDate,
+  );
 }
 
 int _uniqueSupplierCount(AdminMobileDashboardState state) {
@@ -1945,14 +2656,14 @@ int _uniqueSupplierCount(AdminMobileDashboardState state) {
 
   for (final purchase in state.purchases) {
     final name = purchase.supplier.trim();
-    if (name.isNotEmpty) {
+    if (_hasOperationalSupplier(name)) {
       names.add(name);
     }
   }
 
   for (final entry in state.priceHistory) {
     final name = entry.supplier.trim();
-    if (name.isNotEmpty) {
+    if (_hasOperationalSupplier(name)) {
       names.add(name);
     }
   }
@@ -1965,20 +2676,21 @@ List<String> _allSupplierOptions(AdminMobileDashboardState state) {
 
   for (final purchase in state.purchases) {
     final name = purchase.supplier.trim();
-    if (name.isNotEmpty) {
+    if (_hasOperationalSupplier(name)) {
       names.add(name);
     }
   }
 
   for (final entry in state.priceHistory) {
     final name = entry.supplier.trim();
-    if (name.isNotEmpty) {
+    if (_hasOperationalSupplier(name)) {
       names.add(name);
     }
   }
 
-  final result = names.toList()
-    ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  final result =
+      names.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
   return result;
 }
 
@@ -2009,7 +2721,7 @@ List<String> _supplierOptionsForProduct(
   for (final entry in state.priceHistory) {
     if (entry.productId == selectedProduct.id) {
       final name = entry.supplier.trim();
-      if (name.isNotEmpty) {
+      if (_hasOperationalSupplier(name)) {
         names.add(name);
       }
     }
@@ -2021,18 +2733,21 @@ List<String> _supplierOptionsForProduct(
     );
     if (hasProduct) {
       final name = purchase.supplier.trim();
-      if (name.isNotEmpty) {
+      if (_hasOperationalSupplier(name)) {
         names.add(name);
       }
     }
   }
 
-  final result = names.toList()
-    ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+  final result =
+      names.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
   return result;
 }
 
-List<_SupplierSummary> _buildSupplierSummaries(AdminMobileDashboardState state) {
+List<_SupplierSummary> _buildSupplierSummaries(
+  AdminMobileDashboardState state,
+) {
   final productById = {
     for (final product in state.products) product.id: product,
   };
@@ -2078,6 +2793,7 @@ List<_SupplierSummary> _buildSupplierSummaries(AdminMobileDashboardState state) 
             lastPurchaseAt: latestPurchase,
             categoriesLabel:
                 categories.isEmpty ? 'Sin categoria' : categories.join(', '),
+            phone: _latestSupplierPhone(entry.value),
           );
         }).toList()
         ..sort((a, b) => b.lastPurchaseAt.compareTo(a.lastPurchaseAt));
@@ -2106,12 +2822,35 @@ List<_CategoryDetailRow> _buildCategoryDetailRows(
           grouped[key] ??
           _CategoryDetailAccumulator(
             supplierName: purchase.supplier,
+            supplierPhone: purchase.supplierPhone,
             productName: item.productName,
+            productType: product.productType,
             salePrice: product.salePrice,
+            firstPurchaseAt: purchase.receivedAt,
+            latestPurchaseAt: purchase.receivedAt,
           );
-      existing.quantity += item.quantity * product.unitsPerPackage;
+      existing.packageQuantity += item.quantity;
+      existing.totalUnits += item.totalUnits;
       existing.costPrice = item.unitCost;
       existing.salePrice = product.salePrice;
+      if (purchase.receivedAt.isBefore(existing.firstPurchaseAt)) {
+        existing.firstPurchaseAt = purchase.receivedAt;
+      }
+      if (purchase.receivedAt.isAfter(existing.latestPurchaseAt)) {
+        existing.latestPurchaseAt = purchase.receivedAt;
+      }
+      final expiryDate = item.expiryDate;
+      if (expiryDate != null &&
+          (existing.nextExpiryDate == null ||
+              expiryDate.isBefore(existing.nextExpiryDate!))) {
+        existing.nextExpiryDate = expiryDate;
+      }
+      final supplierPhone = purchase.supplierPhone?.trim();
+      if ((existing.supplierPhone == null || existing.supplierPhone!.isEmpty) &&
+          supplierPhone != null &&
+          supplierPhone.isNotEmpty) {
+        existing.supplierPhone = supplierPhone;
+      }
       grouped[key] = existing;
     }
   }
@@ -2121,10 +2860,16 @@ List<_CategoryDetailRow> _buildCategoryDetailRows(
           .map(
             (row) => _CategoryDetailRow(
               supplierName: row.supplierName,
+              supplierPhone: row.supplierPhone,
               productName: row.productName,
-              quantity: row.quantity,
+              productType: row.productType,
+              packageQuantity: row.packageQuantity,
+              totalUnits: row.totalUnits,
               costPrice: row.costPrice,
               salePrice: row.salePrice,
+              firstPurchaseAt: row.firstPurchaseAt,
+              latestPurchaseAt: row.latestPurchaseAt,
+              nextExpiryDate: row.nextExpiryDate,
             ),
           )
           .toList()
@@ -2140,15 +2885,77 @@ List<_CategoryDetailRow> _buildCategoryDetailRows(
 class _CategoryDetailAccumulator {
   _CategoryDetailAccumulator({
     required this.supplierName,
+    this.supplierPhone,
     required this.productName,
+    required this.productType,
     required this.salePrice,
-    this.quantity = 0,
+    required this.firstPurchaseAt,
+    required this.latestPurchaseAt,
+    this.packageQuantity = 0,
+    this.totalUnits = 0,
     this.costPrice = 0,
+    this.nextExpiryDate,
   });
 
   final String supplierName;
+  String? supplierPhone;
   final String productName;
-  int quantity;
+  final String productType;
+  int packageQuantity;
+  int totalUnits;
   double costPrice;
   double salePrice;
+  DateTime firstPurchaseAt;
+  DateTime latestPurchaseAt;
+  DateTime? nextExpiryDate;
+}
+
+String _supplierPhoneForName(
+  AdminMobileDashboardState state,
+  String supplierName,
+) {
+  final normalizedName = supplierName.trim().toLowerCase();
+  if (normalizedName.isEmpty) {
+    return '';
+  }
+
+  for (final purchase in state.purchases) {
+    if (purchase.supplier.trim().toLowerCase() != normalizedName) {
+      continue;
+    }
+    final phone = purchase.supplierPhone?.trim() ?? '';
+    if (phone.isNotEmpty) {
+      return phone;
+    }
+  }
+
+  return '';
+}
+
+String? _latestSupplierPhone(List<Purchase> purchases) {
+  for (final purchase in purchases) {
+    final phone = purchase.supplierPhone?.trim() ?? '';
+    if (phone.isNotEmpty) {
+      return phone;
+    }
+  }
+  return null;
+}
+
+class _ProductPurchaseSnapshot {
+  const _ProductPurchaseSnapshot({
+    required this.firstPurchaseAt,
+    required this.latestPurchaseAt,
+    required this.latestSupplierName,
+    required this.latestPackageQuantity,
+    required this.latestTotalUnits,
+    this.nextExpiryDate,
+  });
+
+  final DateTime firstPurchaseAt;
+  final DateTime latestPurchaseAt;
+  final String latestSupplierName;
+  final int latestPackageQuantity;
+  final int latestTotalUnits;
+  final DateTime? nextExpiryDate;
 }

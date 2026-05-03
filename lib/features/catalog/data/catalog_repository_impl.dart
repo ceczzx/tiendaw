@@ -29,8 +29,11 @@ class CatalogRepositoryImpl implements CatalogRepository {
   }
 
   @override
-  Future<Category> ensureCategory(String name) {
-    return _remote.ensureCategory(name);
+  Future<Category> ensureCategory({
+    required String name,
+    required String prefix,
+  }) {
+    return _remote.ensureCategory(name: name, prefix: prefix);
   }
 
   @override
@@ -82,16 +85,24 @@ class CatalogRepositoryImpl implements CatalogRepository {
   Future<Product> ensureProduct({
     required String categoryId,
     required String name,
+    required String productType,
     required double salePrice,
     required double lastPurchaseCost,
     required int lowStockThreshold,
+    required int unitsPerPackage,
+    required Map<String, dynamic> costDetails,
+    required Map<String, dynamic> specs,
   }) {
     return _remote.ensureProduct(
       categoryId: categoryId,
       name: name,
+      productType: productType,
       salePrice: salePrice,
       lastPurchaseCost: lastPurchaseCost,
       lowStockThreshold: lowStockThreshold,
+      unitsPerPackage: unitsPerPackage,
+      costDetails: costDetails,
+      specs: specs,
     );
   }
 
@@ -103,6 +114,38 @@ class CatalogRepositoryImpl implements CatalogRepository {
     return _remote.updateProductLowStockThreshold(
       productId: productId,
       lowStockThreshold: lowStockThreshold,
+    );
+  }
+
+  @override
+  Future<void> updateProductUnitsPerPackage({
+    required String productId,
+    required int unitsPerPackage,
+  }) {
+    return _remote.updateProductUnitsPerPackage(
+      productId: productId,
+      unitsPerPackage: unitsPerPackage,
+    );
+  }
+
+  @override
+  Future<void> updateProductCatalogData({
+    required String productId,
+    required String productType,
+    required double salePrice,
+    required double lastPurchaseCost,
+    required int unitsPerPackage,
+    required Map<String, dynamic> costDetails,
+    required Map<String, dynamic> specs,
+  }) {
+    return _remote.updateProductCatalogData(
+      productId: productId,
+      productType: productType,
+      salePrice: salePrice,
+      lastPurchaseCost: lastPurchaseCost,
+      unitsPerPackage: unitsPerPackage,
+      costDetails: costDetails,
+      specs: specs,
     );
   }
 

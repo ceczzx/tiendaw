@@ -52,6 +52,10 @@ class SalesLocalDataSource {
   Future<CashShift?> getOpenShift(String sellerId) async {
     return _openShiftsBySeller[sellerId];
   }
+
+  Future<void> clearOpenShift(String sellerId) async {
+    _openShiftsBySeller.remove(sellerId);
+  }
 }
 
 class SalesRemoteDataSource {
@@ -94,7 +98,7 @@ class SalesRemoteDataSource {
           'transfer' => PaymentMethod.transfer,
           _ => PaymentMethod.cash,
         },
-        createdAt: DateTime.parse(row['created_at'] as String),
+        createdAt: _parseSupabaseDateTime(row['created_at'] as String),
         syncStatus: SyncStatus.synced,
         syncAttempts: 0,
       );
@@ -112,7 +116,11 @@ class SalesRemoteDataSource {
     return _mapRows(rows).map(_mapCashShift).toList();
   }
 
-  Future<CashShift> getOpenShift(String sellerId) async {
+  Future<CashShift?> getOpenShift(String sellerId) {
+    return _loadOpenShift(sellerId);
+  }
+
+  Future<CashShift> openShift(String sellerId) async {
     final current = await _loadOpenShift(sellerId);
     if (current != null) {
       return current;
@@ -145,7 +153,12 @@ class SalesRemoteDataSource {
       throw StateError('No hay una sesion activa para registrar ventas.');
     }
 
-    final openShift = await getOpenShift(currentUser.id);
+    final openShift = await _loadOpenShift(currentUser.id);
+    if (openShift == null) {
+      throw StateError(
+        'Inicia la caja antes de registrar ventas en la tienda.',
+      );
+    }
     final storeLocationId = await _resolveLocationId('store');
 
     final inserted =
@@ -158,7 +171,7 @@ class SalesRemoteDataSource {
               'cash_shift_id': openShift.id,
               'payment_method': sale.paymentMethod.name,
               'total': sale.total,
-              'created_at': sale.createdAt.toIso8601String(),
+              'created_at': _toSupabaseDateTime(sale.createdAt),
             })
             .select('id')
             .single();
@@ -199,16 +212,9 @@ class SalesRemoteDataSource {
     if (current != null) {
       await _client
           .from('cash_shifts')
-          .update({'closed_at': DateTime.now().toIso8601String()})
+          .update({'closed_at': _toSupabaseDateTime(DateTime.now())})
           .eq('id', current.id);
     }
-
-    await _client.from('cash_shifts').insert({
-      'seller_id': sellerId,
-      'opening_amount': 0,
-      'cash_total': 0,
-      'yape_total': 0,
-    });
   }
 
   Future<CashShift?> _loadOpenShift(String sellerId) async {
@@ -249,11 +255,11 @@ class SalesRemoteDataSource {
       id: row['id'] as String,
       sellerId: row['seller_id'] as String,
       sellerName: seller['full_name']?.toString(),
-      openedAt: DateTime.parse(row['opened_at'] as String),
+      openedAt: _parseSupabaseDateTime(row['opened_at'] as String),
       closedAt:
           row['closed_at'] == null
               ? null
-              : DateTime.parse(row['closed_at'] as String),
+              : _parseSupabaseDateTime(row['closed_at'] as String),
       cashSales: (row['cash_total'] as num?)?.toDouble() ?? 0,
       yapeSales: (row['yape_total'] as num?)?.toDouble() ?? 0,
     );
@@ -282,4 +288,12 @@ class _PersistedSale {
 
   final String id;
   final String cashShiftId;
+}
+
+DateTime _parseSupabaseDateTime(String rawValue) {
+  return DateTime.parse(rawValue).toLocal();
+}
+
+String _toSupabaseDateTime(DateTime value) {
+  return value.toUtc().toIso8601String();
 }

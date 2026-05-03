@@ -6,6 +6,7 @@ import 'package:tiendaw/features/auth/presentation/session_view_model.dart';
 import 'package:tiendaw/features/dashboard/presentation/admin_desktop_dashboard_page.dart';
 import 'package:tiendaw/features/purchases/presentation/admin_mobile_dashboard_page.dart';
 import 'package:tiendaw/features/sales/presentation/seller_dashboard_page.dart';
+import 'package:tiendaw/features/sales/presentation/seller_dashboard_view_model.dart';
 import 'package:tiendaw/shared/widgets/system_w_widgets.dart';
 
 class SystemWShell extends ConsumerStatefulWidget {
@@ -257,9 +258,16 @@ class _SystemWShellState extends ConsumerState<SystemWShell> {
   }
 
   Future<void> _confirmSignOut(BuildContext context, AppUser user) async {
+    final showCashWarning =
+        user.role == UserRole.seller
+            ? (ref.read(sellerDashboardViewModelProvider).valueOrNull?.hasOpenShift ??
+                true)
+            : false;
     final shouldSignOut = await showDialog<bool>(
       context: context,
-      builder: (context) => _SignOutDialog(user: user),
+      builder:
+          (context) =>
+              _SignOutDialog(user: user, showCashWarning: showCashWarning),
     );
 
     if (shouldSignOut != true || !mounted) {
@@ -315,9 +323,13 @@ class _SessionNoticeCard extends StatelessWidget {
 }
 
 class _SignOutDialog extends StatelessWidget {
-  const _SignOutDialog({required this.user});
+  const _SignOutDialog({
+    required this.user,
+    required this.showCashWarning,
+  });
 
   final AppUser user;
+  final bool showCashWarning;
 
   @override
   Widget build(BuildContext context) {
@@ -335,7 +347,7 @@ class _SignOutDialog extends StatelessWidget {
                 ? '¿Seguro que quieres cerrar sesion ahora?'
                 : '¿Seguro que quieres cerrar sesion y volver al login?',
           ),
-          if (isSeller) ...[
+          if (isSeller && showCashWarning) ...[
             const SizedBox(height: 16),
             Container(
               width: double.infinity,

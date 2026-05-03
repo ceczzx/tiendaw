@@ -16,22 +16,21 @@ class SalesRepositoryImpl implements SalesRepository {
   @override
   Future<void> closeShift(String sellerId) async {
     await _remote.closeShift(sellerId);
-    final reopenedShift = await _remote.getOpenShift(sellerId);
-    await _local.saveOpenShift(sellerId, reopenedShift);
+    await _local.clearOpenShift(sellerId);
   }
 
   @override
-  Future<CashShift> getOpenShift(String sellerId) async {
+  Future<CashShift?> getOpenShift(String sellerId) async {
     try {
       final shift = await _remote.getOpenShift(sellerId);
-      await _local.saveOpenShift(sellerId, shift);
+      if (shift == null) {
+        await _local.clearOpenShift(sellerId);
+      } else {
+        await _local.saveOpenShift(sellerId, shift);
+      }
       return shift;
     } catch (_) {
-      final cached = await _local.getOpenShift(sellerId);
-      if (cached == null) {
-        rethrow;
-      }
-      return cached;
+      return _local.getOpenShift(sellerId);
     }
   }
 
@@ -63,6 +62,13 @@ class SalesRepositoryImpl implements SalesRepository {
       }
       return cached;
     }
+  }
+
+  @override
+  Future<CashShift> openShift(String sellerId) async {
+    final shift = await _remote.openShift(sellerId);
+    await _local.saveOpenShift(sellerId, shift);
+    return shift;
   }
 
   @override

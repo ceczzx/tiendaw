@@ -21,8 +21,8 @@ class PurchaseLocalDataSource {
   }
 
   Future<void> savePurchases(List<Purchase> purchases) async {
-    final next =
-        [...purchases]..sort((a, b) => b.receivedAt.compareTo(a.receivedAt));
+    final next = [...purchases]
+      ..sort((a, b) => b.receivedAt.compareTo(a.receivedAt));
     _purchases = List<Purchase>.unmodifiable(next);
   }
 
@@ -47,7 +47,7 @@ class PurchaseRemoteDataSource {
     final rows = await _client
         .from('purchases')
         .select(
-          'id, received_at, supplier:suppliers(name), admin:profiles(full_name), purchase_items(product_id, quantity, unit_cost, expiry_date, product:products(name))',
+          'id, received_at, supplier:suppliers(name, phone), admin:profiles(full_name), purchase_items(product_id, quantity, unit_cost, expiry_date, product:products(name, units_per_package))',
         )
         .order('received_at', ascending: false);
 
@@ -63,6 +63,8 @@ class PurchaseRemoteDataSource {
                   productId: item['product_id'] as String,
                   productName: product['name']?.toString() ?? 'Producto',
                   quantity: item['quantity'] as int,
+                  unitsPerPackage:
+                      (product['units_per_package'] as num?)?.toInt() ?? 1,
                   unitCost: (item['unit_cost'] as num).toDouble(),
                   expiryDate:
                       item['expiry_date'] == null
@@ -74,10 +76,11 @@ class PurchaseRemoteDataSource {
 
       return Purchase(
         id: row['id'] as String,
-        supplier: supplier['name']?.toString() ?? 'Proveedor',
+        supplier: supplier['name']?.toString() ?? 'Produccion artesanal',
+        supplierPhone: supplier['phone']?.toString(),
         registeredBy: admin['full_name']?.toString() ?? 'Administrador',
         items: items,
-        receivedAt: DateTime.parse(row['received_at'] as String),
+        receivedAt: _parseSupabaseDateTime(row['received_at'] as String),
         syncStatus: SyncStatus.synced,
         syncAttempts: 0,
       );
@@ -90,7 +93,14 @@ class PurchaseRemoteDataSource {
       throw StateError('No hay una sesion activa para registrar compras.');
     }
 
-    final supplierId = await _resolveSupplierId(purchase.supplier);
+    final normalizedSupplier = purchase.supplier.trim();
+    final supplierId =
+        normalizedSupplier.isEmpty
+            ? null
+            : await _resolveSupplierId(
+              normalizedSupplier,
+              phone: purchase.supplierPhone,
+            );
     final warehouseId = await _resolveLocationId('warehouse');
 
     await _client.from('purchases').insert({
@@ -98,54 +108,72 @@ class PurchaseRemoteDataSource {
       'supplier_id': supplierId,
       'admin_id': currentUser.id,
       'warehouse_id': warehouseId,
-      'total': purchase.total,
-      'received_at': purchase.receivedAt.toIso8601String(),
+      'total_price': purchase.total,
+      'received_at': _toSupabaseDateTime(purchase.receivedAt),
     });
 
-    await _client.from('purchase_items').insert(
-      purchase.items
-          .map(
-            (item) => {
-              'purchase_id': purchase.id,
-              'product_id': item.productId,
-              'quantity': item.quantity,
-              'unit_cost': item.unitCost,
-              'expiry_date': item.expiryDate?.toIso8601String(),
-            },
-          )
-          .toList(),
-    );
+    await _client
+        .from('purchase_items')
+        .insert(
+          purchase.items
+              .map(
+                (item) => {
+                  'purchase_id': purchase.id,
+                  'product_id': item.productId,
+                  'quantity': item.quantity,
+                  'unit_cost': item.unitCost,
+                  'expiry_date': item.expiryDate?.toIso8601String(),
+                },
+              )
+              .toList(),
+        );
 
-    await _client.from('product_prices').insert(
-      purchase.items
-          .map(
-            (item) => {
-              'product_id': item.productId,
-              'supplier_id': supplierId,
-              'unit_cost': item.unitCost,
-              'effective_at': purchase.receivedAt.toIso8601String(),
-            },
-          )
-          .toList(),
-    );
+    if (supplierId != null) {
+      await _client
+          .from('product_prices')
+          .insert(
+            purchase.items
+                .map(
+                  (item) => {
+                    'product_id': item.productId,
+                    'supplier_id': supplierId,
+                    'unit_cost': item.unitCost,
+                    'effective_at': _toSupabaseDateTime(purchase.receivedAt),
+                  },
+                )
+                .toList(),
+          );
+    }
   }
 
-  Future<String> _resolveSupplierId(String supplierName) async {
+  Future<String> _resolveSupplierId(String supplierName, {String? phone}) async {
+    final normalizedPhone = phone?.trim();
     final rows = await _client
         .from('suppliers')
-        .select('id')
+        .select('id, phone')
         .eq('name', supplierName)
         .limit(1);
 
     final data = _mapRows(rows);
     if (data.isNotEmpty) {
-      return data.first['id'] as String;
+      final supplier = data.first;
+      final supplierId = supplier['id'] as String;
+      final currentPhone = supplier['phone']?.toString().trim() ?? '';
+      if (normalizedPhone != null &&
+          normalizedPhone.isNotEmpty &&
+          normalizedPhone != currentPhone) {
+        await _client
+            .from('suppliers')
+            .update({'phone': normalizedPhone})
+            .eq('id', supplierId);
+      }
+      return supplierId;
     }
 
     final inserted =
         await _client
             .from('suppliers')
-            .insert({'name': supplierName})
+            .insert({'name': supplierName, 'phone': normalizedPhone})
             .select('id')
             .maybeSingle();
 
@@ -165,7 +193,9 @@ class PurchaseRemoteDataSource {
 
     final data = _mapRows(rows);
     if (data.isEmpty) {
-      throw StateError('No existe una ubicacion configurada para $locationType.');
+      throw StateError(
+        'No existe una ubicacion configurada para $locationType.',
+      );
     }
 
     return data.first['id'] as String;
@@ -184,4 +214,12 @@ class PurchaseRemoteDataSource {
 
     return Map<String, dynamic>.from(value as Map);
   }
+}
+
+DateTime _parseSupabaseDateTime(String rawValue) {
+  return DateTime.parse(rawValue).toLocal();
+}
+
+String _toSupabaseDateTime(DateTime value) {
+  return value.toUtc().toIso8601String();
 }

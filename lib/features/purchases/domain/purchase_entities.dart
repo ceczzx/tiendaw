@@ -5,6 +5,7 @@ class PurchaseLine {
     required this.productId,
     required this.productName,
     required this.quantity,
+    required this.unitsPerPackage,
     required this.unitCost,
     this.expiryDate,
   });
@@ -12,16 +13,20 @@ class PurchaseLine {
   final String productId;
   final String productName;
   final int quantity;
+  final int unitsPerPackage;
   final double unitCost;
   final DateTime? expiryDate;
 
-  double get subtotal => quantity * unitCost;
+  int get totalUnits => quantity * unitsPerPackage;
+
+  double get subtotal => totalUnits * unitCost;
 }
 
 class Purchase {
   const Purchase({
     required this.id,
     required this.supplier,
+    this.supplierPhone,
     required this.registeredBy,
     required this.items,
     required this.receivedAt,
@@ -31,6 +36,7 @@ class Purchase {
 
   final String id;
   final String supplier;
+  final String? supplierPhone;
   final String registeredBy;
   final List<PurchaseLine> items;
   final DateTime receivedAt;
@@ -42,6 +48,8 @@ class Purchase {
   Purchase copyWith({
     String? id,
     String? supplier,
+    String? supplierPhone,
+    bool clearSupplierPhone = false,
     String? registeredBy,
     List<PurchaseLine>? items,
     DateTime? receivedAt,
@@ -51,6 +59,8 @@ class Purchase {
     return Purchase(
       id: id ?? this.id,
       supplier: supplier ?? this.supplier,
+      supplierPhone:
+          clearSupplierPhone ? null : supplierPhone ?? this.supplierPhone,
       registeredBy: registeredBy ?? this.registeredBy,
       items: items ?? this.items,
       receivedAt: receivedAt ?? this.receivedAt,

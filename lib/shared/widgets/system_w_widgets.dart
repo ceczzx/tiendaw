@@ -175,3 +175,94 @@ class EmptyStateCard extends StatelessWidget {
     );
   }
 }
+
+Future<void> showSystemWActionDialog(
+  BuildContext context, {
+  required String message,
+  String? title,
+  bool isError = false,
+  String buttonLabel = 'Entendido',
+}) {
+  return showDialog<void>(
+    context: context,
+    builder:
+        (dialogContext) => SystemWActionDialog(
+          title:
+              title ??
+              (isError ? 'No se completó la acción' : 'Acción registrada'),
+          message: message,
+          isError: isError,
+          buttonLabel: buttonLabel,
+        ),
+  );
+}
+
+class SystemWActionDialog extends StatelessWidget {
+  const SystemWActionDialog({
+    required this.title,
+    required this.message,
+    super.key,
+    this.isError = false,
+    this.buttonLabel = 'Entendido',
+  });
+
+  final String title;
+  final String message;
+  final bool isError;
+  final String buttonLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent =
+        isError ? const Color(0xFFB91C1C) : const Color(0xFF0F766E);
+    final softBackground =
+        isError ? const Color(0xFFFEF2F2) : const Color(0xFFECFDF5);
+    final borderColor =
+        isError ? const Color(0xFFFCA5A5) : const Color(0xFF99F6E4);
+
+    return AlertDialog(
+      titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+      contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      title: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: softBackground,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: borderColor),
+            ),
+            child: Icon(
+              isError ? Icons.warning_amber_rounded : Icons.check_circle_rounded,
+              color: accent,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Text(title)),
+        ],
+      ),
+      content: Container(
+        width: 420,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: softBackground,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: borderColor),
+        ),
+        child: Text(message, style: Theme.of(context).textTheme.bodyLarge),
+      ),
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(),
+          style: FilledButton.styleFrom(
+            backgroundColor: accent,
+            foregroundColor: Colors.white,
+          ),
+          child: Text(buttonLabel),
+        ),
+      ],
+    );
+  }
+}

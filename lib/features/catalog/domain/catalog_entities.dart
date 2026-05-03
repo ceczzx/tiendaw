@@ -1,8 +1,13 @@
 class Category {
-  const Category({required this.id, required this.name});
+  const Category({
+    required this.id,
+    required this.name,
+    required this.prefix,
+  });
 
   final String id;
   final String name;
+  final String prefix;
 }
 
 class Product {
@@ -10,7 +15,9 @@ class Product {
     required this.id,
     required this.categoryId,
     required this.name,
+    required this.productType,
     required this.unitsPerPackage,
+    required this.costDetails,
     required this.specs,
     required this.salePrice,
     required this.lastPurchaseCost,
@@ -25,7 +32,9 @@ class Product {
   final String id;
   final String categoryId;
   final String name;
+  final String productType;
   final int unitsPerPackage;
+  final Map<String, dynamic> costDetails;
   final Map<String, dynamic> specs;
   final double salePrice;
   final double lastPurchaseCost;
@@ -40,7 +49,9 @@ class Product {
     String? id,
     String? categoryId,
     String? name,
+    String? productType,
     int? unitsPerPackage,
+    Map<String, dynamic>? costDetails,
     Map<String, dynamic>? specs,
     double? salePrice,
     double? lastPurchaseCost,
@@ -55,7 +66,9 @@ class Product {
       id: id ?? this.id,
       categoryId: categoryId ?? this.categoryId,
       name: name ?? this.name,
+      productType: productType ?? this.productType,
       unitsPerPackage: unitsPerPackage ?? this.unitsPerPackage,
+      costDetails: costDetails ?? this.costDetails,
       specs: specs ?? this.specs,
       salePrice: salePrice ?? this.salePrice,
       lastPurchaseCost: lastPurchaseCost ?? this.lastPurchaseCost,

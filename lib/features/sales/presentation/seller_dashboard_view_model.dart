@@ -32,7 +32,7 @@ class SellerDashboardState {
   final String? selectedProductId;
   final int quantity;
   final PaymentMethod paymentMethod;
-  final CashShift currentShift;
+  final CashShift? currentShift;
   final List<Sale> todaysSales;
   final List<SaleLine> cartItems;
   final String searchQuery;
@@ -48,6 +48,7 @@ class SellerDashboardState {
     int? quantity,
     PaymentMethod? paymentMethod,
     CashShift? currentShift,
+    bool clearCurrentShift = false,
     List<Sale>? todaysSales,
     List<SaleLine>? cartItems,
     String? searchQuery,
@@ -66,7 +67,8 @@ class SellerDashboardState {
               : selectedProductId ?? this.selectedProductId,
       quantity: quantity ?? this.quantity,
       paymentMethod: paymentMethod ?? this.paymentMethod,
-      currentShift: currentShift ?? this.currentShift,
+      currentShift:
+          clearCurrentShift ? null : currentShift ?? this.currentShift,
       todaysSales: todaysSales ?? this.todaysSales,
       cartItems: cartItems ?? this.cartItems,
       searchQuery: searchQuery ?? this.searchQuery,
@@ -92,6 +94,17 @@ class SellerDashboardState {
 
   double get cartTotal =>
       cartItems.fold(0, (sum, item) => sum + item.subtotal);
+
+  bool get hasOpenShift => currentShift?.isOpen ?? false;
+
+  int quantityInCart(String productId) {
+    for (final item in cartItems) {
+      if (item.productId == productId) {
+        return item.quantity;
+      }
+    }
+    return 0;
+  }
 }
 
 final sellerDashboardViewModelProvider =
@@ -174,9 +187,40 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     state = AsyncData(current.copyWith(searchQuery: query));
   }
 
+  Future<void> clearFeedback() async {
+    final current = state.valueOrNull;
+    if (current == null || current.feedbackMessage == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(feedbackMessage: null));
+  }
+
   Future<void> addToCart(Product product, int quantity) async {
     final current = state.valueOrNull;
     if (current == null || quantity <= 0) {
+      return;
+    }
+
+    if (!current.hasOpenShift) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'Inicia la caja antes de agregar productos a la venta.',
+        ),
+      );
+      return;
+    }
+
+    final stockStore = _storeStockForProduct(current, product.id);
+    final existingQuantity = current.quantityInCart(product.id);
+    final nextQuantity = existingQuantity + quantity;
+    if (stockStore <= 0 || nextQuantity > stockStore) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage:
+              'Solo tienes $stockStore unidades disponibles en tienda para ${product.name}.',
+        ),
+      );
       return;
     }
 
@@ -219,6 +263,17 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     if (quantity <= 0) {
       next.removeAt(index);
     } else {
+      final product = _productById(current, productId);
+      final stockStore = _storeStockForProduct(current, productId);
+      if (stockStore <= 0 || quantity > stockStore) {
+        state = AsyncData(
+          current.copyWith(
+            feedbackMessage:
+                'Solo tienes $stockStore unidades disponibles en tienda para ${product?.name ?? 'este producto'}.',
+          ),
+        );
+        return;
+      }
       final existing = next[index];
       next[index] = SaleLine(
         productId: existing.productId,
@@ -260,6 +315,15 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       return;
     }
 
+    if (!current.hasOpenShift) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'Inicia la caja antes de registrar ventas.',
+        ),
+      );
+      return;
+    }
+
     final sale = Sale(
       id: _uuid.v4(),
       sellerId: user.id,
@@ -297,11 +361,33 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
   }
 
-  Future<void> registerCartSale(AppUser user, PaymentMethod paymentMethod)
+  Future<bool> registerCartSale(AppUser user, PaymentMethod paymentMethod)
       async {
     final current = state.valueOrNull;
     if (current == null || current.cartItems.isEmpty) {
-      return;
+      return false;
+    }
+
+    if (!current.hasOpenShift) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'Inicia la caja antes de registrar ventas.',
+        ),
+      );
+      return false;
+    }
+
+    for (final item in current.cartItems) {
+      final stockStore = _storeStockForProduct(current, item.productId);
+      if (item.quantity > stockStore) {
+        state = AsyncData(
+          current.copyWith(
+            feedbackMessage:
+            'La tienda solo tiene $stockStore unidades disponibles para ${item.productName}.',
+          ),
+        );
+        return false;
+      }
     }
 
     final sale = Sale(
@@ -326,32 +412,79 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
           feedbackMessage: 'Venta registrada.',
         ),
       );
+      return true;
     } catch (error) {
       state = AsyncData(
         current.copyWith(
           feedbackMessage: 'No se pudo registrar la venta: $error',
         ),
       );
+      return false;
     }
   }
 
-  Future<void> closeShift(AppUser user) async {
+  Future<bool> openShift(AppUser user) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    if (current.hasOpenShift) {
+      state = AsyncData(
+        current.copyWith(feedbackMessage: 'La caja ya esta iniciada.'),
+      );
+      return false;
+    }
+
+    try {
+      await ref.read(salesRepositoryProvider).openShift(user.id);
+      await _refreshAll();
+      state = AsyncData(
+        state.requireValue.copyWith(
+          cartItems: const [],
+          quantity: 1,
+          feedbackMessage: 'Caja iniciada. Ya puedes registrar ventas.',
+        ),
+      );
+      return true;
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(feedbackMessage: 'No se pudo iniciar la caja: $error'),
+      );
+      return false;
+    }
+  }
+
+  Future<bool> closeShift(AppUser user) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    if (!current.hasOpenShift) {
+      state = AsyncData(
+        current.copyWith(feedbackMessage: 'No hay una caja abierta para cerrar.'),
+      );
+      return false;
+    }
+
     try {
       await ref.read(salesRepositoryProvider).closeShift(user.id);
       await _refreshAll();
       state = AsyncData(
         state.requireValue.copyWith(
-          feedbackMessage: 'Caja cerrada y turno reabierto en Supabase.',
+          cartItems: const [],
+          quantity: 1,
+          clearCurrentShift: true,
+          feedbackMessage: null,
         ),
       );
+      return true;
     } catch (error) {
-      final current = state.valueOrNull;
-      if (current == null) {
-        return;
-      }
       state = AsyncData(
         current.copyWith(feedbackMessage: 'No se pudo cerrar la caja: $error'),
       );
+      return false;
     }
   }
 
@@ -432,5 +565,19 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
 
     ref.invalidate(adminMobileDashboardViewModelProvider);
     ref.invalidate(adminDesktopDashboardViewModelProvider);
+  }
+
+  Product? _productById(SellerDashboardState state, String productId) {
+    for (final product in state.products) {
+      if (product.id == productId) {
+        return product;
+      }
+    }
+    return null;
+  }
+
+  int _storeStockForProduct(SellerDashboardState state, String productId) {
+    final product = _productById(state, productId);
+    return product?.stockStore ?? 0;
   }
 }

@@ -3,10 +3,18 @@ import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
 import 'package:tiendaw/features/inventory/domain/inventory_entities.dart';
 
 class CategoryModel extends Category {
-  const CategoryModel({required super.id, required super.name});
+  const CategoryModel({
+    required super.id,
+    required super.name,
+    required super.prefix,
+  });
 
   factory CategoryModel.fromMap(Map<String, dynamic> map) {
-    return CategoryModel(id: map['id'] as String, name: map['name'] as String);
+    return CategoryModel(
+      id: map['id'] as String,
+      name: map['name'] as String,
+      prefix: map['prefix']?.toString() ?? '',
+    );
   }
 }
 
@@ -15,7 +23,9 @@ class ProductModel extends Product {
     required super.id,
     required super.categoryId,
     required super.name,
+    required super.productType,
     required super.unitsPerPackage,
+    required super.costDetails,
     required super.specs,
     required super.salePrice,
     required super.lastPurchaseCost,
@@ -37,7 +47,12 @@ class ProductModel extends Product {
       id: map['id'] as String,
       categoryId: map['category_id'] as String,
       name: map['name'] as String,
+      productType: map['product_type']?.toString() ?? 'proveedor',
       unitsPerPackage: (map['units_per_package'] as num?)?.toInt() ?? 1,
+      costDetails:
+          map['cost_details'] is Map
+              ? Map<String, dynamic>.from(map['cost_details'] as Map)
+              : const <String, dynamic>{},
       specs:
           map['specs'] is Map
               ? Map<String, dynamic>.from(map['specs'] as Map)
@@ -99,21 +114,30 @@ class CatalogRemoteDataSource {
   Future<List<Category>> getCategories() async {
     final rows = await _client
         .from('categories')
-        .select('id, name')
+        .select('id, name, prefix')
         .order('name');
 
     return _mapRows(rows).map(CategoryModel.fromMap).toList();
   }
 
-  Future<Category> ensureCategory(String name) async {
+  Future<Category> ensureCategory({
+    required String name,
+    required String prefix,
+  }) async {
     final normalizedName = name.trim();
+    final normalizedPrefix = prefix.trim().toUpperCase();
     if (normalizedName.isEmpty) {
       throw StateError('La categoria no puede estar vacia.');
+    }
+    if (!RegExp(r'^[A-Z]{3,5}$').hasMatch(normalizedPrefix)) {
+      throw StateError(
+        'El prefix de la categoria debe tener entre 3 y 5 letras mayusculas.',
+      );
     }
 
     final rows = await _client
         .from('categories')
-        .select('id, name')
+        .select('id, name, prefix')
         .eq('name', normalizedName)
         .limit(1);
     final data = _mapRows(rows);
@@ -124,8 +148,8 @@ class CatalogRemoteDataSource {
     final inserted =
         await _client
             .from('categories')
-            .insert({'name': normalizedName})
-            .select('id, name')
+            .insert({'name': normalizedName, 'prefix': normalizedPrefix})
+            .select('id, name, prefix')
             .single();
 
     return CategoryModel.fromMap(Map<String, dynamic>.from(inserted));
@@ -135,7 +159,7 @@ class CatalogRemoteDataSource {
     final productRows = await _client
         .from('products')
         .select(
-          'id, category_id, name, units_per_package, package_name, unit_name, specs, sale_price, last_purchase_cost, low_stock_threshold',
+          'id, category_id, name, product_type, units_per_package, package_name, unit_name, cost_details, specs, sale_price, last_purchase_cost, low_stock_threshold',
         )
         .order('name');
     final stockByProduct = await _loadStockByProduct();
@@ -155,9 +179,13 @@ class CatalogRemoteDataSource {
   Future<Product> ensureProduct({
     required String categoryId,
     required String name,
+    required String productType,
     required double salePrice,
     required double lastPurchaseCost,
     required int lowStockThreshold,
+    required int unitsPerPackage,
+    required Map<String, dynamic> costDetails,
+    required Map<String, dynamic> specs,
   }) async {
     final normalizedName = name.trim();
     if (normalizedName.isEmpty) {
@@ -167,21 +195,37 @@ class CatalogRemoteDataSource {
     final rows = await _client
         .from('products')
         .select(
-          'id, category_id, name, units_per_package, package_name, unit_name, specs, sale_price, last_purchase_cost, low_stock_threshold',
+          'id, category_id, name, product_type, units_per_package, package_name, unit_name, cost_details, specs, sale_price, last_purchase_cost, low_stock_threshold',
         )
         .eq('category_id', categoryId)
         .eq('name', normalizedName)
         .limit(1);
     final data = _mapRows(rows);
     if (data.isNotEmpty) {
+      final updates = <String, dynamic>{};
+      if ((data.first['product_type']?.toString() ?? 'proveedor') != productType) {
+        updates['product_type'] = productType;
+      }
       if ((data.first['low_stock_threshold'] as int) != lowStockThreshold) {
+        updates['low_stock_threshold'] = lowStockThreshold;
+      }
+      if (((data.first['units_per_package'] as num?)?.toInt() ?? 1) !=
+          unitsPerPackage) {
+        updates['units_per_package'] = unitsPerPackage;
+      }
+      updates['sale_price'] = salePrice;
+      updates['last_purchase_cost'] = lastPurchaseCost;
+      updates['cost_details'] = costDetails;
+      updates['specs'] = specs;
+
+      if (updates.isNotEmpty) {
         final updated =
             await _client
                 .from('products')
-                .update({'low_stock_threshold': lowStockThreshold})
+                .update(updates)
                 .eq('id', data.first['id'] as String)
                 .select(
-                  'id, category_id, name, units_per_package, package_name, unit_name, specs, sale_price, last_purchase_cost, low_stock_threshold',
+                  'id, category_id, name, product_type, units_per_package, package_name, unit_name, cost_details, specs, sale_price, last_purchase_cost, low_stock_threshold',
                 )
                 .single();
         return ProductModel.fromSupabase(
@@ -206,16 +250,18 @@ class CatalogRemoteDataSource {
             .insert({
               'category_id': categoryId,
               'name': normalizedName,
-              'units_per_package': 1,
+              'product_type': productType,
+              'units_per_package': unitsPerPackage,
               'package_name': 'caja',
               'unit_name': 'unid',
-              'specs': const <String, dynamic>{},
+              'cost_details': costDetails,
+              'specs': specs,
               'sale_price': salePrice,
               'last_purchase_cost': lastPurchaseCost,
               'low_stock_threshold': lowStockThreshold,
             })
             .select(
-              'id, category_id, name, units_per_package, package_name, unit_name, specs, sale_price, last_purchase_cost, low_stock_threshold',
+              'id, category_id, name, product_type, units_per_package, package_name, unit_name, cost_details, specs, sale_price, last_purchase_cost, low_stock_threshold',
             )
             .single();
 
@@ -234,6 +280,38 @@ class CatalogRemoteDataSource {
     await _client
         .from('products')
         .update({'low_stock_threshold': lowStockThreshold})
+        .eq('id', productId);
+  }
+
+  Future<void> updateProductUnitsPerPackage({
+    required String productId,
+    required int unitsPerPackage,
+  }) async {
+    await _client
+        .from('products')
+        .update({'units_per_package': unitsPerPackage})
+        .eq('id', productId);
+  }
+
+  Future<void> updateProductCatalogData({
+    required String productId,
+    required String productType,
+    required double salePrice,
+    required double lastPurchaseCost,
+    required int unitsPerPackage,
+    required Map<String, dynamic> costDetails,
+    required Map<String, dynamic> specs,
+  }) async {
+    await _client
+        .from('products')
+        .update({
+          'product_type': productType,
+          'sale_price': salePrice,
+          'last_purchase_cost': lastPurchaseCost,
+          'units_per_package': unitsPerPackage,
+          'cost_details': costDetails,
+          'specs': specs,
+        })
         .eq('id', productId);
   }
 
@@ -258,7 +336,7 @@ class CatalogRemoteDataSource {
         productName: product['name']?.toString() ?? 'Producto',
         supplier: supplier['name']?.toString() ?? 'Proveedor',
         unitCost: (row['unit_cost'] as num).toDouble(),
-        registeredAt: DateTime.parse(row['effective_at'] as String),
+        registeredAt: _parseSupabaseDateTime(row['effective_at'] as String),
       );
     }).toList();
   }
@@ -286,7 +364,7 @@ class CatalogRemoteDataSource {
         fromLocation: fromLocation['name']?.toString() ?? 'Sin origen',
         toLocation: toLocation['name']?.toString() ?? 'Sin destino',
         actorName: actor['full_name']?.toString() ?? 'Usuario',
-        occurredAt: DateTime.parse(row['happened_at'] as String),
+        occurredAt: _parseSupabaseDateTime(row['happened_at'] as String),
       );
     }).toList();
   }
@@ -397,4 +475,8 @@ class CatalogRemoteDataSource {
 
     return Map<String, dynamic>.from(value as Map);
   }
+}
+
+DateTime _parseSupabaseDateTime(String rawValue) {
+  return DateTime.parse(rawValue).toLocal();
 }

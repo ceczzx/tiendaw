@@ -18,6 +18,7 @@ class SellerDashboardPage extends ConsumerStatefulWidget {
 
 class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
   bool _initialShiftPromptHandled = false;
+  bool _isActionInProgress = false;
 
   @override
   Widget build(BuildContext context) {
@@ -119,7 +120,8 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                   width: double.infinity,
                                   child: OutlinedButton(
                                     onPressed:
-                                        currentUser == null
+                                        currentUser == null ||
+                                                _isActionInProgress
                                             ? null
                                             : () => _confirmCloseShift(
                                               context,
@@ -144,7 +146,8 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                   children: [
                                     FilledButton.icon(
                                       onPressed:
-                                          currentUser == null
+                                          currentUser == null ||
+                                                  _isActionInProgress
                                               ? null
                                               : () => _startShift(currentUser),
                                       icon: const Icon(
@@ -154,7 +157,10 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                     ),
                                     OutlinedButton.icon(
                                       onPressed:
-                                          currentUser == null ? null : _signOut,
+                                          currentUser == null ||
+                                                  _isActionInProgress
+                                              ? null
+                                              : _signOut,
                                       icon: const Icon(Icons.logout_rounded),
                                       label: const Text('Cerrar sesion'),
                                     ),
@@ -480,7 +486,8 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                 enabled:
                     state.cartItems.isNotEmpty &&
                     currentUser != null &&
-                    state.hasOpenShift,
+                    state.hasOpenShift &&
+                    !_isActionInProgress,
                 onCheckout:
                     () => _openCheckoutSheet(context, ref, state, currentUser),
               ),
@@ -517,6 +524,10 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
         return;
       }
       await ref.read(sellerDashboardViewModelProvider.notifier).clearFeedback();
+      if (!mounted) {
+        return;
+      }
+      setState(() => _isActionInProgress = false);
     });
   }
 
@@ -565,7 +576,17 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
   }
 
   Future<void> _startShift(AppUser user) async {
-    await ref.read(sellerDashboardViewModelProvider.notifier).openShift(user);
+    if (_isActionInProgress) {
+      return;
+    }
+
+    setState(() => _isActionInProgress = true);
+    final success = await ref
+        .read(sellerDashboardViewModelProvider.notifier)
+        .openShift(user);
+    if (!success) {
+      _releaseActionLockIfNoFeedback();
+    }
   }
 
   Future<void> _promptStartShift(AppUser user) async {
@@ -604,6 +625,10 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
   }
 
   Future<void> _confirmCloseShift(BuildContext context, AppUser user) async {
+    if (_isActionInProgress) {
+      return;
+    }
+
     final shouldClose = await showDialog<bool>(
       context: context,
       builder:
@@ -629,10 +654,20 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
       return;
     }
 
-    await ref.read(sellerDashboardViewModelProvider.notifier).closeShift(user);
+    setState(() => _isActionInProgress = true);
+    final success = await ref
+        .read(sellerDashboardViewModelProvider.notifier)
+        .closeShift(user);
+    if (!success) {
+      _releaseActionLockIfNoFeedback();
+    }
   }
 
   Future<void> _showPostCloseOptions(AppUser user) async {
+    if (mounted && _isActionInProgress) {
+      setState(() => _isActionInProgress = false);
+    }
+
     final decision = await showDialog<String>(
       context: context,
       barrierDismissible: false,
@@ -812,6 +847,7 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
     AppUser? currentUser,
   ) async {
     var selectedMethod = state.paymentMethod;
+    var isSubmitting = false;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -882,7 +918,9 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                         ),
                       ],
                       selected: {selectedMethod},
-                      onSelectionChanged: (selection) {
+                      onSelectionChanged: isSubmitting
+                          ? null
+                          : (selection) {
                         setState(() => selectedMethod = selection.first);
                       },
                     ),
@@ -892,9 +930,18 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed:
-                          currentUser == null || state.cartItems.isEmpty
+                          currentUser == null ||
+                                  state.cartItems.isEmpty ||
+                                  isSubmitting ||
+                                  _isActionInProgress
                               ? null
                               : () async {
+                                setState(() => isSubmitting = true);
+                                if (mounted) {
+                                  this.setState(
+                                    () => _isActionInProgress = true,
+                                  );
+                                }
                                 final success = await ref
                                     .read(
                                       sellerDashboardViewModelProvider.notifier,
@@ -905,13 +952,22 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                     );
                                 if (success && mounted) {
                                   Navigator.of(context).pop();
+                                  return;
                                 }
+
+                                if (!mounted) {
+                                  return;
+                                }
+                                setState(() => isSubmitting = false);
+                                _releaseActionLockIfNoFeedback();
                               },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFFEA580C),
                         foregroundColor: Colors.white,
                       ),
-                      child: const Text('Finalizar venta'),
+                      child: Text(
+                        isSubmitting ? 'Registrando...' : 'Finalizar venta',
+                      ),
                     ),
                   ),
                 ],
@@ -921,6 +977,14 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
         );
       },
     );
+  }
+
+  void _releaseActionLockIfNoFeedback() {
+    final feedback =
+        ref.read(sellerDashboardViewModelProvider).valueOrNull?.feedbackMessage;
+    if ((feedback == null || feedback.isEmpty) && mounted) {
+      setState(() => _isActionInProgress = false);
+    }
   }
 
   int _storeStockForItem(SellerDashboardState state, String productId) {

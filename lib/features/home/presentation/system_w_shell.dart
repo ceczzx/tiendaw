@@ -106,6 +106,17 @@ class _SystemWShellState extends ConsumerState<SystemWShell> {
                               ),
                         ),
                         _HeaderSectionButton(
+                          label: 'Productos',
+                          selected:
+                              _adminSection == AdminDesktopSection.products,
+                          onPressed:
+                              () => setState(
+                                () =>
+                                    _adminSection =
+                                        AdminDesktopSection.products,
+                              ),
+                        ),
+                        _HeaderSectionButton(
                           label: 'Movimientos',
                           selected:
                               _adminSection == AdminDesktopSection.movements,

@@ -36,39 +36,39 @@ class AdminDesktopDashboardState {
   final DashboardWindow window;
 
   List<Sale> get filteredSales {
-    final threshold = DateTime.now().subtract(Duration(days: _windowDays));
+    final threshold = _windowStart;
     return sales.where((sale) {
       final sellerMatches =
           sellerFilter == 'all' || sale.sellerId == sellerFilter;
-      return sellerMatches && sale.createdAt.isAfter(threshold);
+      return sellerMatches && !sale.createdAt.isBefore(threshold);
     }).toList();
   }
 
   List<Purchase> get filteredPurchases {
-    final threshold = DateTime.now().subtract(Duration(days: _windowDays));
+    final threshold = _windowStart;
     return purchases
-        .where((purchase) => purchase.receivedAt.isAfter(threshold))
+        .where((purchase) => !purchase.receivedAt.isBefore(threshold))
         .toList();
   }
 
   List<CashShift> get filteredCashShifts {
-    final threshold = DateTime.now().subtract(Duration(days: _windowDays));
+    final threshold = _windowStart;
     return cashShifts.where((shift) {
       final sellerMatches =
           sellerFilter == 'all' || shift.sellerId == sellerFilter;
       final closedAt = shift.closedAt;
       final overlapsWindow =
-          shift.openedAt.isAfter(threshold) ||
-          (closedAt != null && closedAt.isAfter(threshold)) ||
+          !shift.openedAt.isBefore(threshold) ||
+          (closedAt != null && !closedAt.isBefore(threshold)) ||
           (closedAt == null && shift.openedAt.isBefore(threshold));
       return sellerMatches && overlapsWindow;
     }).toList();
   }
 
   List<InventoryMovement> get filteredMovements {
-    final threshold = DateTime.now().subtract(Duration(days: _windowDays));
+    final threshold = _windowStart;
     return movements
-        .where((movement) => movement.occurredAt.isAfter(threshold))
+        .where((movement) => !movement.occurredAt.isBefore(threshold))
         .toList();
   }
 
@@ -78,6 +78,12 @@ class AdminDesktopDashboardState {
       DashboardWindow.week => 7,
       DashboardWindow.month => 30,
     };
+  }
+
+  DateTime get _windowStart {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return today.subtract(Duration(days: _windowDays - 1));
   }
 
   double get dailySalesTotal =>
@@ -140,22 +146,26 @@ class AdminDesktopDashboardState {
     return '${winnerEntry.key} (${SystemWFormatters.currency.format(winnerEntry.value)})';
   }
 
-  int get movementUnitsTotal => filteredMovements.fold(
-    0,
-    (sum, movement) => sum + movement.quantity,
-  );
+  int get movementUnitsTotal =>
+      filteredMovements.fold(0, (sum, movement) => sum + movement.quantity);
 
   int get movementProductsCount =>
       filteredMovements.map((movement) => movement.productId).toSet().length;
 
   int get purchaseMovementCount =>
-      filteredMovements.where((movement) => _movementBucket(movement) == 'purchase').length;
+      filteredMovements
+          .where((movement) => _movementBucket(movement) == 'purchase')
+          .length;
 
   int get saleMovementCount =>
-      filteredMovements.where((movement) => _movementBucket(movement) == 'sale').length;
+      filteredMovements
+          .where((movement) => _movementBucket(movement) == 'sale')
+          .length;
 
   int get transferMovementCount =>
-      filteredMovements.where((movement) => _movementBucket(movement) == 'transfer').length;
+      filteredMovements
+          .where((movement) => _movementBucket(movement) == 'transfer')
+          .length;
 
   int get purchaseMovementUnits => filteredMovements
       .where((movement) => _movementBucket(movement) == 'purchase')
@@ -169,8 +179,7 @@ class AdminDesktopDashboardState {
       .where((movement) => _movementBucket(movement) == 'transfer')
       .fold(0, (sum, movement) => sum + movement.quantity);
 
-  int get activeAlertCount =>
-      lowStockProducts.length + expiringProducts.length;
+  int get activeAlertCount => lowStockProducts.length + expiringProducts.length;
 
   List<Map<String, String>> get sellerOptions {
     final sellers = <String, String>{};

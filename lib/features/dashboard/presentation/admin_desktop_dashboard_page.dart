@@ -8,7 +8,7 @@ import 'package:tiendaw/features/purchases/domain/purchase_entities.dart';
 import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 import 'package:tiendaw/shared/widgets/system_w_widgets.dart';
 
-enum AdminDesktopSection { sales, purchases, movements }
+enum AdminDesktopSection { sales, purchases, products, movements }
 
 class AdminDesktopDashboardPage extends ConsumerWidget {
   const AdminDesktopDashboardPage({required this.activeSection, super.key});
@@ -69,6 +69,7 @@ class _DesktopSectionContent extends ConsumerWidget {
                 .read(adminDesktopDashboardViewModelProvider.notifier)
                 .setWindow(value),
       ),
+      AdminDesktopSection.products => _ProductsSection(state: state),
       AdminDesktopSection.movements => _MovementsSection(
         state: state,
         onWindowChanged:
@@ -374,6 +375,115 @@ class _PurchasesSection extends StatelessWidget {
     await showDialog<void>(
       context: context,
       builder: (context) => _PurchaseOverviewDialog(state: state),
+    );
+  }
+}
+
+class _ProductsSection extends StatelessWidget {
+  const _ProductsSection({required this.state});
+
+  final AdminDesktopDashboardState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final snapshots = _buildProductSnapshots(state);
+    final storeUnits = state.products.fold<int>(
+      0,
+      (sum, product) => sum + product.stockStore,
+    );
+    final warehouseUnits = state.products.fold<int>(
+      0,
+      (sum, product) => sum + product.stockWarehouse,
+    );
+    final supplierTrackedCount =
+        snapshots.where((snapshot) => snapshot.suppliers.isNotEmpty).length;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionHeading(
+            title: 'Productos',
+            subtitle:
+                'Mapa operativo del catalogo con stock actual, cajas, proveedores y ultima actividad por producto.',
+          ),
+          const SizedBox(height: 20),
+          _MetricRow(
+            children: [
+              MetricCard(
+                label: 'Catalogo activo',
+                value: '${snapshots.length}',
+                detail: '${state.categories.length} categorias',
+                accent: const Color(0xFF0F766E),
+              ),
+              MetricCard(
+                label: 'Stock actual',
+                value: '$storeUnits u. tienda',
+                detail: '$warehouseUnits u. en almacen',
+                accent: const Color(0xFFEA580C),
+              ),
+              MetricCard(
+                label: 'Productos con proveedor',
+                value: '$supplierTrackedCount',
+                detail:
+                    '${snapshots.length - supplierTrackedCount} artesanales ',
+                accent: const Color(0xFF2563EB),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          SectionCard(
+            title: 'Vista producto por producto',
+            subtitle:
+                'Cada fila resume cantidad, cajas, costo, precio, hora de actividad y proveedores asociados.',
+            child: _DesktopTable(
+              columns: const [
+                'Producto',
+                'Categoria',
+                'Tipo',
+                'Mapa',
+                'Cantidad',
+                'Cajas / lote',
+                'Ultima actividad',
+                'Proveedores',
+                'Precio / costo',
+              ],
+              rows:
+                  snapshots
+                      .map(
+                        (snapshot) => _DesktopTableRow(
+                          cells: [
+                            _ProductNameCell(snapshot: snapshot),
+                            Text(snapshot.categoryName),
+                            _ProductTypeCell(product: snapshot.product),
+                            _StockMapCell(product: snapshot.product),
+                            _ProductQuantityCell(snapshot: snapshot),
+                            SizedBox(
+                              width: 190,
+                              child: Text(snapshot.packageBreakdown),
+                            ),
+                            _ProductActivityCell(snapshot: snapshot),
+                            SizedBox(
+                              width: 220,
+                              child: Text(
+                                snapshot.suppliersLabel,
+                                maxLines: 4,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            _ProductPricingCell(snapshot: snapshot),
+                          ],
+                        ),
+                      )
+                      .toList(),
+              emptyTitle: 'Sin productos registrados',
+              emptyCaption:
+                  'Cuando cargues el catalogo, aqui aparecera la lectura completa de cada producto.',
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -714,6 +824,8 @@ class _DesktopTableState extends State<_DesktopTable> {
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: DataTable(
+            dataRowMinHeight: 56,
+            dataRowMaxHeight: 110,
             columns:
                 widget.columns
                     .map((label) => DataColumn(label: Text(label)))
@@ -830,7 +942,8 @@ class _PurchaseOverviewDialog extends StatefulWidget {
   final AdminDesktopDashboardState state;
 
   @override
-  State<_PurchaseOverviewDialog> createState() => _PurchaseOverviewDialogState();
+  State<_PurchaseOverviewDialog> createState() =>
+      _PurchaseOverviewDialogState();
 }
 
 class _PurchaseOverviewDialogState extends State<_PurchaseOverviewDialog> {
@@ -1167,6 +1280,37 @@ class _PurchaseBreakdownDialogState extends State<_PurchaseBreakdownDialog> {
   }
 }
 
+class _ProductSnapshot {
+  const _ProductSnapshot({
+    required this.product,
+    required this.categoryName,
+    required this.suppliers,
+    required this.packageBreakdown,
+    required this.lastPurchaseAt,
+    required this.lastMovementAt,
+    required this.latestUnitCost,
+  });
+
+  final Product product;
+  final String categoryName;
+  final List<String> suppliers;
+  final String packageBreakdown;
+  final DateTime? lastPurchaseAt;
+  final DateTime? lastMovementAt;
+  final double latestUnitCost;
+
+  int get totalUnits => product.stockStore + product.stockWarehouse;
+
+  String get suppliersLabel {
+    if (suppliers.isEmpty) {
+      return _isArtisanalProduct(product)
+          ? 'Artesanal / sin proveedor'
+          : 'Sin proveedor registrado';
+    }
+    return suppliers.join(', ');
+  }
+}
+
 class _SupplierSummary {
   const _SupplierSummary({
     required this.supplier,
@@ -1177,6 +1321,244 @@ class _SupplierSummary {
   final String supplier;
   final double total;
   final String categoriesLabel;
+}
+
+class _ProductNameCell extends StatelessWidget {
+  const _ProductNameCell({required this.snapshot});
+
+  final _ProductSnapshot snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 210,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            snapshot.product.name,
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${snapshot.totalUnits} ${snapshot.product.unitName} totales',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6B7280)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProductTypeCell extends StatelessWidget {
+  const _ProductTypeCell({required this.product});
+
+  final Product product;
+
+  @override
+  Widget build(BuildContext context) {
+    final artisanal = _isArtisanalProduct(product);
+    return SizedBox(
+      width: 150,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          StatusPill(
+            label: product.productType,
+            background:
+                artisanal ? const Color(0xFFFFF7ED) : const Color(0xFFECFDF5),
+            foreground:
+                artisanal ? const Color(0xFF9A3412) : const Color(0xFF047857),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${product.unitName} | ${product.packageName}',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6B7280)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StockMapCell extends StatelessWidget {
+  const _StockMapCell({required this.product});
+
+  final Product product;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = product.stockStore + product.stockWarehouse;
+
+    return SizedBox(
+      width: 190,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _StockLane(
+            label: 'Tienda',
+            value: product.stockStore,
+            total: total,
+            color: const Color(0xFF0F766E),
+          ),
+          const SizedBox(height: 8),
+          _StockLane(
+            label: 'Almacen',
+            value: product.stockWarehouse,
+            total: total,
+            color: const Color(0xFF2563EB),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StockLane extends StatelessWidget {
+  const _StockLane({
+    required this.label,
+    required this.value,
+    required this.total,
+    required this.color,
+  });
+
+  final String label;
+  final int value;
+  final int total;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final widthFactor = total <= 0 ? 0.0 : value / total;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+            ),
+            Text('$value', style: Theme.of(context).textTheme.bodySmall),
+          ],
+        ),
+        const SizedBox(height: 4),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(999),
+          child: Container(
+            height: 8,
+            color: const Color(0xFFE5E7EB),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FractionallySizedBox(
+                widthFactor: widthFactor,
+                child: Container(color: color),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProductQuantityCell extends StatelessWidget {
+  const _ProductQuantityCell({required this.snapshot});
+
+  final _ProductSnapshot snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 170,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${snapshot.totalUnits} ${snapshot.product.unitName}'),
+          const SizedBox(height: 4),
+          Text(
+            'Minimo ${snapshot.product.lowStockThreshold}',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6B7280)),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            snapshot.product.nextExpiryDate == null
+                ? 'Sin vencimiento'
+                : 'Vence ${SystemWFormatters.shortDate.format(snapshot.product.nextExpiryDate!)}',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6B7280)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProductActivityCell extends StatelessWidget {
+  const _ProductActivityCell({required this.snapshot});
+
+  final _ProductSnapshot snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 190,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            snapshot.lastMovementAt == null
+                ? 'Sin movimientos'
+                : 'Mov. ${SystemWFormatters.shortDateTime.format(snapshot.lastMovementAt!)}',
+          ),
+          const SizedBox(height: 4),
+          Text(
+            snapshot.lastPurchaseAt == null
+                ? 'Sin compra registrada'
+                : 'Compra ${SystemWFormatters.shortDateTime.format(snapshot.lastPurchaseAt!)}',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6B7280)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProductPricingCell extends StatelessWidget {
+  const _ProductPricingCell({required this.snapshot});
+
+  final _ProductSnapshot snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 170,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Venta ${SystemWFormatters.currency.format(snapshot.product.salePrice)}',
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Costo ${SystemWFormatters.currency.format(snapshot.latestUnitCost)} / ${snapshot.product.unitName}',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6B7280)),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 String _paymentMethodLabel(PaymentMethod method) {
@@ -1270,6 +1652,98 @@ List<_SupplierSummary> _buildSupplierSummaries(
   return summaries;
 }
 
+List<_ProductSnapshot> _buildProductSnapshots(
+  AdminDesktopDashboardState state,
+) {
+  final categoryById = {
+    for (final category in state.categories) category.id: category.name,
+  };
+  final purchasesByProduct = <String, List<Purchase>>{};
+  for (final purchase in state.purchases) {
+    final touchedProducts = <String>{};
+    for (final item in purchase.items) {
+      if (touchedProducts.add(item.productId)) {
+        purchasesByProduct.putIfAbsent(item.productId, () => []).add(purchase);
+      }
+    }
+  }
+
+  final movementsByProduct = <String, List<InventoryMovement>>{};
+  for (final movement in state.movements) {
+    movementsByProduct.putIfAbsent(movement.productId, () => []).add(movement);
+  }
+
+  final snapshots =
+      state.products.map((product) {
+          final productPurchases = purchasesByProduct[product.id] ?? const [];
+          final productMovements = movementsByProduct[product.id] ?? const [];
+          final latestPurchase = _latestPurchaseForProduct(
+            product.id,
+            productPurchases,
+          );
+          final latestPurchaseLine =
+              latestPurchase == null
+                  ? null
+                  : latestPurchase.items.firstWhere(
+                    (item) => item.productId == product.id,
+                  );
+          final latestMovement =
+              productMovements.isEmpty
+                  ? null
+                  : productMovements.reduce(
+                    (current, next) =>
+                        current.occurredAt.isAfter(next.occurredAt)
+                            ? current
+                            : next,
+                  );
+          final suppliers =
+              productPurchases
+                  .map((purchase) => purchase.supplier.trim())
+                  .where(_hasOperationalSupplier)
+                  .toSet()
+                  .toList()
+                ..sort();
+
+          return _ProductSnapshot(
+            product: product,
+            categoryName: categoryById[product.categoryId] ?? 'Sin categoria',
+            suppliers: suppliers,
+            packageBreakdown: _packageBreakdownForProduct(product),
+            lastPurchaseAt: latestPurchase?.receivedAt,
+            lastMovementAt: latestMovement?.occurredAt,
+            latestUnitCost:
+                latestPurchaseLine?.unitCost ?? product.lastPurchaseCost,
+          );
+        }).toList()
+        ..sort((a, b) {
+          final categoryComparison = a.categoryName.toLowerCase().compareTo(
+            b.categoryName.toLowerCase(),
+          );
+          if (categoryComparison != 0) {
+            return categoryComparison;
+          }
+          return a.product.name.toLowerCase().compareTo(
+            b.product.name.toLowerCase(),
+          );
+        });
+
+  return snapshots;
+}
+
+Purchase? _latestPurchaseForProduct(
+  String productId,
+  List<Purchase> purchases,
+) {
+  if (purchases.isEmpty) {
+    return null;
+  }
+
+  return purchases.reduce(
+    (current, next) =>
+        current.receivedAt.isAfter(next.receivedAt) ? current : next,
+  );
+}
+
 List<Product> _collectAlertProducts(AdminDesktopDashboardState state) {
   final products = <String, Product>{};
   for (final product in state.lowStockProducts) {
@@ -1294,6 +1768,40 @@ String _alertReasonLabel(AdminDesktopDashboardState state, Product product) {
     reasons.add('Vence pronto');
   }
   return reasons.join(' / ');
+}
+
+bool _isArtisanalProduct(Product product) {
+  return product.productType.trim().toLowerCase().contains('artesanal');
+}
+
+bool _hasOperationalSupplier(String value) {
+  final normalized = value.trim();
+  return normalized.isNotEmpty && normalized != 'Produccion artesanal';
+}
+
+String _packageBreakdownForProduct(Product product) {
+  if (_isArtisanalProduct(product)) {
+    return 'Artesanal | ${product.stockStore} ${product.unitName} tienda | ${product.stockWarehouse} ${product.unitName} almacen';
+  }
+
+  return 'Tienda ${_packageQuantityLabel(product, product.stockStore)} | Almacen ${_packageQuantityLabel(product, product.stockWarehouse)}';
+}
+
+String _packageQuantityLabel(Product product, int stockUnits) {
+  final unitsPerPackage =
+      product.unitsPerPackage <= 0 ? 1 : product.unitsPerPackage;
+  final packages = stockUnits ~/ unitsPerPackage;
+  final looseUnits = stockUnits % unitsPerPackage;
+  final parts = <String>[];
+
+  if (packages > 0) {
+    parts.add('$packages ${product.packageName}');
+  }
+  if (looseUnits > 0 || parts.isEmpty) {
+    parts.add('$looseUnits ${product.unitName}');
+  }
+
+  return parts.join(' + ');
 }
 
 String _movementTypeLabel(InventoryMovement movement) {

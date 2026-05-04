@@ -1,3 +1,7 @@
+// ignore_for_file: unused_element_parameter, unused_element, unnecessary_null_comparison
+
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tiendaw/core/utils/formatters.dart';
@@ -34,6 +38,7 @@ class _AdminMobileDashboardPageState
     extends ConsumerState<AdminMobileDashboardPage> {
   _AdminMobileSection _activeSection = _AdminMobileSection.home;
   bool _isPurchaseComposerOpen = false;
+  bool _isActionInProgress = false;
 
   @override
   Widget build(BuildContext context) {
@@ -141,6 +146,7 @@ class _AdminMobileDashboardPageState
       _AdminMobileSection.purchases => _PurchasesSection(
         state: state,
         isComposerOpen: _isPurchaseComposerOpen,
+        isBusy: _isActionInProgress,
         currentUser: currentUser,
         onToggleComposer: () {
           setState(() {
@@ -153,6 +159,7 @@ class _AdminMobileDashboardPageState
       _AdminMobileSection.suppliers => _SuppliersSection(state: state),
       _AdminMobileSection.movements => _MovementsSection(
         state: state,
+        isBusy: _isActionInProgress,
         currentUser: currentUser,
         onTransfer:
             currentUser == null ? null : () => _handleTransfer(currentUser),
@@ -170,6 +177,13 @@ class _AdminMobileDashboardPageState
     Map<String, dynamic>? productCostDetails,
     String? supplierPhone,
   }) async {
+    if (_isActionInProgress) {
+      return;
+    }
+
+    setState(() {
+      _isActionInProgress = true;
+    });
     final success = await ref
         .read(adminMobileDashboardViewModelProvider.notifier)
         .registerPurchase(
@@ -193,6 +207,13 @@ class _AdminMobileDashboardPageState
   }
 
   Future<void> _handleTransfer(AppUser currentUser) async {
+    if (_isActionInProgress) {
+      return;
+    }
+
+    setState(() {
+      _isActionInProgress = true;
+    });
     await ref
         .read(adminMobileDashboardViewModelProvider.notifier)
         .transferToStore(currentUser);
@@ -248,6 +269,12 @@ class _AdminMobileDashboardPageState
       await ref
           .read(adminMobileDashboardViewModelProvider.notifier)
           .clearFeedback();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isActionInProgress = false;
+      });
     });
   }
 }
@@ -432,6 +459,7 @@ class _PurchasesSection extends StatelessWidget {
   const _PurchasesSection({
     required this.state,
     required this.isComposerOpen,
+    required this.isBusy,
     required this.currentUser,
     required this.onToggleComposer,
     required this.onSubmitPurchase,
@@ -439,12 +467,17 @@ class _PurchasesSection extends StatelessWidget {
 
   final AdminMobileDashboardState state;
   final bool isComposerOpen;
+  final bool isBusy;
   final AppUser? currentUser;
   final VoidCallback onToggleComposer;
   final _PurchaseSubmit? onSubmitPurchase;
 
   @override
   Widget build(BuildContext context) {
+    final productById = {
+      for (final product in state.products) product.id: product,
+    };
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
@@ -465,7 +498,7 @@ class _PurchasesSection extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    onPressed: onToggleComposer,
+                    onPressed: isBusy ? null : onToggleComposer,
                     icon: Icon(
                       isComposerOpen
                           ? Icons.expand_less_rounded
@@ -480,6 +513,7 @@ class _PurchasesSection extends StatelessWidget {
                 if (isComposerOpen)
                   _PurchaseForm(
                     state: state,
+                    isBusy: isBusy,
                     currentUser: currentUser,
                     onSubmitPurchase: onSubmitPurchase,
                   )
@@ -495,7 +529,8 @@ class _PurchasesSection extends StatelessWidget {
           const SizedBox(height: 16),
           SectionCard(
             title: 'Historial de precios',
-            subtitle: 'Ultimos costos registrados en product_prices.',
+            subtitle:
+                'Ultimos costos registrados | Precio_unit - Cantidad en 1 caja',
             child:
                 state.priceHistory.isEmpty
                     ? const EmptyStateCard(
@@ -506,6 +541,11 @@ class _PurchasesSection extends StatelessWidget {
                     : _PaginatedList<PriceHistoryEntry>(
                       items: state.priceHistory,
                       itemBuilder: (context, entry) {
+                        final product = productById[entry.productId];
+                        final unitLabel =
+                            product == null
+                                ? 'u.'
+                                : '${product.unitsPerPackage} ${product.unitName}';
                         return ListTile(
                           contentPadding: EdgeInsets.zero,
                           title: Text(entry.productName),
@@ -513,7 +553,7 @@ class _PurchasesSection extends StatelessWidget {
                             '${entry.supplier} - ${SystemWFormatters.shortDate.format(entry.registeredAt)}',
                           ),
                           trailing: Text(
-                            SystemWFormatters.currency.format(entry.unitCost),
+                            '${SystemWFormatters.currency.format(entry.unitCost)} - $unitLabel',
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                         );
@@ -533,15 +573,33 @@ class _PurchasesSection extends StatelessWidget {
                     : _PaginatedList<Purchase>(
                       items: state.purchases,
                       itemBuilder: (context, purchase) {
+                        var totalPackages = 0;
+                        var totalUnits = 0;
+                        for (final item in purchase.items) {
+                          totalPackages += item.quantity;
+                          totalUnits += item.totalUnits;
+                        }
                         return ListTile(
                           contentPadding: EdgeInsets.zero,
                           title: Text(purchase.supplier),
                           subtitle: Text(
                             '${purchase.registeredBy} - ${SystemWFormatters.shortDateTime.format(purchase.receivedAt)}',
                           ),
-                          trailing: Text(
-                            SystemWFormatters.currency.format(purchase.total),
-                            style: Theme.of(context).textTheme.titleMedium,
+                          trailing: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                '$totalPackages cajas | $totalUnits unid',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                              Text(
+                                SystemWFormatters.currency.format(
+                                  purchase.total,
+                                ),
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                            ],
                           ),
                         );
                       },
@@ -792,11 +850,13 @@ class _SuppliersSectionState extends State<_SuppliersSection> {
 class _MovementsSection extends StatefulWidget {
   const _MovementsSection({
     required this.state,
+    required this.isBusy,
     required this.currentUser,
     required this.onTransfer,
   });
 
   final AdminMobileDashboardState state;
+  final bool isBusy;
   final AppUser? currentUser;
   final Future<void> Function()? onTransfer;
 
@@ -850,6 +910,11 @@ class _MovementsSectionState extends State<_MovementsSection> {
     final remainingWarehouse = warehouseStock - quantity;
     final nextStoreStock = storeStock + quantity;
     final hasEnoughStock = selectedProduct == null || remainingWarehouse >= 0;
+    final transferAllocations = _buildWarehouseTransferPreview(
+      state,
+      selectedProduct,
+      quantity,
+    );
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -1032,8 +1097,7 @@ class _MovementsSectionState extends State<_MovementsSection> {
                         },
                       ),
                       const SizedBox(height: 12),
-                      if (!requiresSupplierReference &&
-                          selectedProduct != null)
+                      if (!requiresSupplierReference && selectedProduct != null)
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(14),
@@ -1110,6 +1174,7 @@ class _MovementsSectionState extends State<_MovementsSection> {
                         storeBefore: storeStock,
                         storeAfter: nextStoreStock,
                         hasEnoughStock: hasEnoughStock,
+                        allocations: transferAllocations,
                       ),
                       const SizedBox(height: 16),
                       SizedBox(
@@ -1117,6 +1182,7 @@ class _MovementsSectionState extends State<_MovementsSection> {
                         child: OutlinedButton.icon(
                           onPressed:
                               widget.currentUser == null ||
+                                      widget.isBusy ||
                                       widget.onTransfer == null ||
                                       !hasEnoughStock ||
                                       (requiresSupplierReference &&
@@ -1175,11 +1241,13 @@ class _MovementsSectionState extends State<_MovementsSection> {
 class _PurchaseForm extends ConsumerStatefulWidget {
   const _PurchaseForm({
     required this.state,
+    required this.isBusy,
     required this.currentUser,
     required this.onSubmitPurchase,
   });
 
   final AdminMobileDashboardState state;
+  final bool isBusy;
   final AppUser? currentUser;
   final _PurchaseSubmit? onSubmitPurchase;
 
@@ -1704,19 +1772,39 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
               },
             );
 
-            final costField = TextFormField(
-              key: ValueKey('cost-$productValue'),
-              initialValue: state.unitCost.toStringAsFixed(2),
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              decoration: const InputDecoration(labelText: 'Costo unitario'),
-              onChanged: (value) {
-                ref
-                    .read(adminMobileDashboardViewModelProvider.notifier)
-                    .changeUnitCost(double.tryParse(value) ?? state.unitCost);
-              },
-            );
+            final costField =
+                isSupplierProduct
+                    ? InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'Costo unitario',
+                        helperText:
+                            'Calculado automaticamente con precio caja / unidades.',
+                      ),
+                      child: Text(
+                        effectiveUnitCost > 0
+                            ? effectiveUnitCost.toStringAsFixed(2)
+                            : '0.00',
+                      ),
+                    )
+                    : TextFormField(
+                      key: ValueKey('cost-$productValue'),
+                      initialValue: state.unitCost.toStringAsFixed(2),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Costo unitario',
+                      ),
+                      onChanged: (value) {
+                        ref
+                            .read(
+                              adminMobileDashboardViewModelProvider.notifier,
+                            )
+                            .changeUnitCost(
+                              double.tryParse(value) ?? state.unitCost,
+                            );
+                      },
+                    );
 
             final salePriceField = TextFormField(
               controller: _salePriceController,
@@ -1788,10 +1876,6 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
           label: 'Margen estimado',
           value: '${estimatedMargin.toStringAsFixed(1)}%',
         ),
-        _InfoLine(
-          label: 'Faltantes actuales',
-          value: '$currentMissingUnits u.',
-        ),
         if (selectedProduct != null) ...[
           _InfoLine(
             label: 'Stock almacen actual',
@@ -1834,7 +1918,9 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
           width: double.infinity,
           child: ElevatedButton.icon(
             onPressed:
-                widget.currentUser == null || widget.onSubmitPurchase == null
+                widget.isBusy ||
+                        widget.currentUser == null ||
+                        widget.onSubmitPurchase == null
                     ? null
                     : () => _submit(
                       categoryValue: categoryValue,
@@ -2111,7 +2197,7 @@ class _ProductInsightCard extends StatelessWidget {
                   ' | ${purchaseSnapshot.latestTotalUnits} ${product.unitName}',
             ),
             _InfoLine(
-              label: 'Inicio',
+              label: 'Inicio(CpPVez)',
               value: SystemWFormatters.shortDate.format(
                 purchaseSnapshot.firstPurchaseAt,
               ),
@@ -2308,6 +2394,7 @@ class _MovementPreviewCard extends StatelessWidget {
     required this.storeBefore,
     required this.storeAfter,
     required this.hasEnoughStock,
+    required this.allocations,
   });
 
   final String? productName;
@@ -2318,6 +2405,7 @@ class _MovementPreviewCard extends StatelessWidget {
   final int storeBefore;
   final int storeAfter;
   final bool hasEnoughStock;
+  final List<_WarehouseTransferAllocation> allocations;
 
   @override
   Widget build(BuildContext context) {
@@ -2353,6 +2441,68 @@ class _MovementPreviewCard extends StatelessWidget {
             label: 'Tienda',
             value: '$storeBefore u. -> $storeAfter u.',
           ),
+          const SizedBox(height: 12),
+          Text(
+            'Detalle por cola',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 8),
+          if (allocations.isEmpty)
+            Text(
+              productName == null
+                  ? 'Selecciona un producto para ver que ingresos saldrian primero del almacen.'
+                  : 'No pudimos reconstruir ingresos suficientes para detallar la salida desde el historial.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            )
+          else
+            Column(
+              children:
+                  allocations.map((allocation) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              allocation.sourceLabel,
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                            const SizedBox(height: 6),
+                            _InfoLine(
+                              label: 'Ingreso',
+                              value: SystemWFormatters.shortDateTime.format(
+                                allocation.receivedAt,
+                              ),
+                            ),
+                            _InfoLine(
+                              label: 'Tomara',
+                              value: '${allocation.pickedUnits} u.',
+                            ),
+                            _InfoLine(
+                              label: 'Disponible en ese ingreso',
+                              value: '${allocation.availableUnits} u.',
+                            ),
+                            if (allocation.expiryDate != null)
+                              _InfoLine(
+                                label: 'Vence',
+                                value: SystemWFormatters.shortDate.format(
+                                  allocation.expiryDate!,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
+            ),
           if (!hasEnoughStock)
             Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -2908,6 +3058,123 @@ class _CategoryDetailAccumulator {
   DateTime firstPurchaseAt;
   DateTime latestPurchaseAt;
   DateTime? nextExpiryDate;
+}
+
+List<_WarehouseTransferAllocation> _buildWarehouseTransferPreview(
+  AdminMobileDashboardState state,
+  Product? product,
+  int requestedUnits,
+) {
+  if (product == null || requestedUnits <= 0 || product.stockWarehouse <= 0) {
+    return const [];
+  }
+
+  final lots = <_WarehouseLotBalance>[];
+  var totalPurchasedUnits = 0;
+
+  for (final purchase in state.purchases) {
+    for (final item in purchase.items) {
+      if (item.productId != product.id) {
+        continue;
+      }
+
+      final lotUnits = item.totalUnits;
+      if (lotUnits <= 0) {
+        continue;
+      }
+
+      totalPurchasedUnits += lotUnits;
+      lots.add(
+        _WarehouseLotBalance(
+          sourceLabel:
+              purchase.supplier.trim().isEmpty
+                  ? 'Produccion artesanal'
+                  : purchase.supplier,
+          receivedAt: purchase.receivedAt,
+          availableUnits: lotUnits,
+          expiryDate: item.expiryDate,
+        ),
+      );
+    }
+  }
+
+  if (lots.isEmpty) {
+    return const [];
+  }
+
+  lots.sort((a, b) => a.receivedAt.compareTo(b.receivedAt));
+
+  var alreadyMovedUnits = totalPurchasedUnits - product.stockWarehouse;
+  if (alreadyMovedUnits < 0) {
+    alreadyMovedUnits = 0;
+  }
+
+  for (final lot in lots) {
+    if (alreadyMovedUnits <= 0) {
+      break;
+    }
+
+    final consumedUnits = math.min(lot.availableUnits, alreadyMovedUnits);
+    lot.availableUnits -= consumedUnits;
+    alreadyMovedUnits -= consumedUnits;
+  }
+
+  final remainingLots =
+      lots.where((lot) => lot.availableUnits > 0).toList()
+        ..sort((a, b) => a.receivedAt.compareTo(b.receivedAt));
+
+  var unitsToPick = math.min(requestedUnits, product.stockWarehouse);
+  final allocations = <_WarehouseTransferAllocation>[];
+
+  for (final lot in remainingLots) {
+    if (unitsToPick <= 0) {
+      break;
+    }
+
+    final pickedUnits = math.min(lot.availableUnits, unitsToPick);
+    allocations.add(
+      _WarehouseTransferAllocation(
+        sourceLabel: lot.sourceLabel,
+        receivedAt: lot.receivedAt,
+        availableUnits: lot.availableUnits,
+        pickedUnits: pickedUnits,
+        expiryDate: lot.expiryDate,
+      ),
+    );
+    unitsToPick -= pickedUnits;
+  }
+
+  return allocations;
+}
+
+class _WarehouseLotBalance {
+  _WarehouseLotBalance({
+    required this.sourceLabel,
+    required this.receivedAt,
+    required this.availableUnits,
+    this.expiryDate,
+  });
+
+  final String sourceLabel;
+  final DateTime receivedAt;
+  int availableUnits;
+  final DateTime? expiryDate;
+}
+
+class _WarehouseTransferAllocation {
+  const _WarehouseTransferAllocation({
+    required this.sourceLabel,
+    required this.receivedAt,
+    required this.availableUnits,
+    required this.pickedUnits,
+    this.expiryDate,
+  });
+
+  final String sourceLabel;
+  final DateTime receivedAt;
+  final int availableUnits;
+  final int pickedUnits;
+  final DateTime? expiryDate;
 }
 
 String _supplierPhoneForName(

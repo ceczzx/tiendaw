@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tiendaw/features/auth/presentation/offline_session_page.dart';
 import 'package:tiendaw/core/theme/system_w_theme.dart';
@@ -17,6 +18,12 @@ class SystemWApp extends StatelessWidget {
       title: 'Sistema W',
       debugShowCheckedModeBanner: false,
       theme: SystemWTheme.light(),
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [Locale('es', 'PE'), Locale('es'), Locale('en')],
       home:
           bootstrapError == null
               ? const _SessionGate()

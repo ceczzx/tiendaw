@@ -455,7 +455,7 @@ class _HomeSectionState extends State<_HomeSection> {
   }
 }
 
-class _PurchasesSection extends StatelessWidget {
+class _PurchasesSection extends StatefulWidget {
   const _PurchasesSection({
     required this.state,
     required this.isComposerOpen,
@@ -473,10 +473,43 @@ class _PurchasesSection extends StatelessWidget {
   final _PurchaseSubmit? onSubmitPurchase;
 
   @override
+  State<_PurchasesSection> createState() => _PurchasesSectionState();
+}
+
+class _PurchasesSectionState extends State<_PurchasesSection> {
+  String? _selectedHistoryProductId;
+
+  @override
+  void didUpdateWidget(covariant _PurchasesSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.isComposerOpen) {
+      _selectedHistoryProductId = null;
+      return;
+    }
+
+    if (_selectedHistoryProductId != null &&
+        !widget.state.products.any(
+          (product) => product.id == _selectedHistoryProductId,
+        )) {
+      _selectedHistoryProductId = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final state = widget.state;
     final productById = {
       for (final product in state.products) product.id: product,
     };
+    final effectiveHistoryProductId =
+        widget.isComposerOpen ? _selectedHistoryProductId : null;
+    final selectedPriceHistoryProduct = productById[effectiveHistoryProductId];
+    final priceHistoryItems =
+        effectiveHistoryProductId == null
+            ? state.priceHistory
+            : state.priceHistory
+                .where((entry) => entry.productId == effectiveHistoryProductId)
+                .toList();
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -498,24 +531,31 @@ class _PurchasesSection extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    onPressed: isBusy ? null : onToggleComposer,
+                    onPressed: widget.isBusy ? null : widget.onToggleComposer,
                     icon: Icon(
-                      isComposerOpen
+                      widget.isComposerOpen
                           ? Icons.expand_less_rounded
                           : Icons.add_rounded,
                     ),
                     label: Text(
-                      isComposerOpen ? 'Ocultar formulario' : 'Agregar compra',
+                      widget.isComposerOpen
+                          ? 'Ocultar formulario'
+                          : 'Agregar compra',
                     ),
                   ),
                 ),
                 const SizedBox(height: 16),
-                if (isComposerOpen)
+                if (widget.isComposerOpen)
                   _PurchaseForm(
                     state: state,
-                    isBusy: isBusy,
-                    currentUser: currentUser,
-                    onSubmitPurchase: onSubmitPurchase,
+                    isBusy: widget.isBusy,
+                    currentUser: widget.currentUser,
+                    onSubmitPurchase: widget.onSubmitPurchase,
+                    onHistoryProductChanged: (productId) {
+                      setState(() {
+                        _selectedHistoryProductId = productId;
+                      });
+                    },
                   )
                 else
                   const EmptyStateCard(
@@ -530,16 +570,18 @@ class _PurchasesSection extends StatelessWidget {
           SectionCard(
             title: 'Historial de precios',
             subtitle:
-                'Ultimos costos registrados | Precio_unit - Cantidad en 1 caja',
+                selectedPriceHistoryProduct == null
+                    ? 'Ultimos costos registrados | Precio unitario por producto.'
+                    : 'Solo muestra el historial de ${selectedPriceHistoryProduct.name}.',
             child:
-                state.priceHistory.isEmpty
+                priceHistoryItems.isEmpty
                     ? const EmptyStateCard(
                       title: 'Sin historial de precios',
                       caption:
                           'Las compras nuevas alimentaran este historial automaticamente.',
                     )
                     : _PaginatedList<PriceHistoryEntry>(
-                      items: state.priceHistory,
+                      items: priceHistoryItems,
                       itemBuilder: (context, entry) {
                         final product = productById[entry.productId];
                         final unitLabel =
@@ -870,6 +912,15 @@ class _MovementsSectionState extends State<_MovementsSection> {
   String _searchQuery = '';
 
   @override
+  void didUpdateWidget(covariant _MovementsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.state.selectedProductId != null &&
+        widget.state.selectedProductId == null) {
+      _selectedSupplier = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final state = widget.state;
     final selectedProduct = state.selectedProduct;
@@ -905,7 +956,27 @@ class _MovementsSectionState extends State<_MovementsSection> {
     final effectiveSupplier =
         supplierOptions.contains(_selectedSupplier) ? _selectedSupplier : null;
     final quantity = state.quantity;
-    final warehouseStock = selectedProduct?.stockWarehouse ?? 0;
+    final supplierLots =
+        selectedProduct == null
+            ? const <_WarehouseAvailableLot>[]
+            : _buildWarehouseAvailableLots(
+              state,
+              selectedProduct,
+              supplierName:
+                  requiresSupplierReference ? effectiveSupplier : null,
+            );
+    final supplierAvailableUnits = supplierLots.fold<int>(
+      0,
+      (sum, lot) => sum + lot.availableUnits,
+    );
+    final warehouseStock =
+        selectedProduct == null
+            ? 0
+            : requiresSupplierReference
+            ? effectiveSupplier == null
+                ? (supplierOptions.isEmpty ? selectedProduct.stockWarehouse : 0)
+                : supplierAvailableUnits
+            : selectedProduct.stockWarehouse;
     final storeStock = selectedProduct?.stockStore ?? 0;
     final remainingWarehouse = warehouseStock - quantity;
     final nextStoreStock = storeStock + quantity;
@@ -914,6 +985,7 @@ class _MovementsSectionState extends State<_MovementsSection> {
       state,
       selectedProduct,
       quantity,
+      supplierName: requiresSupplierReference ? effectiveSupplier : null,
     );
 
     return SingleChildScrollView(
@@ -1145,7 +1217,20 @@ class _MovementsSectionState extends State<_MovementsSection> {
                           ),
                       ],
                       const SizedBox(height: 12),
+                      if (requiresSupplierReference &&
+                          selectedProduct != null &&
+                          effectiveSupplier != null) ...[
+                        _SupplierLotAvailabilityCard(
+                          supplierName: effectiveSupplier,
+                          lots: supplierLots,
+                          totalAvailableUnits: supplierAvailableUnits,
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       TextFormField(
+                        key: ValueKey(
+                          'movement-quantity-${state.selectedProductId ?? 'none'}-${state.quantity}',
+                        ),
                         initialValue: '${state.quantity}',
                         keyboardType: TextInputType.number,
                         decoration: const InputDecoration(
@@ -1218,10 +1303,10 @@ class _MovementsSectionState extends State<_MovementsSection> {
                         return ListTile(
                           contentPadding: EdgeInsets.zero,
                           title: Text(
-                            '${movement.productName} - ${movement.quantity} u.',
+                            '${movement.productName} - ${_movementTypeLabel(movement)} - ${movement.quantity} u.',
                           ),
                           subtitle: Text(
-                            '${movement.fromLocation} -> ${movement.toLocation} - ${movement.actorName}',
+                            '${_movementOriginLabel(movement)} -> ${_movementDestinationLabel(movement)} - ${movement.actorName}',
                           ),
                           trailing: Text(
                             SystemWFormatters.shortDate.format(
@@ -1244,12 +1329,14 @@ class _PurchaseForm extends ConsumerStatefulWidget {
     required this.isBusy,
     required this.currentUser,
     required this.onSubmitPurchase,
+    this.onHistoryProductChanged,
   });
 
   final AdminMobileDashboardState state;
   final bool isBusy;
   final AppUser? currentUser;
   final _PurchaseSubmit? onSubmitPurchase;
+  final ValueChanged<String?>? onHistoryProductChanged;
 
   @override
   ConsumerState<_PurchaseForm> createState() => _PurchaseFormState();
@@ -1383,6 +1470,7 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
       initialDate: initialDate,
       firstDate: DateTime(2020),
       lastDate: DateTime(2100),
+      locale: const Locale('es', 'PE'),
     );
     if (picked == null) {
       return;
@@ -1503,8 +1591,12 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
               _selectedCategoryValue = value;
               if (value == _newCategoryValue) {
                 _selectedProductValue = _newProductValue;
+                widget.onHistoryProductChanged?.call(null);
                 _loadProductFields(null);
                 _resetExpirySuggestion();
+                ref
+                    .read(adminMobileDashboardViewModelProvider.notifier)
+                    .clearSelectedProduct();
                 ref
                     .read(adminMobileDashboardViewModelProvider.notifier)
                     .changeUnitsPerPackage(1);
@@ -1521,6 +1613,7 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
                 }
                 _selectedProductValue =
                     firstProduct == null ? _newProductValue : firstProduct.id;
+                widget.onHistoryProductChanged?.call(firstProduct?.id);
                 if (firstProduct != null) {
                   _loadProductFields(firstProduct);
                   ref
@@ -1529,6 +1622,9 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
                 } else {
                   _loadProductFields(null);
                   _resetExpirySuggestion();
+                  ref
+                      .read(adminMobileDashboardViewModelProvider.notifier)
+                      .clearSelectedProduct();
                   ref
                       .read(adminMobileDashboardViewModelProvider.notifier)
                       .changeUnitsPerPackage(1);
@@ -1585,6 +1681,7 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
             });
 
             if (value != _newProductValue) {
+              widget.onHistoryProductChanged?.call(value);
               final product = state.products.firstWhere(
                 (item) => item.id == value,
               );
@@ -1593,8 +1690,12 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
                   .read(adminMobileDashboardViewModelProvider.notifier)
                   .selectProduct(value);
             } else {
+              widget.onHistoryProductChanged?.call(null);
               _loadProductFields(null);
               _resetExpirySuggestion();
+              ref
+                  .read(adminMobileDashboardViewModelProvider.notifier)
+                  .clearSelectedProduct();
               ref
                   .read(adminMobileDashboardViewModelProvider.notifier)
                   .changeUnitsPerPackage(1);
@@ -1748,6 +1849,9 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
             final compact = constraints.maxWidth < 420;
 
             final quantityField = TextFormField(
+              key: ValueKey(
+                'purchase-quantity-$productValue-${state.quantity}',
+              ),
               initialValue: '${state.quantity}',
               keyboardType: TextInputType.number,
               decoration: InputDecoration(labelText: quantityLabel),
@@ -2442,10 +2546,7 @@ class _MovementPreviewCard extends StatelessWidget {
             value: '$storeBefore u. -> $storeAfter u.',
           ),
           const SizedBox(height: 12),
-          Text(
-            'Detalle por cola',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
+
           const SizedBox(height: 8),
           if (allocations.isEmpty)
             Text(
@@ -2512,6 +2613,90 @@ class _MovementPreviewCard extends StatelessWidget {
                   context,
                 ).textTheme.bodySmall?.copyWith(color: const Color(0xFFB91C1C)),
               ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SupplierLotAvailabilityCard extends StatelessWidget {
+  const _SupplierLotAvailabilityCard({
+    required this.supplierName,
+    required this.lots,
+    required this.totalAvailableUnits,
+  });
+
+  final String supplierName;
+  final List<_WarehouseAvailableLot> lots;
+  final int totalAvailableUnits;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Lotes del proveedor',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 10),
+          _InfoLine(label: 'Proveedor', value: supplierName),
+          _InfoLine(
+            label: 'Disponible para mover',
+            value: '$totalAvailableUnits u.',
+            isStrong: true,
+          ),
+          const SizedBox(height: 8),
+          if (lots.isEmpty)
+            Text(
+              'Este proveedor no tiene lotes disponibles en almacen para este producto.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            )
+          else
+            Column(
+              children:
+                  lots.map((lot) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _InfoLine(
+                              label: 'Compra',
+                              value: SystemWFormatters.shortDateTime.format(
+                                lot.receivedAt,
+                              ),
+                            ),
+                            _InfoLine(
+                              label: 'Disponible',
+                              value: '${lot.availableUnits} u.',
+                            ),
+                            _InfoLine(
+                              label: 'Vencimiento',
+                              value: _formatOptionalDate(lot.expiryDate),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }).toList(),
             ),
         ],
       ),
@@ -3063,12 +3248,60 @@ class _CategoryDetailAccumulator {
 List<_WarehouseTransferAllocation> _buildWarehouseTransferPreview(
   AdminMobileDashboardState state,
   Product? product,
-  int requestedUnits,
-) {
+  int requestedUnits, {
+  String? supplierName,
+}) {
   if (product == null || requestedUnits <= 0 || product.stockWarehouse <= 0) {
     return const [];
   }
 
+  final lots = _buildWarehouseAvailableLots(
+    state,
+    product,
+    supplierName: supplierName,
+  );
+  if (lots.isEmpty) {
+    return const [];
+  }
+
+  final availableUnits = lots.fold<int>(
+    0,
+    (sum, lot) => sum + lot.availableUnits,
+  );
+  var unitsToPick = math.min(requestedUnits, availableUnits);
+  final allocations = <_WarehouseTransferAllocation>[];
+
+  for (final lot in lots) {
+    if (unitsToPick <= 0) {
+      break;
+    }
+
+    final pickedUnits = math.min(lot.availableUnits, unitsToPick);
+    allocations.add(
+      _WarehouseTransferAllocation(
+        sourceLabel: lot.sourceLabel,
+        receivedAt: lot.receivedAt,
+        availableUnits: lot.availableUnits,
+        pickedUnits: pickedUnits,
+        expiryDate: lot.expiryDate,
+      ),
+    );
+    unitsToPick -= pickedUnits;
+  }
+
+  return allocations;
+}
+
+List<_WarehouseAvailableLot> _buildWarehouseAvailableLots(
+  AdminMobileDashboardState state,
+  Product? product, {
+  String? supplierName,
+}) {
+  if (product == null || product.stockWarehouse <= 0) {
+    return const [];
+  }
+
+  final normalizedSupplier = supplierName?.trim().toLowerCase() ?? '';
   final lots = <_WarehouseLotBalance>[];
   var totalPurchasedUnits = 0;
 
@@ -3122,29 +3355,26 @@ List<_WarehouseTransferAllocation> _buildWarehouseTransferPreview(
   final remainingLots =
       lots.where((lot) => lot.availableUnits > 0).toList()
         ..sort((a, b) => a.receivedAt.compareTo(b.receivedAt));
+  final visibleLots =
+      normalizedSupplier.isEmpty
+          ? remainingLots
+          : remainingLots
+              .where(
+                (lot) =>
+                    lot.sourceLabel.trim().toLowerCase() == normalizedSupplier,
+              )
+              .toList();
 
-  var unitsToPick = math.min(requestedUnits, product.stockWarehouse);
-  final allocations = <_WarehouseTransferAllocation>[];
-
-  for (final lot in remainingLots) {
-    if (unitsToPick <= 0) {
-      break;
-    }
-
-    final pickedUnits = math.min(lot.availableUnits, unitsToPick);
-    allocations.add(
-      _WarehouseTransferAllocation(
-        sourceLabel: lot.sourceLabel,
-        receivedAt: lot.receivedAt,
-        availableUnits: lot.availableUnits,
-        pickedUnits: pickedUnits,
-        expiryDate: lot.expiryDate,
-      ),
-    );
-    unitsToPick -= pickedUnits;
-  }
-
-  return allocations;
+  return visibleLots
+      .map(
+        (lot) => _WarehouseAvailableLot(
+          sourceLabel: lot.sourceLabel,
+          receivedAt: lot.receivedAt,
+          availableUnits: lot.availableUnits,
+          expiryDate: lot.expiryDate,
+        ),
+      )
+      .toList();
 }
 
 class _WarehouseLotBalance {
@@ -3174,6 +3404,20 @@ class _WarehouseTransferAllocation {
   final DateTime receivedAt;
   final int availableUnits;
   final int pickedUnits;
+  final DateTime? expiryDate;
+}
+
+class _WarehouseAvailableLot {
+  const _WarehouseAvailableLot({
+    required this.sourceLabel,
+    required this.receivedAt,
+    required this.availableUnits,
+    this.expiryDate,
+  });
+
+  final String sourceLabel;
+  final DateTime receivedAt;
+  final int availableUnits;
   final DateTime? expiryDate;
 }
 
@@ -3207,6 +3451,32 @@ String? _latestSupplierPhone(List<Purchase> purchases) {
     }
   }
   return null;
+}
+
+String _movementTypeLabel(InventoryMovement movement) {
+  final fromLocation = movement.fromLocation.toLowerCase();
+  final toLocation = movement.toLocation.toLowerCase();
+  if (fromLocation.contains('sin origen')) {
+    return 'Compra';
+  }
+  if (toLocation.contains('sin destino')) {
+    return 'Venta';
+  }
+  return 'Transferencia';
+}
+
+String _movementOriginLabel(InventoryMovement movement) {
+  if (movement.fromLocation.toLowerCase().contains('sin origen')) {
+    return 'Compra';
+  }
+  return movement.fromLocation;
+}
+
+String _movementDestinationLabel(InventoryMovement movement) {
+  if (movement.toLocation.toLowerCase().contains('sin destino')) {
+    return 'Venta';
+  }
+  return movement.toLocation;
 }
 
 class _ProductPurchaseSnapshot {

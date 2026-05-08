@@ -121,6 +121,24 @@ class AdminMobileDashboardViewModel
     );
   }
 
+  Future<void> clearSelectedProduct() async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(
+      current.copyWith(
+        clearSelectedProduct: true,
+        quantity: 1,
+        unitsPerPackage: 1,
+        unitCost: 0,
+        supplier: '',
+        expiryDate: _defaultExpiryDate(null),
+      ),
+    );
+  }
+
   Future<void> changeQuantity(int quantity) async {
     final current = state.valueOrNull;
     if (current == null) {

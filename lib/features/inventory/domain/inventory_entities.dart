@@ -21,3 +21,23 @@ class InventoryMovement {
   final String actorName;
   final DateTime occurredAt;
 }
+
+class WarehouseSupplierLot {
+  const WarehouseSupplierLot({
+    required this.purchaseItemId,
+    required this.productId,
+    this.supplierId,
+    required this.supplierName,
+    required this.receivedAt,
+    required this.availableUnits,
+    this.expiryDate,
+  });
+
+  final String purchaseItemId;
+  final String productId;
+  final String? supplierId;
+  final String supplierName;
+  final DateTime receivedAt;
+  final int availableUnits;
+  final DateTime? expiryDate;
+}

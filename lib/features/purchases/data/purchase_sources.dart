@@ -47,7 +47,7 @@ class PurchaseRemoteDataSource {
     final rows = await _client
         .from('purchases')
         .select(
-          'id, received_at, supplier:suppliers(name, phone), admin:profiles(full_name), purchase_items(product_id, quantity, unit_cost, expiry_date, product:products(name, units_per_package))',
+          'id, received_at, supplier:suppliers(id, name, phone), admin:profiles(full_name), purchase_items(product_id, quantity, unit_cost, expiry_date, product:products(name, units_per_package))',
         )
         .order('received_at', ascending: false);
 
@@ -77,6 +77,7 @@ class PurchaseRemoteDataSource {
       return Purchase(
         id: row['id'] as String,
         supplier: supplier['name']?.toString() ?? 'Produccion artesanal',
+        supplierId: supplier['id']?.toString(),
         supplierPhone: supplier['phone']?.toString(),
         registeredBy: admin['full_name']?.toString() ?? 'Administrador',
         items: items,

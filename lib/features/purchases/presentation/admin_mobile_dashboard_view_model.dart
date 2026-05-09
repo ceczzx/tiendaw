@@ -109,7 +109,17 @@ class AdminMobileDashboardViewModel
       return;
     }
 
-    final product = current.products.firstWhere((item) => item.id == productId);
+    Product? product;
+    for (final item in current.products) {
+      if (item.id == productId) {
+        product = item;
+        break;
+      }
+    }
+    if (product == null) {
+      return;
+    }
+
     state = AsyncData(
       current.copyWith(
         selectedProductId: productId,
@@ -326,6 +336,7 @@ class AdminMobileDashboardViewModel
     final purchase = Purchase(
       id: _uuid.v4(),
       supplier: requiresSupplier ? current.supplier.trim() : '',
+      supplierId: null,
       supplierPhone:
           requiresSupplier
               ? _normalizeSupplierPhone(supplierPhone)
@@ -374,7 +385,7 @@ class AdminMobileDashboardViewModel
     }
   }
 
-  Future<bool> transferToStore(AppUser user) async {
+  Future<bool> transferToStore({String? supplierId}) async {
     final current = state.valueOrNull;
     final selectedProduct = current?.selectedProduct;
 
@@ -388,7 +399,7 @@ class AdminMobileDashboardViewModel
           .transferWarehouseToStore(
             productId: selectedProduct.id,
             quantity: current.quantity,
-            actorName: user.name,
+            supplierId: supplierId,
           );
 
       await _refreshAll();

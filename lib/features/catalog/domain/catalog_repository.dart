@@ -6,6 +6,10 @@ abstract class CatalogRepository {
   Future<List<Product>> getProducts();
   Future<List<PriceHistoryEntry>> getPriceHistory({String? productId});
   Future<List<InventoryMovement>> getInventoryMovements();
+  Future<List<WarehouseSupplierLot>> getWarehouseSupplierLots({
+    required String productId,
+    String? supplierId,
+  });
   Future<Category> ensureCategory({
     required String name,
     required String prefix,
@@ -41,6 +45,6 @@ abstract class CatalogRepository {
   Future<void> transferWarehouseToStore({
     required String productId,
     required int quantity,
-    required String actorName,
+    String? supplierId,
   });
 }

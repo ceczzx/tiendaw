@@ -1,9 +1,11 @@
-// ignore_for_file: unused_element_parameter, unused_element, unnecessary_null_comparison
+// ignore_for_file: unused_element_parameter, unused_element, unnecessary_null_comparison, unused_local_variable
 
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:tiendaw/app/providers.dart';
 import 'package:tiendaw/core/utils/formatters.dart';
 import 'package:tiendaw/features/auth/domain/app_user.dart';
 import 'package:tiendaw/features/auth/presentation/session_view_model.dart';
@@ -25,6 +27,36 @@ typedef _PurchaseSubmit =
       Map<String, dynamic>? productCostDetails,
       String? supplierPhone,
     });
+
+final _warehouseSupplierLotsProvider = FutureProvider.autoDispose.family<
+  List<WarehouseSupplierLot>,
+  _SupplierLotQuery
+>((ref, query) async {
+  return ref.read(catalogRepositoryProvider).getWarehouseSupplierLots(
+    productId: query.productId,
+    supplierId: query.supplierId,
+  );
+});
+
+class _SupplierLotQuery {
+  const _SupplierLotQuery({
+    required this.productId,
+    this.supplierId,
+  });
+
+  final String productId;
+  final String? supplierId;
+
+  @override
+  bool operator ==(Object other) {
+    return other is _SupplierLotQuery &&
+        other.productId == productId &&
+        other.supplierId == supplierId;
+  }
+
+  @override
+  int get hashCode => Object.hash(productId, supplierId);
+}
 
 class AdminMobileDashboardPage extends ConsumerStatefulWidget {
   const AdminMobileDashboardPage({super.key});
@@ -162,7 +194,7 @@ class _AdminMobileDashboardPageState
         isBusy: _isActionInProgress,
         currentUser: currentUser,
         onTransfer:
-            currentUser == null ? null : () => _handleTransfer(currentUser),
+            currentUser == null ? null : _handleTransfer,
       ),
     };
   }
@@ -206,7 +238,7 @@ class _AdminMobileDashboardPageState
     });
   }
 
-  Future<void> _handleTransfer(AppUser currentUser) async {
+  Future<void> _handleTransfer(String? supplierId) async {
     if (_isActionInProgress) {
       return;
     }
@@ -216,7 +248,7 @@ class _AdminMobileDashboardPageState
     });
     await ref
         .read(adminMobileDashboardViewModelProvider.notifier)
-        .transferToStore(currentUser);
+        .transferToStore(supplierId: supplierId);
   }
 
   _PurchaseSubmit _buildPurchaseSubmit(AppUser currentUser) {
@@ -889,7 +921,7 @@ class _SuppliersSectionState extends State<_SuppliersSection> {
   }
 }
 
-class _MovementsSection extends StatefulWidget {
+class _MovementsSection extends ConsumerStatefulWidget {
   const _MovementsSection({
     required this.state,
     required this.isBusy,
@@ -900,14 +932,14 @@ class _MovementsSection extends StatefulWidget {
   final AdminMobileDashboardState state;
   final bool isBusy;
   final AppUser? currentUser;
-  final Future<void> Function()? onTransfer;
+  final Future<void> Function(String? supplierId)? onTransfer;
 
   @override
-  State<_MovementsSection> createState() => _MovementsSectionState();
+  ConsumerState<_MovementsSection> createState() => _MovementsSectionState();
 }
 
-class _MovementsSectionState extends State<_MovementsSection> {
-  String? _selectedSupplier;
+class _MovementsSectionState extends ConsumerState<_MovementsSection> {
+  String? _selectedSupplierId;
   String? _selectedCategoryId;
   String _searchQuery = '';
 
@@ -916,7 +948,7 @@ class _MovementsSectionState extends State<_MovementsSection> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.state.selectedProductId != null &&
         widget.state.selectedProductId == null) {
-      _selectedSupplier = null;
+      _selectedSupplierId = null;
     }
   }
 
@@ -953,39 +985,63 @@ class _MovementsSectionState extends State<_MovementsSection> {
     final requiresSupplierReference =
         selectedProduct != null &&
         _isSupplierProductType(selectedProduct.productType);
-    final effectiveSupplier =
-        supplierOptions.contains(_selectedSupplier) ? _selectedSupplier : null;
+    final effectiveSupplierId =
+        supplierOptions.any((supplier) => supplier.id == _selectedSupplierId)
+            ? _selectedSupplierId
+            : null;
+    final effectiveSupplier = _supplierOptionById(
+      supplierOptions,
+      effectiveSupplierId,
+    );
     final quantity = state.quantity;
-    final supplierLots =
-        selectedProduct == null
-            ? const <_WarehouseAvailableLot>[]
-            : _buildWarehouseAvailableLots(
-              state,
-              selectedProduct,
-              supplierName:
-                  requiresSupplierReference ? effectiveSupplier : null,
-            );
+    final shouldLoadSupplierLots =
+        selectedProduct != null &&
+        (!requiresSupplierReference ||
+            effectiveSupplierId != null ||
+            supplierOptions.isEmpty);
+    final supplierLotsQuery =
+        shouldLoadSupplierLots && selectedProduct != null
+            ? _SupplierLotQuery(
+              productId: selectedProduct.id,
+              supplierId:
+                  requiresSupplierReference ? effectiveSupplierId : null,
+            )
+            : null;
+    final supplierLotsAsync =
+        supplierLotsQuery == null
+            ? const AsyncData<List<WarehouseSupplierLot>>([])
+            : ref.watch(_warehouseSupplierLotsProvider(supplierLotsQuery));
+    final supplierLots = supplierLotsAsync.valueOrNull ?? const [];
     final supplierAvailableUnits = supplierLots.fold<int>(
       0,
       (sum, lot) => sum + lot.availableUnits,
     );
+    final waitingSupplierIdentity =
+        requiresSupplierReference &&
+        supplierOptions.isNotEmpty &&
+        effectiveSupplierId == null;
+    final waitingSupplierCalculation =
+        shouldLoadSupplierLots && supplierLotsAsync.isLoading;
     final warehouseStock =
         selectedProduct == null
             ? 0
-            : requiresSupplierReference
-            ? effectiveSupplier == null
-                ? (supplierOptions.isEmpty ? selectedProduct.stockWarehouse : 0)
-                : supplierAvailableUnits
-            : selectedProduct.stockWarehouse;
+            : shouldLoadSupplierLots
+            ? supplierAvailableUnits
+            : 0;
     final storeStock = selectedProduct?.stockStore ?? 0;
-    final remainingWarehouse = warehouseStock - quantity;
+    final remainingWarehouse =
+        waitingSupplierIdentity || waitingSupplierCalculation
+            ? warehouseStock
+            : warehouseStock - quantity;
     final nextStoreStock = storeStock + quantity;
-    final hasEnoughStock = selectedProduct == null || remainingWarehouse >= 0;
-    final transferAllocations = _buildWarehouseTransferPreview(
-      state,
-      selectedProduct,
+    final hasEnoughStock =
+        selectedProduct == null ||
+        waitingSupplierIdentity ||
+        waitingSupplierCalculation ||
+        remainingWarehouse >= 0;
+    final transferAllocations = _buildWarehouseTransferPreviewFromLots(
+      supplierLots,
       quantity,
-      supplierName: requiresSupplierReference ? effectiveSupplier : null,
     );
 
     return SingleChildScrollView(
@@ -1159,7 +1215,7 @@ class _MovementsSectionState extends State<_MovementsSection> {
                             return;
                           }
                           setState(() {
-                            _selectedSupplier = null;
+                            _selectedSupplierId = null;
                           });
                           ref
                               .read(
@@ -1185,7 +1241,7 @@ class _MovementsSectionState extends State<_MovementsSection> {
                         )
                       else ...[
                         DropdownButtonFormField<String>(
-                          value: effectiveSupplier,
+                          value: effectiveSupplierId,
                           decoration: const InputDecoration(
                             labelText: 'Proveedor de referencia',
                           ),
@@ -1193,8 +1249,8 @@ class _MovementsSectionState extends State<_MovementsSection> {
                               supplierOptions
                                   .map(
                                     (supplier) => DropdownMenuItem(
-                                      value: supplier,
-                                      child: Text(supplier),
+                                      value: supplier.id,
+                                      child: Text(supplier.name),
                                     ),
                                   )
                                   .toList(),
@@ -1203,7 +1259,7 @@ class _MovementsSectionState extends State<_MovementsSection> {
                                   ? null
                                   : (value) {
                                     setState(() {
-                                      _selectedSupplier = value;
+                                      _selectedSupplierId = value;
                                     });
                                   },
                         ),
@@ -1221,9 +1277,11 @@ class _MovementsSectionState extends State<_MovementsSection> {
                           selectedProduct != null &&
                           effectiveSupplier != null) ...[
                         _SupplierLotAvailabilityCard(
-                          supplierName: effectiveSupplier,
+                          supplierName: effectiveSupplier.name,
                           lots: supplierLots,
                           totalAvailableUnits: supplierAvailableUnits,
+                          isLoading: supplierLotsAsync.isLoading,
+                          hasError: supplierLotsAsync.hasError,
                         ),
                         const SizedBox(height: 12),
                       ],
@@ -1251,7 +1309,7 @@ class _MovementsSectionState extends State<_MovementsSection> {
                         productName: selectedProduct?.name,
                         supplierName:
                             requiresSupplierReference
-                                ? effectiveSupplier
+                                ? effectiveSupplier?.name
                                 : 'No aplica',
                         quantity: quantity,
                         warehouseBefore: warehouseStock,
@@ -1272,9 +1330,14 @@ class _MovementsSectionState extends State<_MovementsSection> {
                                       !hasEnoughStock ||
                                       (requiresSupplierReference &&
                                           supplierOptions.isNotEmpty &&
-                                          effectiveSupplier == null)
+                                          effectiveSupplierId == null) ||
+                                      supplierLotsAsync.isLoading
                                   ? null
-                                  : () => widget.onTransfer!(),
+                                  : () => widget.onTransfer!(
+                                    requiresSupplierReference
+                                        ? effectiveSupplierId
+                                        : null,
+                                  ),
                           icon: const Icon(Icons.swap_horiz_rounded),
                           label: const Text('Confirmar movimiento'),
                         ),
@@ -1534,11 +1597,7 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
     }
 
     final selectedProduct =
-        isNewProduct
-            ? null
-            : productsForCategory.firstWhere(
-              (product) => product.id == productValue,
-            );
+        isNewProduct ? null : _findProductById(productsForCategory, productValue);
     final effectiveProductType = _normalizePurchaseProductType(
       _selectedProductType,
     );
@@ -1682,13 +1741,18 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
 
             if (value != _newProductValue) {
               widget.onHistoryProductChanged?.call(value);
-              final product = state.products.firstWhere(
-                (item) => item.id == value,
-              );
+              final product = _findProductById(state.products, value);
               _loadProductFields(product);
-              ref
-                  .read(adminMobileDashboardViewModelProvider.notifier)
-                  .selectProduct(value);
+              if (product != null) {
+                ref
+                    .read(adminMobileDashboardViewModelProvider.notifier)
+                    .selectProduct(value);
+              } else {
+                _resetExpirySuggestion();
+                ref
+                    .read(adminMobileDashboardViewModelProvider.notifier)
+                    .clearSelectedProduct();
+              }
             } else {
               widget.onHistoryProductChanged?.call(null);
               _loadProductFields(null);
@@ -1810,6 +1874,11 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
           TextFormField(
             controller: _supplierPhoneController,
             keyboardType: TextInputType.phone,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(9),
+              _PhoneNumberFormatter(),
+            ],
             decoration: const InputDecoration(
               labelText: 'Numero del proveedor',
               helperText: 'Opcional, util para contacto rapido.',
@@ -2080,9 +2149,17 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
       categoryNameForCreation = newCategoryName;
       categoryPrefixForCreation = newCategoryPrefix;
     } else {
-      final selectedCategory = widget.state.categories.firstWhere(
-        (category) => category.id == categoryValue,
+      final selectedCategory = _findCategoryById(
+        widget.state.categories,
+        categoryValue,
       );
+      if (selectedCategory == null) {
+        setState(() {
+          _formError =
+              'La categoria seleccionada ya no esta disponible. Vuelve a elegirla.';
+        });
+        return;
+      }
       categoryNameForCreation = selectedCategory.name;
       categoryPrefixForCreation = selectedCategory.prefix;
     }
@@ -2625,11 +2702,15 @@ class _SupplierLotAvailabilityCard extends StatelessWidget {
     required this.supplierName,
     required this.lots,
     required this.totalAvailableUnits,
+    this.isLoading = false,
+    this.hasError = false,
   });
 
   final String supplierName;
-  final List<_WarehouseAvailableLot> lots;
+  final List<WarehouseSupplierLot> lots;
   final int totalAvailableUnits;
+  final bool isLoading;
+  final bool hasError;
 
   @override
   Widget build(BuildContext context) {
@@ -2656,7 +2737,14 @@ class _SupplierLotAvailabilityCard extends StatelessWidget {
             isStrong: true,
           ),
           const SizedBox(height: 8),
-          if (lots.isEmpty)
+          if (isLoading)
+            const Center(child: CircularProgressIndicator())
+          else if (hasError)
+            Text(
+              'No pudimos consultar los lotes de este proveedor en Supabase.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            )
+          else if (lots.isEmpty)
             Text(
               'Este proveedor no tiene lotes disponibles en almacen para este producto.',
               style: Theme.of(context).textTheme.bodyMedium,
@@ -3006,6 +3094,26 @@ int _uniqueSupplierCount(AdminMobileDashboardState state) {
   return names.length;
 }
 
+Product? _findProductById(List<Product> products, String productId) {
+  for (final product in products) {
+    if (product.id == productId) {
+      return product;
+    }
+  }
+
+  return null;
+}
+
+Category? _findCategoryById(List<Category> categories, String categoryId) {
+  for (final category in categories) {
+    if (category.id == categoryId) {
+      return category;
+    }
+  }
+
+  return null;
+}
+
 List<String> _allSupplierOptions(AdminMobileDashboardState state) {
   final names = <String>{};
 
@@ -3029,6 +3137,33 @@ List<String> _allSupplierOptions(AdminMobileDashboardState state) {
   return result;
 }
 
+class _SupplierOption {
+  const _SupplierOption({
+    required this.id,
+    required this.name,
+  });
+
+  final String id;
+  final String name;
+}
+
+_SupplierOption? _supplierOptionById(
+  List<_SupplierOption> options,
+  String? supplierId,
+) {
+  if (supplierId == null) {
+    return null;
+  }
+
+  for (final option in options) {
+    if (option.id == supplierId) {
+      return option;
+    }
+  }
+
+  return null;
+}
+
 String _supplierLabelForProduct(
   AdminMobileDashboardState state,
   Product product,
@@ -3038,12 +3173,12 @@ String _supplierLabelForProduct(
     return 'Sin proveedor relacionado';
   }
   if (suppliers.length <= 2) {
-    return suppliers.join(', ');
+    return suppliers.map((supplier) => supplier.name).join(', ');
   }
-  return '${suppliers.take(2).join(', ')} +${suppliers.length - 2}';
+  return '${suppliers.take(2).map((supplier) => supplier.name).join(', ')} +${suppliers.length - 2}';
 }
 
-List<String> _supplierOptionsForProduct(
+List<_SupplierOption> _supplierOptionsForProduct(
   AdminMobileDashboardState state,
   Product? selectedProduct,
 ) {
@@ -3051,32 +3186,30 @@ List<String> _supplierOptionsForProduct(
     return const [];
   }
 
-  final names = <String>{};
-
-  for (final entry in state.priceHistory) {
-    if (entry.productId == selectedProduct.id) {
-      final name = entry.supplier.trim();
-      if (_hasOperationalSupplier(name)) {
-        names.add(name);
-      }
-    }
-  }
+  final optionsById = <String, _SupplierOption>{};
 
   for (final purchase in state.purchases) {
     final hasProduct = purchase.items.any(
       (item) => item.productId == selectedProduct.id,
     );
-    if (hasProduct) {
-      final name = purchase.supplier.trim();
-      if (_hasOperationalSupplier(name)) {
-        names.add(name);
-      }
+    if (!hasProduct) {
+      continue;
     }
+
+    final supplierId = purchase.supplierId?.trim();
+    final supplierName = purchase.supplier.trim();
+    if (supplierId == null ||
+        supplierId.isEmpty ||
+        !_hasOperationalSupplier(supplierName)) {
+      continue;
+    }
+
+    optionsById[supplierId] = _SupplierOption(id: supplierId, name: supplierName);
   }
 
   final result =
-      names.toList()
-        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      optionsById.values.toList()
+        ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
   return result;
 }
 
@@ -3245,22 +3378,11 @@ class _CategoryDetailAccumulator {
   DateTime? nextExpiryDate;
 }
 
-List<_WarehouseTransferAllocation> _buildWarehouseTransferPreview(
-  AdminMobileDashboardState state,
-  Product? product,
-  int requestedUnits, {
-  String? supplierName,
-}) {
-  if (product == null || requestedUnits <= 0 || product.stockWarehouse <= 0) {
-    return const [];
-  }
-
-  final lots = _buildWarehouseAvailableLots(
-    state,
-    product,
-    supplierName: supplierName,
-  );
-  if (lots.isEmpty) {
+List<_WarehouseTransferAllocation> _buildWarehouseTransferPreviewFromLots(
+  List<WarehouseSupplierLot> lots,
+  int requestedUnits,
+) {
+  if (requestedUnits <= 0 || lots.isEmpty) {
     return const [];
   }
 
@@ -3279,7 +3401,7 @@ List<_WarehouseTransferAllocation> _buildWarehouseTransferPreview(
     final pickedUnits = math.min(lot.availableUnits, unitsToPick);
     allocations.add(
       _WarehouseTransferAllocation(
-        sourceLabel: lot.sourceLabel,
+        sourceLabel: lot.supplierName,
         receivedAt: lot.receivedAt,
         availableUnits: lot.availableUnits,
         pickedUnits: pickedUnits,
@@ -3290,105 +3412,6 @@ List<_WarehouseTransferAllocation> _buildWarehouseTransferPreview(
   }
 
   return allocations;
-}
-
-List<_WarehouseAvailableLot> _buildWarehouseAvailableLots(
-  AdminMobileDashboardState state,
-  Product? product, {
-  String? supplierName,
-}) {
-  if (product == null || product.stockWarehouse <= 0) {
-    return const [];
-  }
-
-  final normalizedSupplier = supplierName?.trim().toLowerCase() ?? '';
-  final lots = <_WarehouseLotBalance>[];
-  var totalPurchasedUnits = 0;
-
-  for (final purchase in state.purchases) {
-    for (final item in purchase.items) {
-      if (item.productId != product.id) {
-        continue;
-      }
-
-      final lotUnits = item.totalUnits;
-      if (lotUnits <= 0) {
-        continue;
-      }
-
-      totalPurchasedUnits += lotUnits;
-      lots.add(
-        _WarehouseLotBalance(
-          sourceLabel:
-              purchase.supplier.trim().isEmpty
-                  ? 'Produccion artesanal'
-                  : purchase.supplier,
-          receivedAt: purchase.receivedAt,
-          availableUnits: lotUnits,
-          expiryDate: item.expiryDate,
-        ),
-      );
-    }
-  }
-
-  if (lots.isEmpty) {
-    return const [];
-  }
-
-  lots.sort((a, b) => a.receivedAt.compareTo(b.receivedAt));
-
-  var alreadyMovedUnits = totalPurchasedUnits - product.stockWarehouse;
-  if (alreadyMovedUnits < 0) {
-    alreadyMovedUnits = 0;
-  }
-
-  for (final lot in lots) {
-    if (alreadyMovedUnits <= 0) {
-      break;
-    }
-
-    final consumedUnits = math.min(lot.availableUnits, alreadyMovedUnits);
-    lot.availableUnits -= consumedUnits;
-    alreadyMovedUnits -= consumedUnits;
-  }
-
-  final remainingLots =
-      lots.where((lot) => lot.availableUnits > 0).toList()
-        ..sort((a, b) => a.receivedAt.compareTo(b.receivedAt));
-  final visibleLots =
-      normalizedSupplier.isEmpty
-          ? remainingLots
-          : remainingLots
-              .where(
-                (lot) =>
-                    lot.sourceLabel.trim().toLowerCase() == normalizedSupplier,
-              )
-              .toList();
-
-  return visibleLots
-      .map(
-        (lot) => _WarehouseAvailableLot(
-          sourceLabel: lot.sourceLabel,
-          receivedAt: lot.receivedAt,
-          availableUnits: lot.availableUnits,
-          expiryDate: lot.expiryDate,
-        ),
-      )
-      .toList();
-}
-
-class _WarehouseLotBalance {
-  _WarehouseLotBalance({
-    required this.sourceLabel,
-    required this.receivedAt,
-    required this.availableUnits,
-    this.expiryDate,
-  });
-
-  final String sourceLabel;
-  final DateTime receivedAt;
-  int availableUnits;
-  final DateTime? expiryDate;
 }
 
 class _WarehouseTransferAllocation {
@@ -3407,18 +3430,49 @@ class _WarehouseTransferAllocation {
   final DateTime? expiryDate;
 }
 
-class _WarehouseAvailableLot {
-  const _WarehouseAvailableLot({
-    required this.sourceLabel,
-    required this.receivedAt,
-    required this.availableUnits,
-    this.expiryDate,
-  });
+class _PhoneNumberFormatter extends TextInputFormatter {
+  const _PhoneNumberFormatter();
 
-  final String sourceLabel;
-  final DateTime receivedAt;
-  final int availableUnits;
-  final DateTime? expiryDate;
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final digits = newValue.text.replaceAll(RegExp(r'\D'), '');
+    final trimmed = digits.length > 9 ? digits.substring(0, 9) : digits;
+
+    final formatted = switch (trimmed.length) {
+      <= 3 => trimmed,
+      <= 6 => '${trimmed.substring(0, 3)} ${trimmed.substring(3)}',
+      _ =>
+        '${trimmed.substring(0, 3)} ${trimmed.substring(3, 6)} ${trimmed.substring(6)}',
+    };
+
+    final digitsBeforeCursor =
+        newValue.selection.baseOffset <= 0
+            ? 0
+            : newValue.text
+                .substring(0, newValue.selection.baseOffset)
+                .replaceAll(RegExp(r'\D'), '')
+                .length;
+
+    var cursorOffset = digitsBeforeCursor;
+    if (digitsBeforeCursor > 3) {
+      cursorOffset += 1;
+    }
+    if (digitsBeforeCursor > 6) {
+      cursorOffset += 1;
+    }
+    if (cursorOffset > formatted.length) {
+      cursorOffset = formatted.length;
+    }
+
+    return TextEditingValue(
+      text: formatted,
+      selection: TextSelection.collapsed(offset: cursorOffset),
+      composing: TextRange.empty,
+    );
+  }
 }
 
 String _supplierPhoneForName(

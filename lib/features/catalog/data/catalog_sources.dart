@@ -74,6 +74,7 @@ class CatalogLocalDataSource {
   List<Product> _products = const [];
   List<PriceHistoryEntry> _priceHistory = const [];
   List<InventoryMovement> _movements = const [];
+  final Map<String, List<WarehouseSupplierLot>> _warehouseSupplierLots = {};
 
   Future<List<Category>> getCategories() async => List.unmodifiable(_categories);
   Future<List<Product>> getProducts() async => List.unmodifiable(_products);
@@ -87,6 +88,17 @@ class CatalogLocalDataSource {
 
   Future<List<InventoryMovement>> getInventoryMovements() async {
     return List.unmodifiable(_movements);
+  }
+
+  Future<List<WarehouseSupplierLot>> getWarehouseSupplierLots({
+    required String productId,
+    String? supplierId,
+  }) async {
+    final cacheKey = _warehouseSupplierLotsKey(
+      productId: productId,
+      supplierId: supplierId,
+    );
+    return List.unmodifiable(_warehouseSupplierLots[cacheKey] ?? const []);
   }
 
   Future<void> saveCategories(List<Category> categories) async {
@@ -103,6 +115,20 @@ class CatalogLocalDataSource {
 
   Future<void> saveInventoryMovements(List<InventoryMovement> movements) async {
     _movements = List<InventoryMovement>.unmodifiable(movements);
+  }
+
+  Future<void> saveWarehouseSupplierLots({
+    required String productId,
+    String? supplierId,
+    required List<WarehouseSupplierLot> lots,
+  }) async {
+    final cacheKey = _warehouseSupplierLotsKey(
+      productId: productId,
+      supplierId: supplierId,
+    );
+    _warehouseSupplierLots[cacheKey] = List<WarehouseSupplierLot>.unmodifiable(
+      lots,
+    );
   }
 }
 
@@ -369,28 +395,54 @@ class CatalogRemoteDataSource {
     }).toList();
   }
 
+  Future<List<WarehouseSupplierLot>> getWarehouseSupplierLots({
+    required String productId,
+    String? supplierId,
+  }) async {
+    final params = <String, dynamic>{
+      'p_product_id': productId,
+      if (supplierId != null && supplierId.trim().isNotEmpty)
+        'p_supplier_id': supplierId,
+    };
+    final rows = await _client.rpc(
+      'get_product_supplier_lots',
+      params: params,
+    );
+
+    return _mapRows(rows).map((row) {
+      return WarehouseSupplierLot(
+        purchaseItemId: row['purchase_item_id'] as String,
+        productId: row['product_id'] as String,
+        supplierId: row['supplier_id']?.toString(),
+        supplierName: row['supplier_name']?.toString() ?? 'Proveedor',
+        receivedAt: _parseSupabaseDateTime(row['received_at'] as String),
+        availableUnits: (row['available_units'] as num).toInt(),
+        expiryDate:
+            row['expiry_date'] == null
+                ? null
+                : DateTime.parse(row['expiry_date'] as String),
+      );
+    }).toList();
+  }
+
   Future<void> transferWarehouseToStore({
     required String productId,
     required int quantity,
-    required String actorName,
+    String? supplierId,
   }) async {
-    final currentUserId = _client.auth.currentUser?.id;
-    if (currentUserId == null) {
+    if (_client.auth.currentUser?.id == null) {
       throw StateError('No hay una sesion activa para registrar la transferencia.');
     }
 
-    final warehouseId = await _resolveLocationId('warehouse');
-    final storeId = await _resolveLocationId('store');
-
-    await _client.from('inventory_movements').insert({
-      'product_id': productId,
-      'movement_type': 'transfer',
-      'from_location_id': warehouseId,
-      'to_location_id': storeId,
-      'quantity': quantity,
-      'reference_table': 'app_transfer',
-      'created_by': currentUserId,
-    });
+    await _client.rpc(
+      'transfer_product_supplier_stock',
+      params: <String, dynamic>{
+        'p_product_id': productId,
+        'p_quantity': quantity,
+        if (supplierId != null && supplierId.trim().isNotEmpty)
+          'p_supplier_id': supplierId,
+      },
+    );
   }
 
   Future<Map<String, Map<String, int>>> _loadStockByProduct() async {
@@ -475,6 +527,14 @@ class CatalogRemoteDataSource {
 
     return Map<String, dynamic>.from(value as Map);
   }
+}
+
+String _warehouseSupplierLotsKey({
+  required String productId,
+  String? supplierId,
+}) {
+  final normalizedSupplierId = supplierId?.trim() ?? '';
+  return '$productId::$normalizedSupplierId';
 }
 
 DateTime _parseSupabaseDateTime(String rawValue) {

@@ -26,6 +26,7 @@ class Purchase {
   const Purchase({
     required this.id,
     required this.supplier,
+    this.supplierId,
     this.supplierPhone,
     required this.registeredBy,
     required this.items,
@@ -36,6 +37,7 @@ class Purchase {
 
   final String id;
   final String supplier;
+  final String? supplierId;
   final String? supplierPhone;
   final String registeredBy;
   final List<PurchaseLine> items;
@@ -48,7 +50,9 @@ class Purchase {
   Purchase copyWith({
     String? id,
     String? supplier,
+    String? supplierId,
     String? supplierPhone,
+    bool clearSupplierId = false,
     bool clearSupplierPhone = false,
     String? registeredBy,
     List<PurchaseLine>? items,
@@ -59,6 +63,7 @@ class Purchase {
     return Purchase(
       id: id ?? this.id,
       supplier: supplier ?? this.supplier,
+      supplierId: clearSupplierId ? null : supplierId ?? this.supplierId,
       supplierPhone:
           clearSupplierPhone ? null : supplierPhone ?? this.supplierPhone,
       registeredBy: registeredBy ?? this.registeredBy,

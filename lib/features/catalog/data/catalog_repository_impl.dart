@@ -52,6 +52,34 @@ class CatalogRepositoryImpl implements CatalogRepository {
   }
 
   @override
+  Future<List<WarehouseSupplierLot>> getWarehouseSupplierLots({
+    required String productId,
+    String? supplierId,
+  }) async {
+    try {
+      final lots = await _remote.getWarehouseSupplierLots(
+        productId: productId,
+        supplierId: supplierId,
+      );
+      await _local.saveWarehouseSupplierLots(
+        productId: productId,
+        supplierId: supplierId,
+        lots: lots,
+      );
+      return lots;
+    } catch (_) {
+      final cached = await _local.getWarehouseSupplierLots(
+        productId: productId,
+        supplierId: supplierId,
+      );
+      if (cached.isEmpty) {
+        rethrow;
+      }
+      return cached;
+    }
+  }
+
+  @override
   Future<List<PriceHistoryEntry>> getPriceHistory({String? productId}) async {
     try {
       final entries = await _remote.getPriceHistory(productId: productId);
@@ -153,12 +181,12 @@ class CatalogRepositoryImpl implements CatalogRepository {
   Future<void> transferWarehouseToStore({
     required String productId,
     required int quantity,
-    required String actorName,
+    String? supplierId,
   }) {
     return _remote.transferWarehouseToStore(
       productId: productId,
       quantity: quantity,
-      actorName: actorName,
+      supplierId: supplierId,
     );
   }
 }

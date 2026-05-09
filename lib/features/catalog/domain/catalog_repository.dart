@@ -23,7 +23,6 @@ abstract class CatalogRepository {
     required int lowStockThreshold,
     required int unitsPerPackage,
     required Map<String, dynamic> costDetails,
-    required Map<String, dynamic> specs,
   });
   Future<void> updateProductLowStockThreshold({
     required String productId,
@@ -40,7 +39,6 @@ abstract class CatalogRepository {
     required double lastPurchaseCost,
     required int unitsPerPackage,
     required Map<String, dynamic> costDetails,
-    required Map<String, dynamic> specs,
   });
   Future<void> transferWarehouseToStore({
     required String productId,

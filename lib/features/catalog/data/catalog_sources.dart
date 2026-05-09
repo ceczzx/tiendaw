@@ -21,12 +21,12 @@ class CategoryModel extends Category {
 class ProductModel extends Product {
   const ProductModel({
     required super.id,
+    required super.sku,
     required super.categoryId,
     required super.name,
     required super.productType,
     required super.unitsPerPackage,
     required super.costDetails,
-    required super.specs,
     required super.salePrice,
     required super.lastPurchaseCost,
     required super.stockStore,
@@ -43,20 +43,24 @@ class ProductModel extends Product {
     required int stockWarehouse,
     required DateTime? nextExpiryDate,
   }) {
+    final productType = map['product_type']?.toString() ?? 'proveedor';
+    final sku = map['sku']?.toString() ?? '';
+    final costDetails =
+        map['cost_details'] is Map
+            ? Map<String, dynamic>.from(map['cost_details'] as Map)
+            : <String, dynamic>{};
+    if (!costDetails.containsKey('tipo')) {
+      costDetails['tipo'] = productType;
+    }
+
     return ProductModel(
       id: map['id'] as String,
+      sku: sku,
       categoryId: map['category_id'] as String,
       name: map['name'] as String,
-      productType: map['product_type']?.toString() ?? 'proveedor',
+      productType: productType,
       unitsPerPackage: (map['units_per_package'] as num?)?.toInt() ?? 1,
-      costDetails:
-          map['cost_details'] is Map
-              ? Map<String, dynamic>.from(map['cost_details'] as Map)
-              : const <String, dynamic>{},
-      specs:
-          map['specs'] is Map
-              ? Map<String, dynamic>.from(map['specs'] as Map)
-              : const <String, dynamic>{},
+      costDetails: costDetails,
       salePrice: (map['sale_price'] as num).toDouble(),
       lastPurchaseCost: (map['last_purchase_cost'] as num).toDouble(),
       stockStore: stockStore,
@@ -76,13 +80,16 @@ class CatalogLocalDataSource {
   List<InventoryMovement> _movements = const [];
   final Map<String, List<WarehouseSupplierLot>> _warehouseSupplierLots = {};
 
-  Future<List<Category>> getCategories() async => List.unmodifiable(_categories);
+  Future<List<Category>> getCategories() async =>
+      List.unmodifiable(_categories);
   Future<List<Product>> getProducts() async => List.unmodifiable(_products);
   Future<List<PriceHistoryEntry>> getPriceHistory({String? productId}) async {
     final source =
         productId == null
             ? _priceHistory
-            : _priceHistory.where((entry) => entry.productId == productId).toList();
+            : _priceHistory
+                .where((entry) => entry.productId == productId)
+                .toList();
     return List.unmodifiable(source);
   }
 
@@ -185,14 +192,15 @@ class CatalogRemoteDataSource {
     final productRows = await _client
         .from('products')
         .select(
-          'id, category_id, name, product_type, units_per_package, package_name, unit_name, cost_details, specs, sale_price, last_purchase_cost, low_stock_threshold',
+          'id, sku, category_id, name, product_type, units_per_package, package_name, unit_name, cost_details, sale_price, last_purchase_cost, low_stock_threshold',
         )
         .order('name');
     final stockByProduct = await _loadStockByProduct();
     final nextExpiryByProduct = await _loadNextExpiryByProduct();
 
     return _mapRows(productRows).map((row) {
-      final stock = stockByProduct[row['id']] ?? const {'store': 0, 'warehouse': 0};
+      final stock =
+          stockByProduct[row['id']] ?? const {'store': 0, 'warehouse': 0};
       return ProductModel.fromSupabase(
         row,
         stockStore: stock['store'] ?? 0,
@@ -211,7 +219,6 @@ class CatalogRemoteDataSource {
     required int lowStockThreshold,
     required int unitsPerPackage,
     required Map<String, dynamic> costDetails,
-    required Map<String, dynamic> specs,
   }) async {
     final normalizedName = name.trim();
     if (normalizedName.isEmpty) {
@@ -221,7 +228,7 @@ class CatalogRemoteDataSource {
     final rows = await _client
         .from('products')
         .select(
-          'id, category_id, name, product_type, units_per_package, package_name, unit_name, cost_details, specs, sale_price, last_purchase_cost, low_stock_threshold',
+          'id, sku, category_id, name, product_type, units_per_package, package_name, unit_name, cost_details, sale_price, last_purchase_cost, low_stock_threshold',
         )
         .eq('category_id', categoryId)
         .eq('name', normalizedName)
@@ -229,7 +236,8 @@ class CatalogRemoteDataSource {
     final data = _mapRows(rows);
     if (data.isNotEmpty) {
       final updates = <String, dynamic>{};
-      if ((data.first['product_type']?.toString() ?? 'proveedor') != productType) {
+      if ((data.first['product_type']?.toString() ?? 'proveedor') !=
+          productType) {
         updates['product_type'] = productType;
       }
       if ((data.first['low_stock_threshold'] as int) != lowStockThreshold) {
@@ -242,7 +250,6 @@ class CatalogRemoteDataSource {
       updates['sale_price'] = salePrice;
       updates['last_purchase_cost'] = lastPurchaseCost;
       updates['cost_details'] = costDetails;
-      updates['specs'] = specs;
 
       if (updates.isNotEmpty) {
         final updated =
@@ -251,7 +258,7 @@ class CatalogRemoteDataSource {
                 .update(updates)
                 .eq('id', data.first['id'] as String)
                 .select(
-                  'id, category_id, name, product_type, units_per_package, package_name, unit_name, cost_details, specs, sale_price, last_purchase_cost, low_stock_threshold',
+                  'id, sku, category_id, name, product_type, units_per_package, package_name, unit_name, cost_details, sale_price, last_purchase_cost, low_stock_threshold',
                 )
                 .single();
         return ProductModel.fromSupabase(
@@ -281,13 +288,12 @@ class CatalogRemoteDataSource {
               'package_name': 'caja',
               'unit_name': 'unid',
               'cost_details': costDetails,
-              'specs': specs,
               'sale_price': salePrice,
               'last_purchase_cost': lastPurchaseCost,
               'low_stock_threshold': lowStockThreshold,
             })
             .select(
-              'id, category_id, name, product_type, units_per_package, package_name, unit_name, cost_details, specs, sale_price, last_purchase_cost, low_stock_threshold',
+              'id, sku, category_id, name, product_type, units_per_package, package_name, unit_name, cost_details, sale_price, last_purchase_cost, low_stock_threshold',
             )
             .single();
 
@@ -326,7 +332,6 @@ class CatalogRemoteDataSource {
     required double lastPurchaseCost,
     required int unitsPerPackage,
     required Map<String, dynamic> costDetails,
-    required Map<String, dynamic> specs,
   }) async {
     await _client
         .from('products')
@@ -336,15 +341,16 @@ class CatalogRemoteDataSource {
           'last_purchase_cost': lastPurchaseCost,
           'units_per_package': unitsPerPackage,
           'cost_details': costDetails,
-          'specs': specs,
         })
         .eq('id', productId);
   }
 
   Future<List<PriceHistoryEntry>> getPriceHistory({String? productId}) async {
-    var query = _client.from('product_prices').select(
-      'id, product_id, unit_cost, effective_at, supplier:suppliers(name), product:products(name)',
-    );
+    var query = _client
+        .from('product_prices')
+        .select(
+          'id, product_id, unit_cost, effective_at, supplier:suppliers(name), product:products(name)',
+        );
 
     if (productId != null && productId.isNotEmpty) {
       query = query.eq('product_id', productId);
@@ -371,12 +377,13 @@ class CatalogRemoteDataSource {
     final rows = await _client
         .from('inventory_movements')
         .select(
-          'id, product_id, movement_type, quantity, happened_at, product:products(name), actor:profiles(full_name), from_location:locations!inventory_movements_from_location_id_fkey(name), to_location:locations!inventory_movements_to_location_id_fkey(name)',
+          'id, product_id, supplier_id, movement_type, quantity, happened_at, product:products(name), supplier:suppliers(name), actor:profiles(full_name), from_location:locations!inventory_movements_from_location_id_fkey(name), to_location:locations!inventory_movements_to_location_id_fkey(name)',
         )
         .order('happened_at', ascending: false);
 
     return _mapRows(rows).map((row) {
       final product = _mapNullable(row['product']);
+      final supplier = _mapNullable(row['supplier']);
       final actor = _mapNullable(row['actor']);
       final fromLocation = _mapNullable(row['from_location']);
       final toLocation = _mapNullable(row['to_location']);
@@ -385,6 +392,8 @@ class CatalogRemoteDataSource {
         id: row['id'] as String,
         productId: row['product_id'] as String,
         productName: product['name']?.toString() ?? 'Producto',
+        supplierId: row['supplier_id']?.toString(),
+        supplierName: supplier['name']?.toString(),
         type: row['movement_type'] as String,
         quantity: row['quantity'] as int,
         fromLocation: fromLocation['name']?.toString() ?? 'Sin origen',
@@ -404,10 +413,7 @@ class CatalogRemoteDataSource {
       if (supplierId != null && supplierId.trim().isNotEmpty)
         'p_supplier_id': supplierId,
     };
-    final rows = await _client.rpc(
-      'get_product_supplier_lots',
-      params: params,
-    );
+    final rows = await _client.rpc('get_product_supplier_lots', params: params);
 
     return _mapRows(rows).map((row) {
       return WarehouseSupplierLot(
@@ -431,7 +437,9 @@ class CatalogRemoteDataSource {
     String? supplierId,
   }) async {
     if (_client.auth.currentUser?.id == null) {
-      throw StateError('No hay una sesion activa para registrar la transferencia.');
+      throw StateError(
+        'No hay una sesion activa para registrar la transferencia.',
+      );
     }
 
     await _client.rpc(
@@ -474,8 +482,9 @@ class CatalogRemoteDataSource {
 
   Future<Map<String, DateTime>> _loadNextExpiryByProduct() async {
     try {
-      final rows =
-          await _client.from('purchase_items').select('product_id, expiry_date');
+      final rows = await _client
+          .from('purchase_items')
+          .select('product_id, expiry_date');
       final expiries = <String, DateTime>{};
 
       for (final row in _mapRows(rows)) {
@@ -508,7 +517,9 @@ class CatalogRemoteDataSource {
 
     final data = _mapRows(rows);
     if (data.isEmpty) {
-      throw StateError('No existe una ubicacion configurada para $locationType.');
+      throw StateError(
+        'No existe una ubicacion configurada para $locationType.',
+      );
     }
 
     return data.first['id'] as String;

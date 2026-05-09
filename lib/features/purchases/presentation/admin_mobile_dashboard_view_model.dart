@@ -240,13 +240,12 @@ class AdminMobileDashboardViewModel
       productType ?? selectedProduct?.productType,
     );
     final resolvedSalePrice = salePrice ?? selectedProduct?.salePrice ?? 0;
-    final resolvedCostDetails =
-        productCostDetails ??
-        selectedProduct?.costDetails ??
-        const <String, dynamic>{};
-    final resolvedSpecs = _buildProductSpecs(
+    final resolvedCostDetails = _normalizeCostDetails(
       productType: resolvedProductType,
-      costDetails: resolvedCostDetails,
+      costDetails:
+          productCostDetails ??
+          selectedProduct?.costDetails ??
+          const <String, dynamic>{},
     );
     final requiresSupplier = resolvedProductType == 'proveedor';
 
@@ -276,27 +275,29 @@ class AdminMobileDashboardViewModel
             name: trimmedCategoryName,
             prefix: trimmedCategoryPrefix,
           );
-      selectedProduct = await ref.read(catalogRepositoryProvider).ensureProduct(
-        categoryId: category.id,
-        name: trimmedProductName,
-        productType: resolvedProductType,
-        salePrice: resolvedSalePrice,
-        lastPurchaseCost: current.unitCost,
-        lowStockThreshold: current.lowStockThreshold,
-        unitsPerPackage: current.unitsPerPackage,
-        costDetails: resolvedCostDetails,
-        specs: resolvedSpecs,
-      );
+      selectedProduct = await ref
+          .read(catalogRepositoryProvider)
+          .ensureProduct(
+            categoryId: category.id,
+            name: trimmedProductName,
+            productType: resolvedProductType,
+            salePrice: resolvedSalePrice,
+            lastPurchaseCost: current.unitCost,
+            lowStockThreshold: current.lowStockThreshold,
+            unitsPerPackage: current.unitsPerPackage,
+            costDetails: resolvedCostDetails,
+          );
     } else if (selectedProduct != null) {
-      await ref.read(catalogRepositoryProvider).updateProductCatalogData(
-        productId: selectedProduct.id,
-        productType: resolvedProductType,
-        salePrice: resolvedSalePrice,
-        lastPurchaseCost: current.unitCost,
-        unitsPerPackage: current.unitsPerPackage,
-        costDetails: resolvedCostDetails,
-        specs: resolvedSpecs,
-      );
+      await ref
+          .read(catalogRepositoryProvider)
+          .updateProductCatalogData(
+            productId: selectedProduct.id,
+            productType: resolvedProductType,
+            salePrice: resolvedSalePrice,
+            lastPurchaseCost: current.unitCost,
+            unitsPerPackage: current.unitsPerPackage,
+            costDetails: resolvedCostDetails,
+          );
       if (selectedProduct.lowStockThreshold != current.lowStockThreshold) {
         await ref
             .read(catalogRepositoryProvider)
@@ -320,7 +321,6 @@ class AdminMobileDashboardViewModel
         lowStockThreshold: current.lowStockThreshold,
         unitsPerPackage: current.unitsPerPackage,
         costDetails: resolvedCostDetails,
-        specs: resolvedSpecs,
       );
     }
 
@@ -338,9 +338,7 @@ class AdminMobileDashboardViewModel
       supplier: requiresSupplier ? current.supplier.trim() : '',
       supplierId: null,
       supplierPhone:
-          requiresSupplier
-              ? _normalizeSupplierPhone(supplierPhone)
-              : null,
+          requiresSupplier ? _normalizeSupplierPhone(supplierPhone) : null,
       registeredBy: user.name,
       items: [
         PurchaseLine(
@@ -461,7 +459,8 @@ class AdminMobileDashboardViewModel
           lowStockThreshold ?? selectedProduct?.lowStockThreshold ?? 20,
       unitCost: unitCost ?? selectedProduct?.lastPurchaseCost ?? 0,
       supplier: supplier ?? '',
-      expiryDate: expiryDate ?? _defaultExpiryDate(selectedProduct?.nextExpiryDate),
+      expiryDate:
+          expiryDate ?? _defaultExpiryDate(selectedProduct?.nextExpiryDate),
       feedbackMessage: feedbackMessage,
     );
   }
@@ -506,29 +505,19 @@ DateTime _dateOnly(DateTime value) {
   return DateTime(value.year, value.month, value.day);
 }
 
-Map<String, dynamic> _buildProductSpecs({
+Map<String, dynamic> _normalizeCostDetails({
   required String productType,
   required Map<String, dynamic> costDetails,
 }) {
-  final specs = <String, dynamic>{'tipo': productType};
+  final normalized = Map<String, dynamic>.from(costDetails);
+  normalized['tipo'] = productType;
   if (productType == 'artesanal') {
-    final notes =
-        costDetails['observaciones_producto']?.toString().trim() ?? '';
-    if (notes.isNotEmpty) {
-      specs['observaciones'] = notes;
+    final notes = normalized['observaciones_producto']?.toString().trim() ?? '';
+    final existingNotes = normalized['observaciones']?.toString().trim() ?? '';
+    if (notes.isNotEmpty && existingNotes.isEmpty) {
+      normalized['observaciones'] = notes;
     }
-    return specs;
   }
 
-  final brand = costDetails['marca']?.toString().trim() ?? '';
-  final presentation = costDetails['presentacion']?.toString().trim() ?? '';
-
-  if (brand.isNotEmpty) {
-    specs['marca'] = brand;
-  }
-  if (presentation.isNotEmpty) {
-    specs['presentacion'] = presentation;
-  }
-
-  return specs;
+  return normalized;
 }

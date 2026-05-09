@@ -57,25 +57,25 @@ class _DesktopSectionContent extends ConsumerWidget {
             (value) => ref
                 .read(adminDesktopDashboardViewModelProvider.notifier)
                 .setSellerFilter(value),
-        onWindowChanged:
+        onPeriodChanged:
             (value) => ref
                 .read(adminDesktopDashboardViewModelProvider.notifier)
-                .setWindow(value),
+                .setPeriod(value),
       ),
       AdminDesktopSection.purchases => _PurchasesSection(
         state: state,
-        onWindowChanged:
+        onPeriodChanged:
             (value) => ref
                 .read(adminDesktopDashboardViewModelProvider.notifier)
-                .setWindow(value),
+                .setPeriod(value),
       ),
       AdminDesktopSection.products => _ProductsSection(state: state),
       AdminDesktopSection.movements => _MovementsSection(
         state: state,
-        onWindowChanged:
+        onPeriodChanged:
             (value) => ref
                 .read(adminDesktopDashboardViewModelProvider.notifier)
-                .setWindow(value),
+                .setPeriod(value),
       ),
     };
   }
@@ -85,12 +85,12 @@ class _SalesSection extends StatefulWidget {
   const _SalesSection({
     required this.state,
     required this.onSellerChanged,
-    required this.onWindowChanged,
+    required this.onPeriodChanged,
   });
 
   final AdminDesktopDashboardState state;
   final ValueChanged<String> onSellerChanged;
-  final ValueChanged<DashboardWindow> onWindowChanged;
+  final ValueChanged<DateTimeRange> onPeriodChanged;
 
   @override
   State<_SalesSection> createState() => _SalesSectionState();
@@ -102,6 +102,12 @@ class _SalesSectionState extends State<_SalesSection> {
   @override
   Widget build(BuildContext context) {
     final state = widget.state;
+    final productById = {
+      for (final product in state.products) product.id: product,
+    };
+    final categoryById = {
+      for (final category in state.categories) category.id: category.name,
+    };
     final visibleShiftIds =
         state.filteredCashShifts.map((shift) => shift.id).toSet();
     final activeShiftId =
@@ -135,7 +141,7 @@ class _SalesSectionState extends State<_SalesSection> {
           _SalesFilters(
             state: state,
             onSellerChanged: widget.onSellerChanged,
-            onWindowChanged: widget.onWindowChanged,
+            onPeriodChanged: widget.onPeriodChanged,
           ),
           const SizedBox(height: 20),
           _MetricRow(
@@ -233,8 +239,8 @@ class _SalesSectionState extends State<_SalesSection> {
                     : 'Tickets del turno seleccionado',
             subtitle:
                 selectedShift == null
-                    ? 'Tabla operativa para seguimiento rapido del periodo.'
-                    : 'Detalle filtrado por la caja iniciada el ${SystemWFormatters.shortDateTime.format(selectedShift.openedAt)}.',
+                    ? 'Tabla operativa para seguimiento rapido del periodo con detalle de productos y categorias.'
+                    : 'Detalle filtrado por la caja iniciada el ${SystemWFormatters.shortDateTime.format(selectedShift.openedAt)} con productos y categorias por ticket.',
             trailing:
                 selectedShift == null
                     ? null
@@ -249,6 +255,7 @@ class _SalesSectionState extends State<_SalesSection> {
                 'Vendedor',
                 'Pago',
                 'Items',
+                'Detalle',
                 'Total',
                 'Sync',
               ],
@@ -265,6 +272,11 @@ class _SalesSectionState extends State<_SalesSection> {
                             Text(sale.sellerName),
                             Text(_paymentMethodLabel(sale.paymentMethod)),
                             Text('${sale.items.length}'),
+                            _SaleItemsCell(
+                              sale: sale,
+                              productById: productById,
+                              categoryById: categoryById,
+                            ),
                             Text(SystemWFormatters.currency.format(sale.total)),
                             Text(sale.syncStatus.name),
                           ],
@@ -288,10 +300,10 @@ class _SalesSectionState extends State<_SalesSection> {
 }
 
 class _PurchasesSection extends StatelessWidget {
-  const _PurchasesSection({required this.state, required this.onWindowChanged});
+  const _PurchasesSection({required this.state, required this.onPeriodChanged});
 
   final AdminDesktopDashboardState state;
-  final ValueChanged<DashboardWindow> onWindowChanged;
+  final ValueChanged<DateTimeRange> onPeriodChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -307,21 +319,21 @@ class _PurchasesSection extends StatelessWidget {
           ),
           const SizedBox(height: 20),
           _SectionToolbar(
-            child: _WindowSelector(
-              selectedWindow: state.window,
-              onWindowChanged: onWindowChanged,
+            child: _PeriodSelector(
+              period: state.period,
+              onPeriodChanged: onPeriodChanged,
             ),
           ),
           const SizedBox(height: 20),
           _MetricRow(
             children: [
               MetricCard(
-                label: 'Resumen del periodo',
+                label: 'Resumen del periodo - Categorias',
                 value: SystemWFormatters.currency.format(state.purchaseTotal),
                 detail:
                     state.filteredPurchases.isEmpty
                         ? 'Sin compras registradas para este rango'
-                        : 'Proveedor principal: ${state.topSupplier}',
+                        : _purchaseRelationSummary(state),
                 accent: const Color(0xFF0F766E),
                 onTap: () => _showPurchaseOverviewDialog(context),
               ),
@@ -335,29 +347,22 @@ class _PurchasesSection extends StatelessWidget {
               columns: const [
                 'Fecha',
                 'Proveedor',
-                'Categorias',
-                'Registrado por',
+                'Relacion',
+                'Cajas/Lotes',
+                'Unid.',
+                'Costo u.',
+                'Venta u.',
+                'Ganancia',
+                'Margen',
                 'Total',
+                'Registrado por',
                 'Sync',
               ],
               rows:
                   state.filteredPurchases
                       .map(
                         (purchase) => _DesktopTableRow(
-                          cells: [
-                            Text(
-                              SystemWFormatters.shortDateTime.format(
-                                purchase.receivedAt,
-                              ),
-                            ),
-                            Text(purchase.supplier),
-                            Text(_purchaseCategoriesLabel(state, purchase)),
-                            Text(purchase.registeredBy),
-                            Text(
-                              SystemWFormatters.currency.format(purchase.total),
-                            ),
-                            Text(purchase.syncStatus.name),
-                          ],
+                          cells: _purchaseHistoryCells(state, purchase),
                         ),
                       )
                       .toList(),
@@ -489,14 +494,15 @@ class _ProductsSection extends StatelessWidget {
 }
 
 class _MovementsSection extends StatelessWidget {
-  const _MovementsSection({required this.state, required this.onWindowChanged});
+  const _MovementsSection({required this.state, required this.onPeriodChanged});
 
   final AdminDesktopDashboardState state;
-  final ValueChanged<DashboardWindow> onWindowChanged;
+  final ValueChanged<DateTimeRange> onPeriodChanged;
 
   @override
   Widget build(BuildContext context) {
     final alertProducts = _collectAlertProducts(state);
+    final supplierMovementSummaries = _buildMovementSupplierSummaries(state);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -510,9 +516,9 @@ class _MovementsSection extends StatelessWidget {
           ),
           const SizedBox(height: 20),
           _SectionToolbar(
-            child: _WindowSelector(
-              selectedWindow: state.window,
-              onWindowChanged: onWindowChanged,
+            child: _PeriodSelector(
+              period: state.period,
+              onPeriodChanged: onPeriodChanged,
             ),
           ),
           const SizedBox(height: 20),
@@ -539,6 +545,42 @@ class _MovementsSection extends StatelessWidget {
                 accent: const Color(0xFF2563EB),
               ),
             ],
+          ),
+          const SizedBox(height: 20),
+          SectionCard(
+            title: 'Movimientos por proveedor',
+            subtitle:
+                'Resumen exclusivo de traslados de almacen a tienda para leer mejor el movimiento por proveedor.',
+            child: _DesktopTable(
+              columns: const [
+                'Proveedor',
+                'Productos',
+                'Transfer',
+                'Total',
+                'Ultimo movimiento',
+              ],
+              rows:
+                  supplierMovementSummaries
+                      .map(
+                        (summary) => _DesktopTableRow(
+                          cells: [
+                            Text(summary.supplierName),
+                            Text('${summary.productCount}'),
+                            Text('${summary.transferUnits} u.'),
+                            Text('${summary.totalUnits} u.'),
+                            Text(
+                              SystemWFormatters.shortDateTime.format(
+                                summary.lastMovementAt,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                      .toList(),
+              emptyTitle: 'Sin proveedores vinculados a movimientos',
+              emptyCaption:
+                  'Cuando existan traslados de almacen a tienda con proveedor, apareceran agrupados aqui.',
+            ),
           ),
           const SizedBox(height: 20),
           SectionCard(
@@ -589,6 +631,7 @@ class _MovementsSection extends StatelessWidget {
               columns: const [
                 'Fecha',
                 'Producto',
+                'Proveedor',
                 'Tipo',
                 'Origen',
                 'Destino',
@@ -606,6 +649,7 @@ class _MovementsSection extends StatelessWidget {
                               ),
                             ),
                             Text(movement.productName),
+                            Text(_movementSupplierLabel(movement)),
                             Text(_movementTypeLabel(movement)),
                             Text(_movementOriginLabel(movement)),
                             Text(_movementDestinationLabel(movement)),
@@ -649,12 +693,12 @@ class _SalesFilters extends StatelessWidget {
   const _SalesFilters({
     required this.state,
     required this.onSellerChanged,
-    required this.onWindowChanged,
+    required this.onPeriodChanged,
   });
 
   final AdminDesktopDashboardState state;
   final ValueChanged<String> onSellerChanged;
-  final ValueChanged<DashboardWindow> onWindowChanged;
+  final ValueChanged<DateTimeRange> onPeriodChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -684,9 +728,9 @@ class _SalesFilters extends StatelessWidget {
               },
             ),
           ),
-          _WindowSelector(
-            selectedWindow: state.window,
-            onWindowChanged: onWindowChanged,
+          _PeriodSelector(
+            period: state.period,
+            onPeriodChanged: onPeriodChanged,
           ),
         ],
       ),
@@ -712,25 +756,72 @@ class _SectionToolbar extends StatelessWidget {
   }
 }
 
-class _WindowSelector extends StatelessWidget {
-  const _WindowSelector({
-    required this.selectedWindow,
-    required this.onWindowChanged,
+class _PeriodSelector extends StatelessWidget {
+  const _PeriodSelector({
+    required this.period,
+    required this.onPeriodChanged,
   });
 
-  final DashboardWindow selectedWindow;
-  final ValueChanged<DashboardWindow> onWindowChanged;
+  final DateTimeRange period;
+  final ValueChanged<DateTimeRange> onPeriodChanged;
 
   @override
   Widget build(BuildContext context) {
-    return SegmentedButton<DashboardWindow>(
-      segments: const [
-        ButtonSegment(value: DashboardWindow.today, label: Text('Hoy')),
-        ButtonSegment(value: DashboardWindow.week, label: Text('7 dias')),
-        ButtonSegment(value: DashboardWindow.month, label: Text('30 dias')),
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        SizedBox(
+          width: 280,
+          child: InputDecorator(
+            decoration: const InputDecoration(labelText: 'Periodo'),
+            child: Text(
+              '${SystemWFormatters.shortDate.format(period.start)} - ${SystemWFormatters.shortDate.format(period.end)}',
+            ),
+          ),
+        ),
+        OutlinedButton.icon(
+          onPressed: () => onPeriodChanged(_currentWeekRange()),
+          icon: const Icon(Icons.calendar_view_week_rounded),
+          label: const Text('Semana actual'),
+        ),
+        OutlinedButton.icon(
+          onPressed: () => onPeriodChanged(_previousWeekRange()),
+          icon: const Icon(Icons.history_rounded),
+          label: const Text('Semana anterior'),
+        ),
+        FilledButton.icon(
+          onPressed: () async {
+            final selected = await showDateRangePicker(
+              context: context,
+              firstDate: DateTime(2024),
+              lastDate: DateTime(2100),
+              initialDateRange: period,
+              locale: const Locale('es', 'PE'),
+            );
+            if (selected == null) {
+              return;
+            }
+            onPeriodChanged(
+              DateTimeRange(
+                start: DateTime(
+                  selected.start.year,
+                  selected.start.month,
+                  selected.start.day,
+                ),
+                end: DateTime(
+                  selected.end.year,
+                  selected.end.month,
+                  selected.end.day,
+                ),
+              ),
+            );
+          },
+          icon: const Icon(Icons.date_range_rounded),
+          label: const Text('Elegir periodo'),
+        ),
       ],
-      selected: {selectedWindow},
-      onSelectionChanged: (value) => onWindowChanged(value.first),
     );
   }
 }
@@ -934,8 +1025,6 @@ class _DetailDialogShell extends StatelessWidget {
   }
 }
 
-enum _PurchaseOverviewMode { purchases, suppliers }
-
 class _PurchaseOverviewDialog extends StatefulWidget {
   const _PurchaseOverviewDialog({required this.state});
 
@@ -948,16 +1037,11 @@ class _PurchaseOverviewDialog extends StatefulWidget {
 
 class _PurchaseOverviewDialogState extends State<_PurchaseOverviewDialog> {
   String? _selectedCategoryId;
-  _PurchaseOverviewMode _mode = _PurchaseOverviewMode.purchases;
 
   @override
   Widget build(BuildContext context) {
     final state = widget.state;
     final categoryOptions = state.categories;
-    final summaries = _buildSupplierSummaries(
-      state,
-      categoryId: _selectedCategoryId,
-    );
     final purchases =
         state.filteredPurchases
             .where(
@@ -972,121 +1056,72 @@ class _PurchaseOverviewDialogState extends State<_PurchaseOverviewDialog> {
     return _DetailDialogShell(
       title: 'Compras del periodo',
       subtitle:
-          'Cambia la vista para separar el detalle de compras del resumen por proveedor sin mezclar ambas lecturas.',
+          'Detalle de compras con foco en la relacion proveedor-categoria para facilitar la lectura operativa.',
       child: Column(
         children: [
           Align(
             alignment: Alignment.centerLeft,
-            child: Wrap(
-              spacing: 16,
-              runSpacing: 16,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                SegmentedButton<_PurchaseOverviewMode>(
-                  segments: const [
-                    ButtonSegment(
-                      value: _PurchaseOverviewMode.purchases,
-                      label: Text('Compras'),
-                    ),
-                    ButtonSegment(
-                      value: _PurchaseOverviewMode.suppliers,
-                      label: Text('Proveedores'),
-                    ),
-                  ],
-                  selected: {_mode},
-                  onSelectionChanged:
-                      (selection) => setState(() => _mode = selection.first),
+            child: SizedBox(
+              width: 320,
+              child: DropdownButtonFormField<String?>(
+                value: _selectedCategoryId,
+                decoration: const InputDecoration(
+                  labelText: 'Filtrar categoria',
                 ),
-                SizedBox(
-                  width: 320,
-                  child: DropdownButtonFormField<String?>(
-                    value: _selectedCategoryId,
-                    decoration: const InputDecoration(
-                      labelText: 'Filtrar categoria',
-                    ),
-                    items: [
-                      const DropdownMenuItem<String?>(
-                        value: null,
-                        child: Text('Todas las categorias'),
-                      ),
-                      ...categoryOptions.map(
-                        (category) => DropdownMenuItem<String?>(
-                          value: category.id,
-                          child: Text(category.name),
-                        ),
-                      ),
-                    ],
-                    onChanged:
-                        (value) => setState(() => _selectedCategoryId = value),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('Todas las categorias'),
                   ),
-                ),
-              ],
+                  ...categoryOptions.map(
+                    (category) => DropdownMenuItem<String?>(
+                      value: category.id,
+                      child: Text(category.name),
+                    ),
+                  ),
+                ],
+                onChanged:
+                    (value) => setState(() => _selectedCategoryId = value),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              _purchaseRelationSummary(state, categoryId: _selectedCategoryId),
+              style: Theme.of(context).textTheme.bodyMedium,
             ),
           ),
           const SizedBox(height: 18),
           Expanded(
-            child:
-                _mode == _PurchaseOverviewMode.purchases
-                    ? _DesktopTable(
-                      columns: const [
-                        'Fecha',
-                        'Proveedor',
-                        'Categorias',
-                        'Registrado por',
-                        'Total',
-                        'Sync',
-                      ],
-                      rows:
-                          purchases
-                              .map(
-                                (purchase) => _DesktopTableRow(
-                                  cells: [
-                                    Text(
-                                      SystemWFormatters.shortDateTime.format(
-                                        purchase.receivedAt,
-                                      ),
-                                    ),
-                                    Text(purchase.supplier),
-                                    Text(
-                                      _purchaseCategoriesLabel(state, purchase),
-                                    ),
-                                    Text(purchase.registeredBy),
-                                    Text(
-                                      SystemWFormatters.currency.format(
-                                        purchase.total,
-                                      ),
-                                    ),
-                                    Text(purchase.syncStatus.name),
-                                  ],
-                                ),
-                              )
-                              .toList(),
-                      emptyTitle: 'Sin compras para este filtro',
-                      emptyCaption:
-                          'Selecciona otra categoria o amplia el rango del periodo.',
-                    )
-                    : _DesktopTable(
-                      columns: const ['Proveedor', 'Categorias', 'Total'],
-                      rows:
-                          summaries
-                              .map(
-                                (summary) => _DesktopTableRow(
-                                  cells: [
-                                    Text(summary.supplier),
-                                    Text(summary.categoriesLabel),
-                                    Text(
-                                      SystemWFormatters.currency.format(
-                                        summary.total,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              )
-                              .toList(),
-                      emptyTitle: 'Sin proveedores para este filtro',
-                      emptyCaption:
-                          'Cambia la categoria o registra compras en este periodo.',
-                    ),
+            child: _DesktopTable(
+              columns: const [
+                'Fecha',
+                'Proveedor',
+                'Relacion',
+                'Cajas/Lotes',
+                'Unid.',
+                'Costo u.',
+                'Venta u.',
+                'Ganancia',
+                'Margen',
+                'Total',
+                'Registrado por',
+                'Sync',
+              ],
+              rows:
+                  purchases
+                      .map(
+                        (purchase) => _DesktopTableRow(
+                          cells: _purchaseHistoryCells(state, purchase),
+                        ),
+                      )
+                      .toList(),
+              emptyTitle: 'Sin compras para este filtro',
+              emptyCaption:
+                  'Selecciona otra categoria o amplia el rango del periodo.',
+            ),
           ),
         ],
       ),
@@ -1321,6 +1356,76 @@ class _SupplierSummary {
   final String supplier;
   final double total;
   final String categoriesLabel;
+}
+
+class _PurchaseAnalytics {
+  const _PurchaseAnalytics({
+    required this.relationshipLabel,
+    required this.packageQuantity,
+    required this.totalUnits,
+    required this.averageUnitCost,
+    required this.averageSalePrice,
+    required this.projectedProfit,
+    required this.projectedMargin,
+  });
+
+  final String relationshipLabel;
+  final int packageQuantity;
+  final int totalUnits;
+  final double averageUnitCost;
+  final double averageSalePrice;
+  final double projectedProfit;
+  final double projectedMargin;
+}
+
+class _MovementSupplierSummary {
+  const _MovementSupplierSummary({
+    required this.supplierName,
+    required this.productCount,
+    required this.transferUnits,
+    required this.totalUnits,
+    required this.lastMovementAt,
+  });
+
+  final String supplierName;
+  final int productCount;
+  final int transferUnits;
+  final int totalUnits;
+  final DateTime lastMovementAt;
+}
+
+class _SaleItemsCell extends StatelessWidget {
+  const _SaleItemsCell({
+    required this.sale,
+    required this.productById,
+    required this.categoryById,
+  });
+
+  final Sale sale;
+  final Map<String, Product> productById;
+  final Map<String, String> categoryById;
+
+  @override
+  Widget build(BuildContext context) {
+    final details =
+        sale.items.map((item) {
+          final product = productById[item.productId];
+          final categoryName =
+              product == null
+                  ? 'Sin categoria'
+                  : categoryById[product.categoryId] ?? 'Sin categoria';
+          return '${item.quantity} x ${item.productName} | $categoryName';
+        }).toList();
+
+    return SizedBox(
+      width: 260,
+      child: Text(
+        details.join('\n'),
+        maxLines: 4,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
 }
 
 class _ProductNameCell extends StatelessWidget {
@@ -1652,6 +1757,184 @@ List<_SupplierSummary> _buildSupplierSummaries(
   return summaries;
 }
 
+String _purchaseRelationSummary(
+  AdminDesktopDashboardState state, {
+  String? categoryId,
+}) {
+  final filteredPurchases =
+      state.filteredPurchases
+          .where(
+            (purchase) => _purchaseMatchesCategory(state, purchase, categoryId),
+          )
+          .toList();
+
+  if (filteredPurchases.isEmpty) {
+    return 'Sin relaciones proveedor-categoria para este rango.';
+  }
+
+  final relations = <String>{};
+  final productById = {
+    for (final product in state.products) product.id: product,
+  };
+  final categoryById = {
+    for (final category in state.categories) category.id: category.name,
+  };
+
+  for (final purchase in filteredPurchases) {
+    final supplierLabel =
+        _hasOperationalSupplier(purchase.supplier)
+            ? purchase.supplier.trim()
+            : 'Artesanal';
+    for (final item in purchase.items) {
+      final product = productById[item.productId];
+      final categoryName =
+          product == null
+              ? 'Sin categoria'
+              : categoryById[product.categoryId] ?? 'Sin categoria';
+      relations.add('$supplierLabel::$categoryName');
+    }
+  }
+
+  return '${filteredPurchases.length} compras | ${relations.length} relaciones proveedor-categoria';
+}
+
+_PurchaseAnalytics _buildPurchaseAnalytics(
+  AdminDesktopDashboardState state,
+  Purchase purchase,
+) {
+  final productById = {
+    for (final product in state.products) product.id: product,
+  };
+  final categoryById = {
+    for (final category in state.categories) category.id: category.name,
+  };
+  final categoryNames = <String>{};
+  var packageQuantity = 0;
+  var totalUnits = 0;
+  var projectedRevenue = 0.0;
+
+  for (final item in purchase.items) {
+    packageQuantity += item.quantity;
+    totalUnits += item.totalUnits;
+
+    final product = productById[item.productId];
+    final salePrice = product?.salePrice ?? 0;
+    projectedRevenue += item.totalUnits * salePrice;
+
+    final categoryId = product?.categoryId;
+    final categoryName = categoryId == null ? null : categoryById[categoryId];
+    if (categoryName != null && categoryName.trim().isNotEmpty) {
+      categoryNames.add(categoryName);
+    }
+  }
+
+  final averageUnitCost = totalUnits <= 0 ? 0.0 : purchase.total / totalUnits;
+  final averageSalePrice =
+      totalUnits <= 0 ? 0.0 : projectedRevenue / totalUnits;
+  final projectedProfit = projectedRevenue - purchase.total;
+  final projectedMargin =
+      projectedRevenue <= 0 ? 0.0 : (projectedProfit / projectedRevenue) * 100;
+  final categoriesLabel =
+      categoryNames.isEmpty ? 'Sin categoria' : categoryNames.join(', ');
+  final supplierLabel =
+      _hasOperationalSupplier(purchase.supplier)
+          ? purchase.supplier.trim()
+          : 'Artesanal';
+
+  return _PurchaseAnalytics(
+    relationshipLabel: '$supplierLabel -> $categoriesLabel',
+    packageQuantity: packageQuantity,
+    totalUnits: totalUnits,
+    averageUnitCost: averageUnitCost,
+    averageSalePrice: averageSalePrice,
+    projectedProfit: projectedProfit,
+    projectedMargin: projectedMargin,
+  );
+}
+
+List<Widget> _purchaseHistoryCells(
+  AdminDesktopDashboardState state,
+  Purchase purchase,
+) {
+  final analytics = _buildPurchaseAnalytics(state, purchase);
+
+  return [
+    Text(SystemWFormatters.shortDateTime.format(purchase.receivedAt)),
+    SizedBox(
+      width: 180,
+      child: Text(
+        purchase.supplier.trim().isEmpty
+            ? 'Produccion artesanal'
+            : purchase.supplier,
+      ),
+    ),
+    SizedBox(
+      width: 250,
+      child: Text(
+        analytics.relationshipLabel,
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+      ),
+    ),
+    Text('${analytics.packageQuantity}'),
+    Text('${analytics.totalUnits}'),
+    Text(SystemWFormatters.currency.format(analytics.averageUnitCost)),
+    Text(SystemWFormatters.currency.format(analytics.averageSalePrice)),
+    Text(SystemWFormatters.currency.format(analytics.projectedProfit)),
+    Text('${analytics.projectedMargin.toStringAsFixed(1)}%'),
+    Text(SystemWFormatters.currency.format(purchase.total)),
+    Text(purchase.registeredBy),
+    Text(purchase.syncStatus.name),
+  ];
+}
+
+List<_MovementSupplierSummary> _buildMovementSupplierSummaries(
+  AdminDesktopDashboardState state,
+) {
+  final grouped = <String, List<InventoryMovement>>{};
+
+  for (final movement in state.filteredMovements) {
+    if (!_isWarehouseToStoreTransfer(movement)) {
+      continue;
+    }
+    final supplierName = _movementSupplierLabel(movement);
+    if (supplierName == 'No aplica' || supplierName == 'Sin proveedor') {
+      continue;
+    }
+    grouped.putIfAbsent(supplierName, () => []).add(movement);
+  }
+
+  final summaries =
+      grouped.entries.map((entry) {
+          final transferUnits = entry.value
+              .where(_isWarehouseToStoreTransfer)
+              .fold(0, (sum, movement) => sum + movement.quantity);
+          final lastMovementAt = entry.value
+              .map((movement) => movement.occurredAt)
+              .reduce(
+                (current, next) => current.isAfter(next) ? current : next,
+              );
+
+          return _MovementSupplierSummary(
+            supplierName: entry.key,
+            productCount:
+                entry.value
+                    .map((movement) => movement.productId)
+                    .toSet()
+                    .length,
+            transferUnits: transferUnits,
+            totalUnits: entry.value.fold(
+              0,
+              (sum, movement) => sum + movement.quantity,
+            ),
+            lastMovementAt: lastMovementAt,
+          );
+        }).toList()
+        ..sort((a, b) => b.lastMovementAt.compareTo(a.lastMovementAt));
+
+  return summaries;
+}
+
 List<_ProductSnapshot> _buildProductSnapshots(
   AdminDesktopDashboardState state,
 ) {
@@ -1828,4 +2111,38 @@ String _movementDestinationLabel(InventoryMovement movement) {
     return 'Venta';
   }
   return movement.toLocation;
+}
+
+String _movementSupplierLabel(InventoryMovement movement) {
+  final supplierName = movement.supplierName?.trim() ?? '';
+  if (supplierName.isNotEmpty) {
+    return supplierName;
+  }
+
+  return switch (_movementTypeLabel(movement)) {
+    'Compra' => 'Sin proveedor',
+    'Transferencia' => 'Sin proveedor',
+    _ => 'No aplica',
+  };
+}
+
+bool _isWarehouseToStoreTransfer(InventoryMovement movement) {
+  return _movementTypeLabel(movement) == 'Transferencia' &&
+      movement.fromLocation.toLowerCase().contains('almacen') &&
+      movement.toLocation.toLowerCase().contains('tienda');
+}
+
+DateTimeRange _currentWeekRange() {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final monday = today.subtract(Duration(days: today.weekday - DateTime.monday));
+  final sunday = monday.add(const Duration(days: 6));
+  return DateTimeRange(start: monday, end: sunday);
+}
+
+DateTimeRange _previousWeekRange() {
+  final currentWeek = _currentWeekRange();
+  final monday = currentWeek.start.subtract(const Duration(days: 7));
+  final sunday = currentWeek.end.subtract(const Duration(days: 7));
+  return DateTimeRange(start: monday, end: sunday);
 }

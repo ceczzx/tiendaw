@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tiendaw/app/providers.dart';
 import 'package:tiendaw/core/utils/formatters.dart';
@@ -5,8 +6,6 @@ import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
 import 'package:tiendaw/features/inventory/domain/inventory_entities.dart';
 import 'package:tiendaw/features/purchases/domain/purchase_entities.dart';
 import 'package:tiendaw/features/sales/domain/sales_entities.dart';
-
-enum DashboardWindow { today, week, month }
 
 class AdminDesktopDashboardState {
   const AdminDesktopDashboardState({
@@ -20,7 +19,8 @@ class AdminDesktopDashboardState {
     required this.expiringProducts,
     required this.pendingSyncCount,
     required this.sellerFilter,
-    required this.window,
+    required this.periodStart,
+    required this.periodEnd,
   });
 
   final List<Category> categories;
@@ -33,58 +33,70 @@ class AdminDesktopDashboardState {
   final List<Product> expiringProducts;
   final int pendingSyncCount;
   final String sellerFilter;
-  final DashboardWindow window;
+  final DateTime periodStart;
+  final DateTime periodEnd;
 
   List<Sale> get filteredSales {
-    final threshold = _windowStart;
+    final start = _periodStart;
+    final end = _periodEndExclusive;
     return sales.where((sale) {
       final sellerMatches =
           sellerFilter == 'all' || sale.sellerId == sellerFilter;
-      return sellerMatches && !sale.createdAt.isBefore(threshold);
+      return sellerMatches &&
+          !sale.createdAt.isBefore(start) &&
+          sale.createdAt.isBefore(end);
     }).toList();
   }
 
   List<Purchase> get filteredPurchases {
-    final threshold = _windowStart;
+    final start = _periodStart;
+    final end = _periodEndExclusive;
     return purchases
-        .where((purchase) => !purchase.receivedAt.isBefore(threshold))
+        .where(
+          (purchase) =>
+              !purchase.receivedAt.isBefore(start) &&
+              purchase.receivedAt.isBefore(end),
+        )
         .toList();
   }
 
   List<CashShift> get filteredCashShifts {
-    final threshold = _windowStart;
+    final start = _periodStart;
+    final end = _periodEndExclusive;
     return cashShifts.where((shift) {
       final sellerMatches =
           sellerFilter == 'all' || shift.sellerId == sellerFilter;
-      final closedAt = shift.closedAt;
-      final overlapsWindow =
-          !shift.openedAt.isBefore(threshold) ||
-          (closedAt != null && !closedAt.isBefore(threshold)) ||
-          (closedAt == null && shift.openedAt.isBefore(threshold));
-      return sellerMatches && overlapsWindow;
+      final shiftEnd = shift.closedAt ?? DateTime.now();
+      final overlapsPeriod =
+          shift.openedAt.isBefore(end) && !shiftEnd.isBefore(start);
+      return sellerMatches && overlapsPeriod;
     }).toList();
   }
 
   List<InventoryMovement> get filteredMovements {
-    final threshold = _windowStart;
+    final start = _periodStart;
+    final end = _periodEndExclusive;
     return movements
-        .where((movement) => !movement.occurredAt.isBefore(threshold))
+        .where(
+          (movement) =>
+              !movement.occurredAt.isBefore(start) &&
+              movement.occurredAt.isBefore(end),
+        )
         .toList();
   }
 
-  int get _windowDays {
-    return switch (window) {
-      DashboardWindow.today => 1,
-      DashboardWindow.week => 7,
-      DashboardWindow.month => 30,
-    };
-  }
+  DateTime get _periodStart =>
+      DateTime(periodStart.year, periodStart.month, periodStart.day);
 
-  DateTime get _windowStart {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    return today.subtract(Duration(days: _windowDays - 1));
-  }
+  DateTime get _periodEnd =>
+      DateTime(periodEnd.year, periodEnd.month, periodEnd.day);
+
+  DateTime get _periodEndExclusive => _periodEnd.add(const Duration(days: 1));
+
+  DateTimeRange get period => DateTimeRange(start: _periodStart, end: _periodEnd);
+
+  String get periodLabel =>
+      '${SystemWFormatters.shortDate.format(_periodStart)} - ${SystemWFormatters.shortDate.format(_periodEnd)}';
 
   double get dailySalesTotal =>
       filteredSales.fold(0, (sum, sale) => sum + sale.total);
@@ -211,7 +223,8 @@ class AdminDesktopDashboardState {
     List<Product>? expiringProducts,
     int? pendingSyncCount,
     String? sellerFilter,
-    DashboardWindow? window,
+    DateTime? periodStart,
+    DateTime? periodEnd,
   }) {
     return AdminDesktopDashboardState(
       categories: categories ?? this.categories,
@@ -224,7 +237,8 @@ class AdminDesktopDashboardState {
       expiringProducts: expiringProducts ?? this.expiringProducts,
       pendingSyncCount: pendingSyncCount ?? this.pendingSyncCount,
       sellerFilter: sellerFilter ?? this.sellerFilter,
-      window: window ?? this.window,
+      periodStart: periodStart ?? this.periodStart,
+      periodEnd: periodEnd ?? this.periodEnd,
     );
   }
 
@@ -261,17 +275,23 @@ class AdminDesktopDashboardViewModel
     state = AsyncData(current.copyWith(sellerFilter: sellerId));
   }
 
-  Future<void> setWindow(DashboardWindow window) async {
+  Future<void> setPeriod(DateTimeRange period) async {
     final current = state.valueOrNull;
     if (current == null) {
       return;
     }
-    state = AsyncData(current.copyWith(window: window));
+    state = AsyncData(
+      current.copyWith(
+        periodStart: _dateOnly(period.start),
+        periodEnd: _dateOnly(period.end),
+      ),
+    );
   }
 
   Future<AdminDesktopDashboardState> _hydrate({
     String sellerFilter = 'all',
-    DashboardWindow window = DashboardWindow.week,
+    DateTime? periodStart,
+    DateTime? periodEnd,
   }) async {
     final catalog = await ref.read(loadCatalogOverviewUseCaseProvider)();
     final sales = await ref.read(salesRepositoryProvider).getSales();
@@ -307,7 +327,21 @@ class AdminDesktopDashboardViewModel
       expiringProducts: expiringProducts,
       pendingSyncCount: 0,
       sellerFilter: sellerFilter,
-      window: window,
+      periodStart: _dateOnly(periodStart ?? _currentWeekStart()),
+      periodEnd: _dateOnly(periodEnd ?? _currentWeekEnd()),
     );
   }
+}
+
+DateTime _dateOnly(DateTime value) {
+  return DateTime(value.year, value.month, value.day);
+}
+
+DateTime _currentWeekStart() {
+  final today = _dateOnly(DateTime.now());
+  return today.subtract(Duration(days: today.weekday - DateTime.monday));
+}
+
+DateTime _currentWeekEnd() {
+  return _currentWeekStart().add(const Duration(days: 6));
 }

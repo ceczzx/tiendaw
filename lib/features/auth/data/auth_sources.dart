@@ -120,7 +120,7 @@ class AuthRemoteDataSource {
     if (error.code == '404' ||
         rawMessage.contains('invalid path specified in request url') ||
         rawDetails.contains('invalid path specified in request url')) {
-      return 'La app si pudo conectarse a Supabase, pero no encontro la ruta REST de public.profiles. Revisa que SUPABASE_URL sea la URL base del proyecto y que las migraciones esten ejecutadas en ese mismo proyecto.';
+      return 'La app si pudo conectarse a Supabase, pero no encontro la ruta REST de public.profiles. ';
     }
 
     return 'No se pudo leer o crear el perfil del usuario en Supabase: ${error.message}';

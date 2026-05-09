@@ -3,6 +3,8 @@ class InventoryMovement {
     required this.id,
     required this.productId,
     required this.productName,
+    this.supplierId,
+    this.supplierName,
     required this.type,
     required this.quantity,
     required this.fromLocation,
@@ -14,6 +16,8 @@ class InventoryMovement {
   final String id;
   final String productId;
   final String productName;
+  final String? supplierId;
+  final String? supplierName;
   final String type;
   final int quantity;
   final String fromLocation;

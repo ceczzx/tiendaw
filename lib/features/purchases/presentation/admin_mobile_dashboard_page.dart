@@ -28,21 +28,18 @@ typedef _PurchaseSubmit =
       String? supplierPhone,
     });
 
-final _warehouseSupplierLotsProvider = FutureProvider.autoDispose.family<
-  List<WarehouseSupplierLot>,
-  _SupplierLotQuery
->((ref, query) async {
-  return ref.read(catalogRepositoryProvider).getWarehouseSupplierLots(
-    productId: query.productId,
-    supplierId: query.supplierId,
-  );
-});
+final _warehouseSupplierLotsProvider = FutureProvider.autoDispose
+    .family<List<WarehouseSupplierLot>, _SupplierLotQuery>((ref, query) async {
+      return ref
+          .read(catalogRepositoryProvider)
+          .getWarehouseSupplierLots(
+            productId: query.productId,
+            supplierId: query.supplierId,
+          );
+    });
 
 class _SupplierLotQuery {
-  const _SupplierLotQuery({
-    required this.productId,
-    this.supplierId,
-  });
+  const _SupplierLotQuery({required this.productId, this.supplierId});
 
   final String productId;
   final String? supplierId;
@@ -193,8 +190,7 @@ class _AdminMobileDashboardPageState
         state: state,
         isBusy: _isActionInProgress,
         currentUser: currentUser,
-        onTransfer:
-            currentUser == null ? null : _handleTransfer,
+        onTransfer: currentUser == null ? null : _handleTransfer,
       ),
     };
   }
@@ -1494,7 +1490,7 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
         packageCost > 0 ? packageCost.toStringAsFixed(2) : '';
     _costNotesController.text =
         product.productType == _artisanType
-            ? product.specs['observaciones']?.toString() ?? ''
+            ? costDetails['observaciones_producto']?.toString() ?? ''
             : costDetails['observaciones']?.toString() ?? '';
   }
 
@@ -1597,7 +1593,9 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
     }
 
     final selectedProduct =
-        isNewProduct ? null : _findProductById(productsForCategory, productValue);
+        isNewProduct
+            ? null
+            : _findProductById(productsForCategory, productValue);
     final effectiveProductType = _normalizePurchaseProductType(
       _selectedProductType,
     );
@@ -2316,8 +2314,8 @@ class _ProductInsightCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final specsEntries =
-        product.specs.entries.toList()
+    final costDetailsEntries =
+        product.costDetails.entries.toList()
           ..sort((a, b) => a.key.toLowerCase().compareTo(b.key.toLowerCase()));
     final purchaseSnapshot = _buildProductPurchaseSnapshot(state, product);
     final isSupplierProduct = _isSupplierProductType(product.productType);
@@ -2407,14 +2405,14 @@ class _ProductInsightCard extends StatelessWidget {
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 10),
-          if (specsEntries.isEmpty)
+          if (costDetailsEntries.isEmpty)
             const Text('Este producto no tiene especificaciones registradas.')
           else
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children:
-                  specsEntries
+                  costDetailsEntries
                       .map(
                         (entry) => _SpecPill(
                           label: entry.key,
@@ -2937,24 +2935,6 @@ String _presentationForProduct(Product product) {
   return '1 ${product.packageName} = ${product.unitsPerPackage} ${product.unitName}';
 }
 
-String _formatSpecsSummary(Map<String, dynamic> specs) {
-  if (specs.isEmpty) {
-    return 'Sin especificar';
-  }
-
-  if (specs.length == 1) {
-    final entry = specs.entries.first;
-    final key = entry.key.trim().toLowerCase();
-    if (key == 'specs' || key == 'detalle' || key == 'descripcion') {
-      return _formatSpecValue(entry.value);
-    }
-  }
-
-  return specs.entries
-      .map((entry) => '${entry.key}: ${_formatSpecValue(entry.value)}')
-      .join(' | ');
-}
-
 String _formatSpecValue(dynamic value) {
   if (value == null) {
     return '-';
@@ -3138,10 +3118,7 @@ List<String> _allSupplierOptions(AdminMobileDashboardState state) {
 }
 
 class _SupplierOption {
-  const _SupplierOption({
-    required this.id,
-    required this.name,
-  });
+  const _SupplierOption({required this.id, required this.name});
 
   final String id;
   final String name;
@@ -3204,7 +3181,10 @@ List<_SupplierOption> _supplierOptionsForProduct(
       continue;
     }
 
-    optionsById[supplierId] = _SupplierOption(id: supplierId, name: supplierName);
+    optionsById[supplierId] = _SupplierOption(
+      id: supplierId,
+      name: supplierName,
+    );
   }
 
   final result =

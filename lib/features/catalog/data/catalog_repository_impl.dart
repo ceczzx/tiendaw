@@ -119,7 +119,6 @@ class CatalogRepositoryImpl implements CatalogRepository {
     required int lowStockThreshold,
     required int unitsPerPackage,
     required Map<String, dynamic> costDetails,
-    required Map<String, dynamic> specs,
   }) {
     return _remote.ensureProduct(
       categoryId: categoryId,
@@ -130,7 +129,6 @@ class CatalogRepositoryImpl implements CatalogRepository {
       lowStockThreshold: lowStockThreshold,
       unitsPerPackage: unitsPerPackage,
       costDetails: costDetails,
-      specs: specs,
     );
   }
 
@@ -164,7 +162,6 @@ class CatalogRepositoryImpl implements CatalogRepository {
     required double lastPurchaseCost,
     required int unitsPerPackage,
     required Map<String, dynamic> costDetails,
-    required Map<String, dynamic> specs,
   }) {
     return _remote.updateProductCatalogData(
       productId: productId,
@@ -173,7 +170,6 @@ class CatalogRepositoryImpl implements CatalogRepository {
       lastPurchaseCost: lastPurchaseCost,
       unitsPerPackage: unitsPerPackage,
       costDetails: costDetails,
-      specs: specs,
     );
   }
 

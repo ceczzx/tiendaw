@@ -17,16 +17,7 @@ import 'package:tiendaw/shared/widgets/system_w_widgets.dart';
 
 enum _AdminMobileSection { home, purchases, suppliers, movements }
 
-typedef _PurchaseSubmit =
-    Future<void> Function({
-      String? categoryName,
-      String? categoryPrefix,
-      String? productName,
-      String? productType,
-      double? salePrice,
-      Map<String, dynamic>? productCostDetails,
-      String? supplierPhone,
-    });
+typedef _PurchaseCartSubmit = Future<bool> Function();
 
 final _warehouseSupplierLotsProvider = FutureProvider.autoDispose
     .family<List<WarehouseSupplierLot>, _SupplierLotQuery>((ref, query) async {
@@ -182,8 +173,8 @@ class _AdminMobileDashboardPageState
             _isPurchaseComposerOpen = !_isPurchaseComposerOpen;
           });
         },
-        onSubmitPurchase:
-            currentUser == null ? null : _buildPurchaseSubmit(currentUser),
+        onSubmitPurchaseCart:
+            currentUser == null ? null : _buildPurchaseCartSubmit(currentUser),
       ),
       _AdminMobileSection.suppliers => _SuppliersSection(state: state),
       _AdminMobileSection.movements => _MovementsSection(
@@ -195,18 +186,9 @@ class _AdminMobileDashboardPageState
     };
   }
 
-  Future<void> _handlePurchase(
-    AppUser currentUser, {
-    String? categoryName,
-    String? categoryPrefix,
-    String? productName,
-    String? productType,
-    double? salePrice,
-    Map<String, dynamic>? productCostDetails,
-    String? supplierPhone,
-  }) async {
+  Future<bool> _handlePurchaseCartSubmit(AppUser currentUser) async {
     if (_isActionInProgress) {
-      return;
+      return false;
     }
 
     setState(() {
@@ -214,24 +196,17 @@ class _AdminMobileDashboardPageState
     });
     final success = await ref
         .read(adminMobileDashboardViewModelProvider.notifier)
-        .registerPurchase(
-          currentUser,
-          categoryName: categoryName,
-          categoryPrefix: categoryPrefix,
-          productName: productName,
-          productType: productType,
-          salePrice: salePrice,
-          productCostDetails: productCostDetails,
-          supplierPhone: supplierPhone,
-        );
+        .registerPurchaseCart(currentUser);
 
     if (!mounted || !success) {
-      return;
+      return false;
     }
 
     setState(() {
       _isPurchaseComposerOpen = false;
     });
+
+    return true;
   }
 
   Future<void> _handleTransfer(String? supplierId) async {
@@ -247,27 +222,8 @@ class _AdminMobileDashboardPageState
         .transferToStore(supplierId: supplierId);
   }
 
-  _PurchaseSubmit _buildPurchaseSubmit(AppUser currentUser) {
-    return ({
-      String? categoryName,
-      String? categoryPrefix,
-      String? productName,
-      String? productType,
-      double? salePrice,
-      Map<String, dynamic>? productCostDetails,
-      String? supplierPhone,
-    }) {
-      return _handlePurchase(
-        currentUser,
-        categoryName: categoryName,
-        categoryPrefix: categoryPrefix,
-        productName: productName,
-        productType: productType,
-        salePrice: salePrice,
-        productCostDetails: productCostDetails,
-        supplierPhone: supplierPhone,
-      );
-    };
+  _PurchaseCartSubmit _buildPurchaseCartSubmit(AppUser currentUser) {
+    return () => _handlePurchaseCartSubmit(currentUser);
   }
 
   void _showActionFeedback({
@@ -490,7 +446,7 @@ class _PurchasesSection extends StatefulWidget {
     required this.isBusy,
     required this.currentUser,
     required this.onToggleComposer,
-    required this.onSubmitPurchase,
+    required this.onSubmitPurchaseCart,
   });
 
   final AdminMobileDashboardState state;
@@ -498,7 +454,7 @@ class _PurchasesSection extends StatefulWidget {
   final bool isBusy;
   final AppUser? currentUser;
   final VoidCallback onToggleComposer;
-  final _PurchaseSubmit? onSubmitPurchase;
+  final _PurchaseCartSubmit? onSubmitPurchaseCart;
 
   @override
   State<_PurchasesSection> createState() => _PurchasesSectionState();
@@ -547,13 +503,13 @@ class _PurchasesSectionState extends State<_PurchasesSection> {
           const _MobileSectionHeading(
             title: 'Compras',
             subtitle:
-                'Abastecimiento con formulario guiado y listas paginadas cuando el historial supera 10 registros.',
+                'Abastecimiento con carrito de compras, historial operativo y confirmacion acumulada por proveedor.',
           ),
           const SizedBox(height: 16),
           SectionCard(
-            title: 'Agregar cosas',
+            title: 'Carrito de compras',
             subtitle:
-                'Primero define categoria, proveedor y producto. Si no existen, puedes crearlos desde aqui.',
+                'Agrega varios productos a una misma compra. Si algo no existe, puedes crearlo desde este mismo flujo.',
             child: Column(
               children: [
                 SizedBox(
@@ -578,7 +534,7 @@ class _PurchasesSectionState extends State<_PurchasesSection> {
                     state: state,
                     isBusy: widget.isBusy,
                     currentUser: widget.currentUser,
-                    onSubmitPurchase: widget.onSubmitPurchase,
+                    onSubmitPurchaseCart: widget.onSubmitPurchaseCart,
                     onHistoryProductChanged: (productId) {
                       setState(() {
                         _selectedHistoryProductId = productId;
@@ -643,26 +599,24 @@ class _PurchasesSectionState extends State<_PurchasesSection> {
                     : _PaginatedList<Purchase>(
                       items: state.purchases,
                       itemBuilder: (context, purchase) {
-                        var totalPackages = 0;
-                        var totalUnits = 0;
-                        for (final item in purchase.items) {
-                          totalPackages += item.quantity;
-                          totalUnits += item.totalUnits;
-                        }
                         return ListTile(
+                          isThreeLine: true,
                           contentPadding: EdgeInsets.zero,
                           title: Text(purchase.supplier),
-                          subtitle: Text(
-                            '${purchase.registeredBy} - ${SystemWFormatters.shortDateTime.format(purchase.receivedAt)}',
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${purchase.registeredBy} - ${SystemWFormatters.shortDateTime.format(purchase.receivedAt)}',
+                              ),
+                              const SizedBox(height: 4),
+                              Text(_purchaseItemsBreakdownLabel(purchase)),
+                            ],
                           ),
                           trailing: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text(
-                                '$totalPackages cajas | $totalUnits unid',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
                               Text(
                                 SystemWFormatters.currency.format(
                                   purchase.total,
@@ -1387,14 +1341,14 @@ class _PurchaseForm extends ConsumerStatefulWidget {
     required this.state,
     required this.isBusy,
     required this.currentUser,
-    required this.onSubmitPurchase,
+    required this.onSubmitPurchaseCart,
     this.onHistoryProductChanged,
   });
 
   final AdminMobileDashboardState state;
   final bool isBusy;
   final AppUser? currentUser;
-  final _PurchaseSubmit? onSubmitPurchase;
+  final _PurchaseCartSubmit? onSubmitPurchaseCart;
   final ValueChanged<String?>? onHistoryProductChanged;
 
   @override
@@ -2075,6 +2029,27 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
           ),
           isStrong: true,
         ),
+        const SizedBox(height: 16),
+        _PurchaseDraftCard(
+          items: state.purchaseDraftItems,
+          supplierName: state.purchaseDraftSupplier,
+          supplierPhone: state.purchaseDraftSupplierPhone,
+          totalUnits: state.purchaseDraftUnits,
+          total: state.purchaseDraftTotal,
+          onRemoveItem: (index) {
+            ref
+                .read(adminMobileDashboardViewModelProvider.notifier)
+                .removePurchaseDraftLine(index);
+          },
+          onClear:
+              state.purchaseDraftItems.isEmpty
+                  ? null
+                  : () {
+                    ref
+                        .read(adminMobileDashboardViewModelProvider.notifier)
+                        .clearPurchaseDraft();
+                  },
+        ),
         if (_formError != null) ...[
           const SizedBox(height: 12),
           Text(
@@ -2089,11 +2064,9 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
           width: double.infinity,
           child: ElevatedButton.icon(
             onPressed:
-                widget.isBusy ||
-                        widget.currentUser == null ||
-                        widget.onSubmitPurchase == null
+                widget.isBusy || widget.currentUser == null
                     ? null
-                    : () => _submit(
+                    : () => _addLineToDraft(
                       categoryValue: categoryValue,
                       productValue: productValue,
                       supplierValue: supplierValue,
@@ -2102,15 +2075,39 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
               backgroundColor: const Color(0xFF0F766E),
               foregroundColor: Colors.white,
             ),
+            icon: const Icon(Icons.add_shopping_cart_rounded),
+            label: const Text('Agregar al carrito'),
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed:
+                widget.isBusy ||
+                        widget.currentUser == null ||
+                        widget.onSubmitPurchaseCart == null ||
+                        state.purchaseDraftItems.isEmpty
+                    ? null
+                    : () async {
+                      setState(() {
+                        _formError = null;
+                      });
+                      await widget.onSubmitPurchaseCart!();
+                    },
             icon: const Icon(Icons.save_rounded),
-            label: const Text('Guardar compra'),
+            label: Text(
+              state.purchaseDraftItems.isEmpty
+                  ? 'Agrega productos para registrar'
+                  : 'Registrar compra completa',
+            ),
           ),
         ),
       ],
     );
   }
 
-  Future<void> _submit({
+  Future<void> _addLineToDraft({
     required String categoryValue,
     required String productValue,
     required String supplierValue,
@@ -2172,6 +2169,19 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
         return;
       }
       productNameForCreation = newProductName;
+    } else {
+      final selectedProduct = _findProductById(
+        widget.state.products,
+        productValue,
+      );
+      if (selectedProduct == null) {
+        setState(() {
+          _formError =
+              'El producto seleccionado ya no esta disponible. Vuelve a elegirlo.';
+        });
+        return;
+      }
+      productNameForCreation = selectedProduct.name;
     }
 
     final salePrice = double.tryParse(_salePriceController.text);
@@ -2234,10 +2244,9 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
         return;
       }
 
-      supplierPhone = _supplierPhoneController.text.trim();
-      if (supplierPhone != null && supplierPhone.isEmpty) {
-        supplierPhone = null;
-      }
+      final normalizedSupplierPhone = _supplierPhoneController.text.trim();
+      supplierPhone =
+          normalizedSupplierPhone.isEmpty ? null : normalizedSupplierPhone;
 
       effectiveUnitCost = packageCost / currentState.unitsPerPackage;
       productCostDetails = <String, dynamic>{
@@ -2273,16 +2282,161 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
         .read(adminMobileDashboardViewModelProvider.notifier)
         .changeUnitCost(effectiveUnitCost);
 
-    await widget.onSubmitPurchase!(
+    final draftLine = PurchaseDraftLine(
+      categoryId: categoryValue == _newCategoryValue ? null : categoryValue,
       categoryName:
-          productNameForCreation == null ? null : categoryNameForCreation,
+          categoryValue == _newCategoryValue ? categoryNameForCreation : null,
       categoryPrefix:
-          productNameForCreation == null ? null : categoryPrefixForCreation,
-      productName: productNameForCreation,
+          categoryValue == _newCategoryValue ? categoryPrefixForCreation : null,
+      productId:
+          productValue == _newProductValue || categoryValue == _newCategoryValue
+              ? null
+              : productValue,
+      productName: productNameForCreation ?? '',
       productType: effectiveProductType,
+      quantity: currentState.quantity,
+      unitsPerPackage: currentState.unitsPerPackage,
+      lowStockThreshold: currentState.lowStockThreshold,
+      unitCost: effectiveUnitCost,
       salePrice: salePrice,
       productCostDetails: productCostDetails,
+      supplier: supplierName,
       supplierPhone: supplierPhone,
+      expiryDate: currentState.expiryDate,
+    );
+
+    final added = await ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .addPurchaseDraftLine(draftLine);
+    if (!added || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _formError = null;
+    });
+  }
+}
+
+class _PurchaseDraftCard extends StatelessWidget {
+  const _PurchaseDraftCard({
+    required this.items,
+    required this.supplierName,
+    required this.supplierPhone,
+    required this.totalUnits,
+    required this.total,
+    required this.onRemoveItem,
+    this.onClear,
+  });
+
+  final List<PurchaseDraftLine> items;
+  final String supplierName;
+  final String? supplierPhone;
+  final int totalUnits;
+  final double total;
+  final ValueChanged<int> onRemoveItem;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final supplierLabel =
+        supplierName.trim().isEmpty ? 'Produccion artesanal' : supplierName;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Compra acumulada',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              if (onClear != null)
+                TextButton.icon(
+                  onPressed: onClear,
+                  icon: const Icon(Icons.delete_sweep_rounded),
+                  label: const Text('Vaciar'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (items.isEmpty)
+            Text(
+              'Todavia no agregas productos. Usa el formulario para ir acumulando lineas antes de registrar la compra.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            )
+          else ...[
+            _InfoLine(label: 'Proveedor', value: supplierLabel),
+            if (supplierPhone != null && supplierPhone!.trim().isNotEmpty)
+              _InfoLine(label: 'Telefono', value: supplierPhone!),
+            _InfoLine(label: 'Lineas', value: '${items.length}'),
+            _InfoLine(label: 'Unidades acumuladas', value: '$totalUnits u.'),
+            _InfoLine(
+              label: 'Total acumulado',
+              value: SystemWFormatters.currency.format(total),
+              isStrong: true,
+            ),
+            const SizedBox(height: 8),
+            ...items.asMap().entries.map((entry) {
+              final index = entry.key;
+              final item = entry.value;
+              final quantityLabel =
+                  '${item.quantity} ${_purchaseQuantityNoun(item.productType)}';
+              final unitLabel =
+                  '${item.totalUnits} u. - ${SystemWFormatters.currency.format(item.subtotal)}';
+              return Container(
+                margin: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item.productName,
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '$quantityLabel x ${item.unitsPerPackage} = $unitLabel',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Vence: ${SystemWFormatters.shortDate.format(item.expiryDate)}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => onRemoveItem(index),
+                      icon: const Icon(Icons.delete_outline_rounded),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -3513,6 +3667,38 @@ String _movementDestinationLabel(InventoryMovement movement) {
   return movement.toLocation;
 }
 
+String _purchaseItemsBreakdownLabel(Purchase purchase) {
+  final grouped = <String, _PurchaseItemBreakdown>{};
+
+  for (final item in purchase.items) {
+    final key = '${item.productId}::${item.unitsPerPackage}';
+    final current = grouped[key];
+    if (current == null) {
+      grouped[key] = _PurchaseItemBreakdown(
+        productName: item.productName,
+        quantity: item.quantity,
+        unitsPerPackage: item.unitsPerPackage,
+        totalUnits: item.totalUnits,
+      );
+      continue;
+    }
+
+    grouped[key] = _PurchaseItemBreakdown(
+      productName: current.productName,
+      quantity: current.quantity + item.quantity,
+      unitsPerPackage: current.unitsPerPackage,
+      totalUnits: current.totalUnits + item.totalUnits,
+    );
+  }
+
+  return grouped.values
+      .map(
+        (item) =>
+            '${item.productName}: ${item.quantity} x ${item.unitsPerPackage} = ${item.totalUnits} u.',
+      )
+      .join('\n');
+}
+
 class _ProductPurchaseSnapshot {
   const _ProductPurchaseSnapshot({
     required this.firstPurchaseAt,
@@ -3529,4 +3715,18 @@ class _ProductPurchaseSnapshot {
   final int latestPackageQuantity;
   final int latestTotalUnits;
   final DateTime? nextExpiryDate;
+}
+
+class _PurchaseItemBreakdown {
+  const _PurchaseItemBreakdown({
+    required this.productName,
+    required this.quantity,
+    required this.unitsPerPackage,
+    required this.totalUnits,
+  });
+
+  final String productName;
+  final int quantity;
+  final int unitsPerPackage;
+  final int totalUnits;
 }

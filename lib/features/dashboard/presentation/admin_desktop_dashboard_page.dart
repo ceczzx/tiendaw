@@ -261,8 +261,9 @@ class _SalesSectionState extends State<_SalesSection> {
               ],
               rows:
                   salesRows
-                      .map(
-                        (sale) => _DesktopTableRow(
+                      .map((sale) {
+                        final groupedItems = _groupSaleItems(sale);
+                        return _DesktopTableRow(
                           cells: [
                             Text(
                               SystemWFormatters.shortDateTime.format(
@@ -271,17 +272,17 @@ class _SalesSectionState extends State<_SalesSection> {
                             ),
                             Text(sale.sellerName),
                             Text(_paymentMethodLabel(sale.paymentMethod)),
-                            Text('${sale.items.length}'),
+                            Text('${groupedItems.length}'),
                             _SaleItemsCell(
-                              sale: sale,
+                              items: groupedItems,
                               productById: productById,
                               categoryById: categoryById,
                             ),
                             Text(SystemWFormatters.currency.format(sale.total)),
                             Text(sale.syncStatus.name),
                           ],
-                        ),
-                      )
+                        );
+                      })
                       .toList(),
               emptyTitle:
                   selectedShift == null
@@ -348,8 +349,7 @@ class _PurchasesSection extends StatelessWidget {
                 'Fecha',
                 'Proveedor',
                 'Relacion',
-                'Cajas/Lotes',
-                'Unid.',
+                'Productos',
                 'Costo u.',
                 'Venta u.',
                 'Ganancia',
@@ -1100,8 +1100,7 @@ class _PurchaseOverviewDialogState extends State<_PurchaseOverviewDialog> {
                 'Fecha',
                 'Proveedor',
                 'Relacion',
-                'Cajas/Lotes',
-                'Unid.',
+                'Productos',
                 'Costo u.',
                 'Venta u.',
                 'Ganancia',
@@ -1361,8 +1360,6 @@ class _SupplierSummary {
 class _PurchaseAnalytics {
   const _PurchaseAnalytics({
     required this.relationshipLabel,
-    required this.packageQuantity,
-    required this.totalUnits,
     required this.averageUnitCost,
     required this.averageSalePrice,
     required this.projectedProfit,
@@ -1370,8 +1367,6 @@ class _PurchaseAnalytics {
   });
 
   final String relationshipLabel;
-  final int packageQuantity;
-  final int totalUnits;
   final double averageUnitCost;
   final double averageSalePrice;
   final double projectedProfit;
@@ -1394,21 +1389,47 @@ class _MovementSupplierSummary {
   final DateTime lastMovementAt;
 }
 
+class _SaleItemSummary {
+  const _SaleItemSummary({
+    required this.productId,
+    required this.productName,
+    required this.quantity,
+  });
+
+  final String productId;
+  final String productName;
+  final num quantity;
+}
+
+class _PurchaseItemSummary {
+  const _PurchaseItemSummary({
+    required this.productName,
+    required this.quantity,
+    required this.unitsPerPackage,
+    required this.totalUnits,
+  });
+
+  final String productName;
+  final int quantity;
+  final int unitsPerPackage;
+  final int totalUnits;
+}
+
 class _SaleItemsCell extends StatelessWidget {
   const _SaleItemsCell({
-    required this.sale,
+    required this.items,
     required this.productById,
     required this.categoryById,
   });
 
-  final Sale sale;
+  final List<_SaleItemSummary> items;
   final Map<String, Product> productById;
   final Map<String, String> categoryById;
 
   @override
   Widget build(BuildContext context) {
     final details =
-        sale.items.map((item) {
+        items.map((item) {
           final product = productById[item.productId];
           final categoryName =
               product == null
@@ -1426,6 +1447,82 @@ class _SaleItemsCell extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PurchaseItemsCell extends StatelessWidget {
+  const _PurchaseItemsCell({required this.items});
+
+  final List<_PurchaseItemSummary> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final details =
+        items
+            .map(
+              (item) =>
+                  '${item.productName}: ${item.quantity} x ${item.unitsPerPackage} = ${item.totalUnits} u.',
+            )
+            .toList();
+
+    return SizedBox(
+      width: 270,
+      child: Text(
+        details.join('\n'),
+        maxLines: 4,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+}
+
+List<_SaleItemSummary> _groupSaleItems(Sale sale) {
+  final grouped = <String, _SaleItemSummary>{};
+
+  for (final item in sale.items) {
+    final existing = grouped[item.productId];
+    if (existing == null) {
+      grouped[item.productId] = _SaleItemSummary(
+        productId: item.productId,
+        productName: item.productName,
+        quantity: item.quantity,
+      );
+      continue;
+    }
+    grouped[item.productId] = _SaleItemSummary(
+      productId: item.productId,
+      productName: existing.productName,
+      quantity: existing.quantity + item.quantity,
+    );
+  }
+
+  return grouped.values.toList();
+}
+
+List<_PurchaseItemSummary> _groupPurchaseItems(Purchase purchase) {
+  final grouped = <String, _PurchaseItemSummary>{};
+
+  for (final item in purchase.items) {
+    final key = '${item.productId}::${item.unitsPerPackage}';
+    final existing = grouped[key];
+    if (existing == null) {
+      grouped[key] = _PurchaseItemSummary(
+        productName: item.productName,
+        quantity: item.quantity,
+        unitsPerPackage: item.unitsPerPackage,
+        totalUnits: item.totalUnits,
+      );
+      continue;
+    }
+
+    grouped[key] = _PurchaseItemSummary(
+      productName: existing.productName,
+      quantity: existing.quantity + item.quantity,
+      unitsPerPackage: existing.unitsPerPackage,
+      totalUnits: existing.totalUnits + item.totalUnits,
+    );
+  }
+
+  return grouped.values.toList();
 }
 
 class _ProductNameCell extends StatelessWidget {
@@ -1809,12 +1906,10 @@ _PurchaseAnalytics _buildPurchaseAnalytics(
     for (final category in state.categories) category.id: category.name,
   };
   final categoryNames = <String>{};
-  var packageQuantity = 0;
   var totalUnits = 0;
   var projectedRevenue = 0.0;
 
   for (final item in purchase.items) {
-    packageQuantity += item.quantity;
     totalUnits += item.totalUnits;
 
     final product = productById[item.productId];
@@ -1843,8 +1938,6 @@ _PurchaseAnalytics _buildPurchaseAnalytics(
 
   return _PurchaseAnalytics(
     relationshipLabel: '$supplierLabel -> $categoriesLabel',
-    packageQuantity: packageQuantity,
-    totalUnits: totalUnits,
     averageUnitCost: averageUnitCost,
     averageSalePrice: averageSalePrice,
     projectedProfit: projectedProfit,
@@ -1857,6 +1950,7 @@ List<Widget> _purchaseHistoryCells(
   Purchase purchase,
 ) {
   final analytics = _buildPurchaseAnalytics(state, purchase);
+  final groupedItems = _groupPurchaseItems(purchase);
 
   return [
     Text(SystemWFormatters.shortDateTime.format(purchase.receivedAt)),
@@ -1876,8 +1970,7 @@ List<Widget> _purchaseHistoryCells(
         overflow: TextOverflow.ellipsis,
       ),
     ),
-    Text('${analytics.packageQuantity}'),
-    Text('${analytics.totalUnits}'),
+    _PurchaseItemsCell(items: groupedItems),
     Text(SystemWFormatters.currency.format(analytics.averageUnitCost)),
     Text(SystemWFormatters.currency.format(analytics.averageSalePrice)),
     Text(SystemWFormatters.currency.format(analytics.projectedProfit)),

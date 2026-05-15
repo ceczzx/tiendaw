@@ -1,4 +1,9 @@
+// ignore_for_file: unused_element
+
+import 'dart:async';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:tiendaw/core/sync/realtime_refresh_stream.dart';
 import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
 import 'package:tiendaw/features/inventory/domain/inventory_entities.dart';
 
@@ -153,6 +158,13 @@ class CatalogRemoteDataSource {
     return _mapRows(rows).map(CategoryModel.fromMap).toList();
   }
 
+  Stream<List<Category>> watchCategories() {
+    return createRealtimeRefreshStream(
+      load: getCategories,
+      triggers: [_tableTrigger('categories', primaryKey: const ['id'])],
+    );
+  }
+
   Future<Category> ensureCategory({
     required String name,
     required String prefix,
@@ -208,6 +220,20 @@ class CatalogRemoteDataSource {
         nextExpiryDate: nextExpiryByProduct[row['id']],
       );
     }).toList();
+  }
+
+  Stream<List<Product>> watchProducts() {
+    return createRealtimeRefreshStream(
+      load: getProducts,
+      triggers: [
+        _tableTrigger('products', primaryKey: const ['id']),
+        _tableTrigger(
+          'inventory_stock',
+          primaryKey: const ['product_id', 'location_id'],
+        ),
+        _tableTrigger('purchase_items', primaryKey: const ['id']),
+      ],
+    );
   }
 
   Future<Product> ensureProduct({
@@ -373,6 +399,17 @@ class CatalogRemoteDataSource {
     }).toList();
   }
 
+  Stream<List<PriceHistoryEntry>> watchPriceHistory({String? productId}) {
+    return createRealtimeRefreshStream(
+      load: () => getPriceHistory(productId: productId),
+      triggers: [
+        _tableTrigger('product_prices', primaryKey: const ['id']),
+        _tableTrigger('suppliers', primaryKey: const ['id']),
+        _tableTrigger('products', primaryKey: const ['id']),
+      ],
+    );
+  }
+
   Future<List<InventoryMovement>> getInventoryMovements() async {
     final rows = await _client
         .from('inventory_movements')
@@ -402,6 +439,13 @@ class CatalogRemoteDataSource {
         occurredAt: _parseSupabaseDateTime(row['happened_at'] as String),
       );
     }).toList();
+  }
+
+  Stream<List<InventoryMovement>> watchInventoryMovements() {
+    return createRealtimeRefreshStream(
+      load: getInventoryMovements,
+      triggers: [_tableTrigger('inventory_movements', primaryKey: const ['id'])],
+    );
   }
 
   Future<List<WarehouseSupplierLot>> getWarehouseSupplierLots({
@@ -537,6 +581,13 @@ class CatalogRemoteDataSource {
     }
 
     return Map<String, dynamic>.from(value as Map);
+  }
+
+  Stream<dynamic> _tableTrigger(
+    String table, {
+    required List<String> primaryKey,
+  }) {
+    return _client.from(table).stream(primaryKey: primaryKey).skip(1);
   }
 }
 

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tiendaw/app/providers.dart';
 import 'package:tiendaw/core/sync/sync_status.dart';
@@ -5,8 +7,6 @@ import 'package:tiendaw/features/auth/domain/app_user.dart';
 import 'package:tiendaw/features/auth/presentation/session_view_model.dart';
 import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
 import 'package:tiendaw/features/catalog/domain/load_catalog_overview_use_case.dart';
-import 'package:tiendaw/features/dashboard/presentation/admin_desktop_dashboard_view_model.dart';
-import 'package:tiendaw/features/purchases/presentation/admin_mobile_dashboard_view_model.dart';
 import 'package:tiendaw/features/sales/domain/create_sale_use_case.dart';
 import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 import 'package:uuid/uuid.dart';
@@ -114,6 +114,9 @@ final sellerDashboardViewModelProvider =
 
 class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
   final _uuid = const Uuid();
+  StreamSubscription<CatalogOverview>? _catalogSubscription;
+  StreamSubscription<List<Sale>>? _salesSubscription;
+  StreamSubscription<CashShift?>? _openShiftSubscription;
 
   LoadCatalogOverviewUseCase get _catalogUseCase =>
       ref.read(loadCatalogOverviewUseCaseProvider);
@@ -126,7 +129,10 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
 
   @override
   Future<SellerDashboardState> build() async {
-    return _hydrate();
+    ref.onDispose(_disposeRealtimeSubscriptions);
+    final hydrated = await _hydrate();
+    _bindRealtime();
+    return hydrated;
   }
 
   Future<void> selectCategory(String categoryId) async {
@@ -562,9 +568,6 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
         searchQuery: current?.searchQuery,
       ),
     );
-
-    ref.invalidate(adminMobileDashboardViewModelProvider);
-    ref.invalidate(adminDesktopDashboardViewModelProvider);
   }
 
   Product? _productById(SellerDashboardState state, String productId) {
@@ -579,5 +582,109 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
   int _storeStockForProduct(SellerDashboardState state, String productId) {
     final product = _productById(state, productId);
     return product?.stockStore ?? 0;
+  }
+
+  void _bindRealtime() {
+    _disposeRealtimeSubscriptions();
+
+    _catalogSubscription = _catalogUseCase.watch().listen(
+      _handleCatalogUpdate,
+      onError: (_, __) {},
+    );
+    _salesSubscription = ref
+        .read(salesRepositoryProvider)
+        .watchSales()
+        .listen(_handleSalesUpdate, onError: (_, __) {});
+
+    final user = _currentUser;
+    if (user != null) {
+      _openShiftSubscription = ref
+          .read(salesRepositoryProvider)
+          .watchOpenShift(user.id)
+          .listen(_handleOpenShiftUpdate, onError: (_, __) {});
+    }
+  }
+
+  void _disposeRealtimeSubscriptions() {
+    _catalogSubscription?.cancel();
+    _salesSubscription?.cancel();
+    _openShiftSubscription?.cancel();
+    _catalogSubscription = null;
+    _salesSubscription = null;
+    _openShiftSubscription = null;
+  }
+
+  void _handleCatalogUpdate(CatalogOverview catalog) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    final effectiveCategoryId =
+        catalog.categories.any(
+              (category) => category.id == current.selectedCategoryId,
+            )
+            ? current.selectedCategoryId
+            : catalog.categories.isEmpty
+            ? null
+            : catalog.categories.first.id;
+
+    final productsInCategory =
+        effectiveCategoryId == null
+            ? const <Product>[]
+            : catalog.products
+                .where((product) => product.categoryId == effectiveCategoryId)
+                .toList();
+
+    final effectiveProductId =
+        productsInCategory.any(
+              (product) => product.id == current.selectedProductId,
+            )
+            ? current.selectedProductId
+            : productsInCategory.isEmpty
+            ? null
+            : productsInCategory.first.id;
+
+    state = AsyncData(
+      current.copyWith(
+        categories: catalog.categories,
+        products: catalog.products,
+        selectedCategoryId: effectiveCategoryId,
+        clearSelectedCategory: effectiveCategoryId == null,
+        selectedProductId: effectiveProductId,
+        clearSelectedProduct: effectiveProductId == null,
+      ),
+    );
+  }
+
+  void _handleSalesUpdate(List<Sale> sales) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    final today = DateTime.now();
+    final todaysSales =
+        sales.where((sale) {
+          return sale.createdAt.year == today.year &&
+              sale.createdAt.month == today.month &&
+              sale.createdAt.day == today.day;
+        }).toList();
+
+    state = AsyncData(current.copyWith(todaysSales: todaysSales));
+  }
+
+  void _handleOpenShiftUpdate(CashShift? shift) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(
+      current.copyWith(
+        currentShift: shift,
+        clearCurrentShift: shift == null,
+      ),
+    );
   }
 }

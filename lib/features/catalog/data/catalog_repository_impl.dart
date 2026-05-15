@@ -29,6 +29,22 @@ class CatalogRepositoryImpl implements CatalogRepository {
   }
 
   @override
+  Stream<List<Category>> watchCategories() async* {
+    try {
+      await for (final categories in _remote.watchCategories()) {
+        await _local.saveCategories(categories);
+        yield categories;
+      }
+    } catch (_) {
+      final cached = await _local.getCategories();
+      if (cached.isNotEmpty) {
+        yield cached;
+      }
+      rethrow;
+    }
+  }
+
+  @override
   Future<Category> ensureCategory({
     required String name,
     required String prefix,
@@ -48,6 +64,22 @@ class CatalogRepositoryImpl implements CatalogRepository {
         rethrow;
       }
       return cached;
+    }
+  }
+
+  @override
+  Stream<List<InventoryMovement>> watchInventoryMovements() async* {
+    try {
+      await for (final movements in _remote.watchInventoryMovements()) {
+        await _local.saveInventoryMovements(movements);
+        yield movements;
+      }
+    } catch (_) {
+      final cached = await _local.getInventoryMovements();
+      if (cached.isNotEmpty) {
+        yield cached;
+      }
+      rethrow;
     }
   }
 
@@ -95,6 +127,22 @@ class CatalogRepositoryImpl implements CatalogRepository {
   }
 
   @override
+  Stream<List<PriceHistoryEntry>> watchPriceHistory({String? productId}) async* {
+    try {
+      await for (final entries in _remote.watchPriceHistory(productId: productId)) {
+        await _local.savePriceHistory(entries);
+        yield entries;
+      }
+    } catch (_) {
+      final cached = await _local.getPriceHistory(productId: productId);
+      if (cached.isNotEmpty) {
+        yield cached;
+      }
+      rethrow;
+    }
+  }
+
+  @override
   Future<List<Product>> getProducts() async {
     try {
       final products = await _remote.getProducts();
@@ -106,6 +154,22 @@ class CatalogRepositoryImpl implements CatalogRepository {
         rethrow;
       }
       return cached;
+    }
+  }
+
+  @override
+  Stream<List<Product>> watchProducts() async* {
+    try {
+      await for (final products in _remote.watchProducts()) {
+        await _local.saveProducts(products);
+        yield products;
+      }
+    } catch (_) {
+      final cached = await _local.getProducts();
+      if (cached.isNotEmpty) {
+        yield cached;
+      }
+      rethrow;
     }
   }
 

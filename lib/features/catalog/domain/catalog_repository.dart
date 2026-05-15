@@ -3,9 +3,13 @@ import 'package:tiendaw/features/inventory/domain/inventory_entities.dart';
 
 abstract class CatalogRepository {
   Future<List<Category>> getCategories();
+  Stream<List<Category>> watchCategories();
   Future<List<Product>> getProducts();
+  Stream<List<Product>> watchProducts();
   Future<List<PriceHistoryEntry>> getPriceHistory({String? productId});
+  Stream<List<PriceHistoryEntry>> watchPriceHistory({String? productId});
   Future<List<InventoryMovement>> getInventoryMovements();
+  Stream<List<InventoryMovement>> watchInventoryMovements();
   Future<List<WarehouseSupplierLot>> getWarehouseSupplierLots({
     required String productId,
     String? supplierId,

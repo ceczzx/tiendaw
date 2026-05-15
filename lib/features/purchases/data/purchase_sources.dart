@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:tiendaw/core/sync/realtime_refresh_stream.dart';
 import 'package:tiendaw/core/sync/sync_status.dart';
 import 'package:tiendaw/features/purchases/domain/purchase_entities.dart';
 
@@ -86,6 +87,18 @@ class PurchaseRemoteDataSource {
         syncAttempts: 0,
       );
     }).toList();
+  }
+
+  Stream<List<Purchase>> watchPurchases() {
+    return createRealtimeRefreshStream(
+      load: getPurchases,
+      triggers: [
+        _tableTrigger('purchases', primaryKey: const ['id']),
+        _tableTrigger('purchase_items', primaryKey: const ['id']),
+        _tableTrigger('products', primaryKey: const ['id']),
+        _tableTrigger('suppliers', primaryKey: const ['id']),
+      ],
+    );
   }
 
   Future<void> pushPurchase(Purchase purchase) async {
@@ -214,6 +227,13 @@ class PurchaseRemoteDataSource {
     }
 
     return Map<String, dynamic>.from(value as Map);
+  }
+
+  Stream<dynamic> _tableTrigger(
+    String table, {
+    required List<String> primaryKey,
+  }) {
+    return _client.from(table).stream(primaryKey: primaryKey).skip(1);
   }
 }
 

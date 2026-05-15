@@ -50,6 +50,22 @@ class SalesRepositoryImpl implements SalesRepository {
   }
 
   @override
+  Stream<List<CashShift>> watchCashShifts() async* {
+    try {
+      await for (final shifts in _remote.watchCashShifts()) {
+        await _local.saveCashShifts(shifts);
+        yield shifts;
+      }
+    } catch (_) {
+      final cached = await _local.getCashShifts();
+      if (cached.isNotEmpty) {
+        yield cached;
+      }
+      rethrow;
+    }
+  }
+
+  @override
   Future<List<Sale>> getSales() async {
     try {
       final sales = await _remote.getSales();
@@ -65,10 +81,43 @@ class SalesRepositoryImpl implements SalesRepository {
   }
 
   @override
+  Stream<List<Sale>> watchSales() async* {
+    try {
+      await for (final sales in _remote.watchSales()) {
+        await _local.saveSales(sales);
+        yield sales;
+      }
+    } catch (_) {
+      final cached = await _local.getSales();
+      if (cached.isNotEmpty) {
+        yield cached;
+      }
+      rethrow;
+    }
+  }
+
+  @override
   Future<CashShift> openShift(String sellerId) async {
     final shift = await _remote.openShift(sellerId);
     await _local.saveOpenShift(sellerId, shift);
     return shift;
+  }
+
+  @override
+  Stream<CashShift?> watchOpenShift(String sellerId) async* {
+    try {
+      await for (final shift in _remote.watchOpenShift(sellerId)) {
+        if (shift == null) {
+          await _local.clearOpenShift(sellerId);
+        } else {
+          await _local.saveOpenShift(sellerId, shift);
+        }
+        yield shift;
+      }
+    } catch (_) {
+      yield await _local.getOpenShift(sellerId);
+      rethrow;
+    }
   }
 
   @override

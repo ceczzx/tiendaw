@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:tiendaw/core/sync/realtime_refresh_stream.dart';
 import 'package:tiendaw/core/sync/sync_status.dart';
 import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 
@@ -105,6 +106,17 @@ class SalesRemoteDataSource {
     }).toList();
   }
 
+  Stream<List<Sale>> watchSales() {
+    return createRealtimeRefreshStream(
+      load: getSales,
+      triggers: [
+        _tableTrigger('sales', primaryKey: const ['id']),
+        _tableTrigger('sale_items', primaryKey: const ['id']),
+        _tableTrigger('products', primaryKey: const ['id']),
+      ],
+    );
+  }
+
   Future<List<CashShift>> getCashShifts() async {
     final rows = await _client
         .from('cash_shifts')
@@ -116,8 +128,28 @@ class SalesRemoteDataSource {
     return _mapRows(rows).map(_mapCashShift).toList();
   }
 
+  Stream<List<CashShift>> watchCashShifts() {
+    return createRealtimeRefreshStream(
+      load: getCashShifts,
+      triggers: [_tableTrigger('cash_shifts', primaryKey: const ['id'])],
+    );
+  }
+
   Future<CashShift?> getOpenShift(String sellerId) {
     return _loadOpenShift(sellerId);
+  }
+
+  Stream<CashShift?> watchOpenShift(String sellerId) {
+    return createRealtimeRefreshStream(
+      load: () => _loadOpenShift(sellerId),
+      triggers: [
+        _client
+            .from('cash_shifts')
+            .stream(primaryKey: const ['id'])
+            .eq('seller_id', sellerId)
+            .skip(1),
+      ],
+    );
   }
 
   Future<CashShift> openShift(String sellerId) async {
@@ -277,6 +309,13 @@ class SalesRemoteDataSource {
     }
 
     return Map<String, dynamic>.from(value as Map);
+  }
+
+  Stream<dynamic> _tableTrigger(
+    String table, {
+    required List<String> primaryKey,
+  }) {
+    return _client.from(table).stream(primaryKey: primaryKey).skip(1);
   }
 }
 

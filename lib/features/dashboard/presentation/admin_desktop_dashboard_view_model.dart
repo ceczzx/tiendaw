@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tiendaw/app/providers.dart';
 import 'package:tiendaw/core/utils/formatters.dart';
 import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
+import 'package:tiendaw/features/catalog/domain/load_catalog_overview_use_case.dart';
 import 'package:tiendaw/features/inventory/domain/inventory_entities.dart';
 import 'package:tiendaw/features/purchases/domain/purchase_entities.dart';
 import 'package:tiendaw/features/sales/domain/sales_entities.dart';
@@ -262,9 +265,18 @@ final adminDesktopDashboardViewModelProvider = AsyncNotifierProvider<
 
 class AdminDesktopDashboardViewModel
     extends AsyncNotifier<AdminDesktopDashboardState> {
+  StreamSubscription<CatalogOverview>? _catalogSubscription;
+  StreamSubscription<List<Sale>>? _salesSubscription;
+  StreamSubscription<List<CashShift>>? _cashShiftsSubscription;
+  StreamSubscription<List<Purchase>>? _purchasesSubscription;
+  StreamSubscription<List<InventoryMovement>>? _movementsSubscription;
+
   @override
   Future<AdminDesktopDashboardState> build() async {
-    return _hydrate();
+    ref.onDispose(_disposeRealtimeSubscriptions);
+    final hydrated = await _hydrate();
+    _bindRealtime();
+    return hydrated;
   }
 
   Future<void> setSellerFilter(String sellerId) async {
@@ -331,6 +343,130 @@ class AdminDesktopDashboardViewModel
       periodEnd: _dateOnly(periodEnd ?? _currentWeekEnd()),
     );
   }
+
+  void _bindRealtime() {
+    _disposeRealtimeSubscriptions();
+
+    _catalogSubscription = ref.read(loadCatalogOverviewUseCaseProvider).watch().listen(
+      _handleCatalogUpdate,
+      onError: (_, __) {},
+    );
+    _salesSubscription = ref
+        .read(salesRepositoryProvider)
+        .watchSales()
+        .listen(_handleSalesUpdate, onError: (_, __) {});
+    _cashShiftsSubscription = ref
+        .read(salesRepositoryProvider)
+        .watchCashShifts()
+        .listen(_handleCashShiftsUpdate, onError: (_, __) {});
+    _purchasesSubscription = ref
+        .read(purchaseRepositoryProvider)
+        .watchPurchases()
+        .listen(_handlePurchasesUpdate, onError: (_, __) {});
+    _movementsSubscription = ref
+        .read(catalogRepositoryProvider)
+        .watchInventoryMovements()
+        .listen(_handleMovementsUpdate, onError: (_, __) {});
+  }
+
+  void _disposeRealtimeSubscriptions() {
+    _catalogSubscription?.cancel();
+    _salesSubscription?.cancel();
+    _cashShiftsSubscription?.cancel();
+    _purchasesSubscription?.cancel();
+    _movementsSubscription?.cancel();
+    _catalogSubscription = null;
+    _salesSubscription = null;
+    _cashShiftsSubscription = null;
+    _purchasesSubscription = null;
+    _movementsSubscription = null;
+  }
+
+  void _handleCatalogUpdate(CatalogOverview catalog) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    final alerts = _buildProductAlerts(catalog.products);
+    state = AsyncData(
+      current.copyWith(
+        categories: catalog.categories,
+        products: catalog.products,
+        lowStockProducts: alerts.lowStockProducts,
+        expiringProducts: alerts.expiringProducts,
+      ),
+    );
+  }
+
+  void _handleSalesUpdate(List<Sale> sales) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(sales: sales));
+  }
+
+  void _handleCashShiftsUpdate(List<CashShift> shifts) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(cashShifts: shifts));
+  }
+
+  void _handlePurchasesUpdate(List<Purchase> purchases) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(purchases: purchases));
+  }
+
+  void _handleMovementsUpdate(List<InventoryMovement> movements) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(movements: movements));
+  }
+}
+
+_DashboardProductAlerts _buildProductAlerts(List<Product> products) {
+  final today = DateTime.now();
+  final lowStockProducts =
+      products
+          .where((product) => product.stockStore < product.lowStockThreshold)
+          .toList();
+  final expiringProducts =
+      products.where((product) {
+        final expiryDate = product.nextExpiryDate;
+        if (expiryDate == null) {
+          return false;
+        }
+
+        final remainingDays = expiryDate.difference(today).inDays;
+        return remainingDays <= 14;
+      }).toList();
+
+  return _DashboardProductAlerts(
+    lowStockProducts: lowStockProducts,
+    expiringProducts: expiringProducts,
+  );
+}
+
+class _DashboardProductAlerts {
+  const _DashboardProductAlerts({
+    required this.lowStockProducts,
+    required this.expiringProducts,
+  });
+
+  final List<Product> lowStockProducts;
+  final List<Product> expiringProducts;
 }
 
 DateTime _dateOnly(DateTime value) {

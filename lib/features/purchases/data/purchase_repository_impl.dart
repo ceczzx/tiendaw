@@ -29,6 +29,22 @@ class PurchaseRepositoryImpl implements PurchaseRepository {
   }
 
   @override
+  Stream<List<Purchase>> watchPurchases() async* {
+    try {
+      await for (final purchases in _remote.watchPurchases()) {
+        await _local.savePurchases(purchases);
+        yield purchases;
+      }
+    } catch (_) {
+      final cached = await _local.getPurchases();
+      if (cached.isNotEmpty) {
+        yield cached;
+      }
+      rethrow;
+    }
+  }
+
+  @override
   Future<void> registerPurchase(Purchase purchase) async {
     await _remote.pushPurchase(purchase);
     await _local.upsertPurchase(

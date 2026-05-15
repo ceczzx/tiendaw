@@ -1,12 +1,56 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tiendaw/app/providers.dart';
 import 'package:tiendaw/core/sync/sync_status.dart';
 import 'package:tiendaw/features/auth/domain/app_user.dart';
 import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
-import 'package:tiendaw/features/dashboard/presentation/admin_desktop_dashboard_view_model.dart';
+import 'package:tiendaw/features/catalog/domain/load_catalog_overview_use_case.dart';
 import 'package:tiendaw/features/inventory/domain/inventory_entities.dart';
 import 'package:tiendaw/features/purchases/domain/purchase_entities.dart';
 import 'package:uuid/uuid.dart';
+
+class PurchaseDraftLine {
+  const PurchaseDraftLine({
+    this.categoryId,
+    this.categoryName,
+    this.categoryPrefix,
+    this.productId,
+    required this.productName,
+    required this.productType,
+    required this.quantity,
+    required this.unitsPerPackage,
+    required this.lowStockThreshold,
+    required this.unitCost,
+    required this.salePrice,
+    required this.productCostDetails,
+    required this.supplier,
+    this.supplierPhone,
+    required this.expiryDate,
+  });
+
+  final String? categoryId;
+  final String? categoryName;
+  final String? categoryPrefix;
+  final String? productId;
+  final String productName;
+  final String productType;
+  final int quantity;
+  final int unitsPerPackage;
+  final int lowStockThreshold;
+  final double unitCost;
+  final double salePrice;
+  final Map<String, dynamic> productCostDetails;
+  final String supplier;
+  final String? supplierPhone;
+  final DateTime expiryDate;
+
+  int get totalUnits => quantity * unitsPerPackage;
+
+  double get subtotal => totalUnits * unitCost;
+
+  bool get requiresSupplier => _normalizeProductType(productType) == 'proveedor';
+}
 
 class AdminMobileDashboardState {
   const AdminMobileDashboardState({
@@ -22,6 +66,7 @@ class AdminMobileDashboardState {
     required this.unitCost,
     required this.supplier,
     required this.expiryDate,
+    required this.purchaseDraftItems,
     this.feedbackMessage,
   });
 
@@ -37,6 +82,7 @@ class AdminMobileDashboardState {
   final double unitCost;
   final String supplier;
   final DateTime expiryDate;
+  final List<PurchaseDraftLine> purchaseDraftItems;
   final String? feedbackMessage;
 
   Product? get selectedProduct {
@@ -50,6 +96,30 @@ class AdminMobileDashboardState {
       }
     }
     return null;
+  }
+
+  String get purchaseDraftSupplier {
+    if (purchaseDraftItems.isEmpty) {
+      return '';
+    }
+
+    return purchaseDraftItems.first.supplier.trim();
+  }
+
+  String? get purchaseDraftSupplierPhone {
+    if (purchaseDraftItems.isEmpty) {
+      return null;
+    }
+
+    return purchaseDraftItems.first.supplierPhone;
+  }
+
+  int get purchaseDraftUnits {
+    return purchaseDraftItems.fold(0, (sum, item) => sum + item.totalUnits);
+  }
+
+  double get purchaseDraftTotal {
+    return purchaseDraftItems.fold(0, (sum, item) => sum + item.subtotal);
   }
 
   AdminMobileDashboardState copyWith({
@@ -66,6 +136,7 @@ class AdminMobileDashboardState {
     double? unitCost,
     String? supplier,
     DateTime? expiryDate,
+    List<PurchaseDraftLine>? purchaseDraftItems,
     String? feedbackMessage,
   }) {
     return AdminMobileDashboardState(
@@ -84,6 +155,7 @@ class AdminMobileDashboardState {
       unitCost: unitCost ?? this.unitCost,
       supplier: supplier ?? this.supplier,
       expiryDate: expiryDate ?? this.expiryDate,
+      purchaseDraftItems: purchaseDraftItems ?? this.purchaseDraftItems,
       feedbackMessage: feedbackMessage,
     );
   }
@@ -97,10 +169,17 @@ final adminMobileDashboardViewModelProvider = AsyncNotifierProvider<
 class AdminMobileDashboardViewModel
     extends AsyncNotifier<AdminMobileDashboardState> {
   final _uuid = const Uuid();
+  StreamSubscription<CatalogOverview>? _catalogSubscription;
+  StreamSubscription<List<PriceHistoryEntry>>? _priceHistorySubscription;
+  StreamSubscription<List<Purchase>>? _purchasesSubscription;
+  StreamSubscription<List<InventoryMovement>>? _movementsSubscription;
 
   @override
   Future<AdminMobileDashboardState> build() async {
-    return _hydrate();
+    ref.onDispose(_disposeRealtimeSubscriptions);
+    final hydrated = await _hydrate();
+    _bindRealtime();
+    return hydrated;
   }
 
   Future<void> selectProduct(String productId) async {
@@ -216,152 +295,122 @@ class AdminMobileDashboardViewModel
     state = AsyncData(current.copyWith(feedbackMessage: null));
   }
 
-  Future<bool> registerPurchase(
-    AppUser user, {
-    String? categoryName,
-    String? categoryPrefix,
-    String? productName,
-    String? productType,
-    double? salePrice,
-    Map<String, dynamic>? productCostDetails,
-    String? supplierPhone,
-  }) async {
+  Future<bool> addPurchaseDraftLine(PurchaseDraftLine line) async {
     final current = state.valueOrNull;
-    var selectedProduct = current?.selectedProduct;
-
     if (current == null) {
       return false;
     }
 
-    final trimmedCategoryName = categoryName?.trim() ?? '';
-    final trimmedCategoryPrefix = categoryPrefix?.trim().toUpperCase() ?? '';
-    final trimmedProductName = productName?.trim() ?? '';
-    final resolvedProductType = _normalizeProductType(
-      productType ?? selectedProduct?.productType,
-    );
-    final resolvedSalePrice = salePrice ?? selectedProduct?.salePrice ?? 0;
-    final resolvedCostDetails = _normalizeCostDetails(
-      productType: resolvedProductType,
-      costDetails:
-          productCostDetails ??
-          selectedProduct?.costDetails ??
-          const <String, dynamic>{},
-    );
-    final requiresSupplier = resolvedProductType == 'proveedor';
-
-    if (requiresSupplier && current.supplier.trim().isEmpty) {
+    if (line.requiresSupplier && line.supplier.trim().isEmpty) {
       state = AsyncData(
         current.copyWith(feedbackMessage: 'Ingresa el nombre del proveedor.'),
       );
       return false;
     }
 
-    if (trimmedCategoryName.isNotEmpty || trimmedProductName.isNotEmpty) {
-      if (trimmedCategoryName.isEmpty ||
-          trimmedCategoryPrefix.isEmpty ||
-          trimmedProductName.isEmpty) {
+    if (current.purchaseDraftItems.isNotEmpty) {
+      final firstLine = current.purchaseDraftItems.first;
+      final currentSupplier = firstLine.supplier.trim();
+      final nextSupplier = line.supplier.trim();
+      final currentRequiresSupplier = firstLine.requiresSupplier;
+      if (currentRequiresSupplier != line.requiresSupplier ||
+          currentSupplier != nextSupplier) {
+        final supplierLabel =
+            currentSupplier.isEmpty ? 'produccion artesanal' : currentSupplier;
         state = AsyncData(
           current.copyWith(
             feedbackMessage:
-                'Completa categoria, prefix y producto cuando quieras crear uno nuevo.',
+                'Esta compra ya esta asociada a $supplierLabel. Usa el mismo proveedor o registra otra compra.',
           ),
         );
         return false;
       }
-
-      final category = await ref
-          .read(catalogRepositoryProvider)
-          .ensureCategory(
-            name: trimmedCategoryName,
-            prefix: trimmedCategoryPrefix,
-          );
-      selectedProduct = await ref
-          .read(catalogRepositoryProvider)
-          .ensureProduct(
-            categoryId: category.id,
-            name: trimmedProductName,
-            productType: resolvedProductType,
-            salePrice: resolvedSalePrice,
-            lastPurchaseCost: current.unitCost,
-            lowStockThreshold: current.lowStockThreshold,
-            unitsPerPackage: current.unitsPerPackage,
-            costDetails: resolvedCostDetails,
-          );
-    } else if (selectedProduct != null) {
-      await ref
-          .read(catalogRepositoryProvider)
-          .updateProductCatalogData(
-            productId: selectedProduct.id,
-            productType: resolvedProductType,
-            salePrice: resolvedSalePrice,
-            lastPurchaseCost: current.unitCost,
-            unitsPerPackage: current.unitsPerPackage,
-            costDetails: resolvedCostDetails,
-          );
-      if (selectedProduct.lowStockThreshold != current.lowStockThreshold) {
-        await ref
-            .read(catalogRepositoryProvider)
-            .updateProductLowStockThreshold(
-              productId: selectedProduct.id,
-              lowStockThreshold: current.lowStockThreshold,
-            );
-      }
-      if (selectedProduct.unitsPerPackage != current.unitsPerPackage) {
-        await ref
-            .read(catalogRepositoryProvider)
-            .updateProductUnitsPerPackage(
-              productId: selectedProduct.id,
-              unitsPerPackage: current.unitsPerPackage,
-            );
-      }
-      selectedProduct = selectedProduct.copyWith(
-        productType: resolvedProductType,
-        salePrice: resolvedSalePrice,
-        lastPurchaseCost: current.unitCost,
-        lowStockThreshold: current.lowStockThreshold,
-        unitsPerPackage: current.unitsPerPackage,
-        costDetails: resolvedCostDetails,
-      );
     }
 
-    if (selectedProduct == null) {
+    state = AsyncData(
+      current.copyWith(
+        purchaseDraftItems: [...current.purchaseDraftItems, line],
+        feedbackMessage: null,
+      ),
+    );
+    return true;
+  }
+
+  Future<void> removePurchaseDraftLine(int index) async {
+    final current = state.valueOrNull;
+    if (current == null ||
+        index < 0 ||
+        index >= current.purchaseDraftItems.length) {
+      return;
+    }
+
+    final next = [...current.purchaseDraftItems]..removeAt(index);
+    state = AsyncData(current.copyWith(purchaseDraftItems: next));
+  }
+
+  Future<void> clearPurchaseDraft() async {
+    final current = state.valueOrNull;
+    if (current == null || current.purchaseDraftItems.isEmpty) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(purchaseDraftItems: const []));
+  }
+
+  Future<bool> registerPurchaseCart(AppUser user) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    if (current.purchaseDraftItems.isEmpty) {
       state = AsyncData(
         current.copyWith(
-          feedbackMessage: 'Selecciona un producto o crea uno nuevo.',
+          feedbackMessage: 'Agrega al menos un producto antes de registrar la compra.',
         ),
       );
       return false;
     }
 
-    final purchase = Purchase(
-      id: _uuid.v4(),
-      supplier: requiresSupplier ? current.supplier.trim() : '',
-      supplierId: null,
-      supplierPhone:
-          requiresSupplier ? _normalizeSupplierPhone(supplierPhone) : null,
-      registeredBy: user.name,
-      items: [
-        PurchaseLine(
-          productId: selectedProduct.id,
-          productName: selectedProduct.name,
-          quantity: current.quantity,
-          unitsPerPackage: current.unitsPerPackage,
-          unitCost: current.unitCost,
-          expiryDate: current.expiryDate,
-        ),
-      ],
-      receivedAt: DateTime.now(),
-      syncStatus: SyncStatus.synced,
-      syncAttempts: 0,
-    );
-
     try {
+      final purchaseItems = <PurchaseLine>[];
+      for (final draft in current.purchaseDraftItems) {
+        final product = await _resolvePurchaseDraftProduct(draft, current);
+        purchaseItems.add(
+          PurchaseLine(
+            productId: product.id,
+            productName: product.name,
+            quantity: draft.quantity,
+            unitsPerPackage: draft.unitsPerPackage,
+            unitCost: draft.unitCost,
+            expiryDate: draft.expiryDate,
+          ),
+        );
+      }
+
+      final draftSupplier = current.purchaseDraftSupplier;
+      final purchase = Purchase(
+        id: _uuid.v4(),
+        supplier: draftSupplier,
+        supplierId: null,
+        supplierPhone:
+            draftSupplier.isEmpty
+                ? null
+                : _normalizeSupplierPhone(current.purchaseDraftSupplierPhone),
+        registeredBy: user.name,
+        items: purchaseItems,
+        receivedAt: DateTime.now(),
+        syncStatus: SyncStatus.synced,
+        syncAttempts: 0,
+      );
+
       await ref.read(registerPurchaseUseCaseProvider)(purchase);
-      await _refreshAll(selectedProductId: selectedProduct.id);
+      await _refreshAll(selectedProductId: current.selectedProductId);
       final refreshed = state.requireValue;
 
       state = AsyncData(
         refreshed.copyWith(
+          purchaseDraftItems: const [],
           clearSelectedProduct: true,
           quantity: 1,
           unitsPerPackage: 1,
@@ -461,6 +510,7 @@ class AdminMobileDashboardViewModel
       supplier: supplier ?? '',
       expiryDate:
           expiryDate ?? _defaultExpiryDate(selectedProduct?.nextExpiryDate),
+      purchaseDraftItems: const [],
       feedbackMessage: feedbackMessage,
     );
   }
@@ -476,15 +526,212 @@ class AdminMobileDashboardViewModel
         unitCost: current?.unitCost,
         supplier: current?.supplier,
         expiryDate: current?.expiryDate,
+        feedbackMessage: current?.feedbackMessage,
       ),
     );
-
-    ref.invalidate(adminDesktopDashboardViewModelProvider);
   }
 
   DateTime _defaultExpiryDate(DateTime? value) {
     return _dateOnly(value ?? DateTime.now().add(const Duration(days: 30)));
   }
+
+  Future<Product> _resolvePurchaseDraftProduct(
+    PurchaseDraftLine draft,
+    AdminMobileDashboardState current,
+  ) async {
+    final repository = ref.read(catalogRepositoryProvider);
+    final resolvedProductType = _normalizeProductType(draft.productType);
+    final resolvedCostDetails = _normalizeCostDetails(
+      productType: resolvedProductType,
+      costDetails: draft.productCostDetails,
+    );
+
+    if (draft.productId == null) {
+      final resolvedCategoryId =
+          draft.categoryId ??
+          (await repository.ensureCategory(
+            name: draft.categoryName?.trim() ?? '',
+            prefix: draft.categoryPrefix?.trim().toUpperCase() ?? '',
+          ))
+              .id;
+
+      return repository.ensureProduct(
+        categoryId: resolvedCategoryId,
+        name: draft.productName,
+        productType: resolvedProductType,
+        salePrice: draft.salePrice,
+        lastPurchaseCost: draft.unitCost,
+        lowStockThreshold: draft.lowStockThreshold,
+        unitsPerPackage: draft.unitsPerPackage,
+        costDetails: resolvedCostDetails,
+      );
+    }
+
+    final selectedProduct = _findProductByIdInList(
+      current.products,
+      draft.productId!,
+    );
+    if (selectedProduct == null) {
+      throw StateError(
+        'El producto ${draft.productName} ya no esta disponible para esta compra.',
+      );
+    }
+
+    await repository.updateProductCatalogData(
+      productId: selectedProduct.id,
+      productType: resolvedProductType,
+      salePrice: draft.salePrice,
+      lastPurchaseCost: draft.unitCost,
+      unitsPerPackage: draft.unitsPerPackage,
+      costDetails: resolvedCostDetails,
+    );
+    if (selectedProduct.lowStockThreshold != draft.lowStockThreshold) {
+      await repository.updateProductLowStockThreshold(
+        productId: selectedProduct.id,
+        lowStockThreshold: draft.lowStockThreshold,
+      );
+    }
+    if (selectedProduct.unitsPerPackage != draft.unitsPerPackage) {
+      await repository.updateProductUnitsPerPackage(
+        productId: selectedProduct.id,
+        unitsPerPackage: draft.unitsPerPackage,
+      );
+    }
+
+    return selectedProduct.copyWith(
+      productType: resolvedProductType,
+      salePrice: draft.salePrice,
+      lastPurchaseCost: draft.unitCost,
+      lowStockThreshold: draft.lowStockThreshold,
+      unitsPerPackage: draft.unitsPerPackage,
+      costDetails: resolvedCostDetails,
+    );
+  }
+
+  void _bindRealtime() {
+    _disposeRealtimeSubscriptions();
+
+    _catalogSubscription = ref.read(loadCatalogOverviewUseCaseProvider).watch().listen(
+      _handleCatalogUpdate,
+      onError: (_, __) {},
+    );
+    _priceHistorySubscription = ref
+        .read(catalogRepositoryProvider)
+        .watchPriceHistory()
+        .listen(_handlePriceHistoryUpdate, onError: (_, __) {});
+    _purchasesSubscription = ref
+        .read(purchaseRepositoryProvider)
+        .watchPurchases()
+        .listen(_handlePurchasesUpdate, onError: (_, __) {});
+    _movementsSubscription = ref
+        .read(catalogRepositoryProvider)
+        .watchInventoryMovements()
+        .listen(_handleMovementsUpdate, onError: (_, __) {});
+  }
+
+  void _disposeRealtimeSubscriptions() {
+    _catalogSubscription?.cancel();
+    _priceHistorySubscription?.cancel();
+    _purchasesSubscription?.cancel();
+    _movementsSubscription?.cancel();
+    _catalogSubscription = null;
+    _priceHistorySubscription = null;
+    _purchasesSubscription = null;
+    _movementsSubscription = null;
+  }
+
+  void _handleCatalogUpdate(CatalogOverview catalog) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    final nextSelectedProductId = _resolveSelectedProductId(
+      products: catalog.products,
+      requestedProductId: current.selectedProductId,
+    );
+    final selectedProduct =
+        nextSelectedProductId == null
+            ? null
+            : _findProductByIdInList(catalog.products, nextSelectedProductId);
+    final selectionChanged = nextSelectedProductId != current.selectedProductId;
+
+    state = AsyncData(
+      current.copyWith(
+        categories: catalog.categories,
+        products: catalog.products,
+        selectedProductId: nextSelectedProductId,
+        clearSelectedProduct: nextSelectedProductId == null,
+        unitsPerPackage:
+            selectionChanged
+                ? selectedProduct?.unitsPerPackage ?? 1
+                : current.unitsPerPackage,
+        lowStockThreshold:
+            selectionChanged
+                ? selectedProduct?.lowStockThreshold ?? 20
+                : current.lowStockThreshold,
+        unitCost:
+            selectionChanged
+                ? selectedProduct?.lastPurchaseCost ?? 0
+                : current.unitCost,
+        expiryDate:
+            selectionChanged
+                ? _defaultExpiryDate(selectedProduct?.nextExpiryDate)
+                : current.expiryDate,
+      ),
+    );
+  }
+
+  void _handlePriceHistoryUpdate(List<PriceHistoryEntry> entries) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(priceHistory: entries));
+  }
+
+  void _handlePurchasesUpdate(List<Purchase> purchases) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(purchases: purchases));
+  }
+
+  void _handleMovementsUpdate(List<InventoryMovement> movements) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(movements: movements));
+  }
+}
+
+String? _resolveSelectedProductId({
+  required List<Product> products,
+  required String? requestedProductId,
+}) {
+  if (requestedProductId != null &&
+      products.any((product) => product.id == requestedProductId)) {
+    return requestedProductId;
+  }
+  if (products.isEmpty) {
+    return null;
+  }
+  return products.first.id;
+}
+
+Product? _findProductByIdInList(List<Product> products, String productId) {
+  for (final product in products) {
+    if (product.id == productId) {
+      return product;
+    }
+  }
+
+  return null;
 }
 
 String _normalizeProductType(String? rawType) {

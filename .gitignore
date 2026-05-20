@@ -53,3 +53,4 @@ linux/
 macos/
 
 supabase/migrations/
+supabase/olds

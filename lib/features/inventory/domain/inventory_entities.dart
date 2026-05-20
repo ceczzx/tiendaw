@@ -11,6 +11,7 @@ class InventoryMovement {
     required this.toLocation,
     required this.actorName,
     required this.occurredAt,
+    this.notes,
   });
 
   final String id;
@@ -24,6 +25,7 @@ class InventoryMovement {
   final String toLocation;
   final String actorName;
   final DateTime occurredAt;
+  final String? notes;
 }
 
 class WarehouseSupplierLot {
@@ -44,4 +46,50 @@ class WarehouseSupplierLot {
   final DateTime receivedAt;
   final int availableUnits;
   final DateTime? expiryDate;
+}
+
+enum InventoryLotAlertStatus { expiring, expired }
+
+class InventoryLotAlert {
+  const InventoryLotAlert({
+    required this.purchaseItemId,
+    required this.productId,
+    required this.productName,
+    this.supplierId,
+    required this.supplierName,
+    required this.receivedAt,
+    required this.expiryDate,
+    required this.availableUnits,
+  });
+
+  final String purchaseItemId;
+  final String productId;
+  final String productName;
+  final String? supplierId;
+  final String supplierName;
+  final DateTime receivedAt;
+  final DateTime expiryDate;
+  final int availableUnits;
+
+  InventoryLotAlertStatus statusAt(DateTime today) {
+    final normalizedToday = DateTime(today.year, today.month, today.day);
+    final normalizedExpiry = DateTime(
+      expiryDate.year,
+      expiryDate.month,
+      expiryDate.day,
+    );
+    return normalizedExpiry.isBefore(normalizedToday)
+        ? InventoryLotAlertStatus.expired
+        : InventoryLotAlertStatus.expiring;
+  }
+
+  int remainingDaysFrom(DateTime today) {
+    final normalizedToday = DateTime(today.year, today.month, today.day);
+    final normalizedExpiry = DateTime(
+      expiryDate.year,
+      expiryDate.month,
+      expiryDate.day,
+    );
+    return normalizedExpiry.difference(normalizedToday).inDays;
+  }
 }

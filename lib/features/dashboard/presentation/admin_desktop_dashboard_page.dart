@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tiendaw/core/utils/formatters.dart';
 import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
+import 'package:tiendaw/features/catalog/domain/product_pricing_rules.dart';
 import 'package:tiendaw/features/dashboard/presentation/admin_desktop_dashboard_view_model.dart';
 import 'package:tiendaw/features/inventory/domain/inventory_entities.dart';
+import 'package:tiendaw/features/purchases/presentation/admin_mobile_dashboard_page.dart';
 import 'package:tiendaw/features/purchases/domain/purchase_entities.dart';
 import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 import 'package:tiendaw/shared/widgets/system_w_widgets.dart';
 
-enum AdminDesktopSection { sales, purchases, products, movements }
+enum AdminDesktopSection { sales, purchases, products, movements, operations }
 
 class AdminDesktopDashboardPage extends ConsumerWidget {
   const AdminDesktopDashboardPage({required this.activeSection, super.key});
@@ -17,6 +19,10 @@ class AdminDesktopDashboardPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (activeSection == AdminDesktopSection.operations) {
+      return const AdminMobileDashboardPage();
+    }
+
     final dashboard = ref.watch(adminDesktopDashboardViewModelProvider);
 
     return dashboard.when(
@@ -77,6 +83,7 @@ class _DesktopSectionContent extends ConsumerWidget {
                 .read(adminDesktopDashboardViewModelProvider.notifier)
                 .setPeriod(value),
       ),
+      AdminDesktopSection.operations => const AdminMobileDashboardPage(),
     };
   }
 }
@@ -260,30 +267,28 @@ class _SalesSectionState extends State<_SalesSection> {
                 'Sync',
               ],
               rows:
-                  salesRows
-                      .map((sale) {
-                        final groupedItems = _groupSaleItems(sale);
-                        return _DesktopTableRow(
-                          cells: [
-                            Text(
-                              SystemWFormatters.shortDateTime.format(
-                                sale.createdAt,
-                              ),
-                            ),
-                            Text(sale.sellerName),
-                            Text(_paymentMethodLabel(sale.paymentMethod)),
-                            Text('${groupedItems.length}'),
-                            _SaleItemsCell(
-                              items: groupedItems,
-                              productById: productById,
-                              categoryById: categoryById,
-                            ),
-                            Text(SystemWFormatters.currency.format(sale.total)),
-                            Text(sale.syncStatus.name),
-                          ],
-                        );
-                      })
-                      .toList(),
+                  salesRows.map((sale) {
+                    final groupedItems = _groupSaleItems(sale);
+                    return _DesktopTableRow(
+                      cells: [
+                        Text(
+                          SystemWFormatters.shortDateTime.format(
+                            sale.createdAt,
+                          ),
+                        ),
+                        Text(sale.sellerName),
+                        Text(_paymentMethodLabel(sale.paymentMethod)),
+                        Text('${groupedItems.length}'),
+                        _SaleItemsCell(
+                          items: groupedItems,
+                          productById: productById,
+                          categoryById: categoryById,
+                        ),
+                        Text(SystemWFormatters.currency.format(sale.total)),
+                        Text(sale.syncStatus.name),
+                      ],
+                    );
+                  }).toList(),
               emptyTitle:
                   selectedShift == null
                       ? 'Sin tickets en este rango'
@@ -350,8 +355,8 @@ class _PurchasesSection extends StatelessWidget {
                 'Proveedor',
                 'Relacion',
                 'Productos',
-                'Costo u.',
-                'Venta u.',
+                'Estado compra',
+                'Costo / venta',
                 'Ganancia',
                 'Margen',
                 'Total',
@@ -363,6 +368,9 @@ class _PurchasesSection extends StatelessWidget {
                       .map(
                         (purchase) => _DesktopTableRow(
                           cells: _purchaseHistoryCells(state, purchase),
+                          onTap:
+                              () =>
+                                  _showPurchaseDetailDialog(context, purchase),
                         ),
                       )
                       .toList(),
@@ -380,6 +388,17 @@ class _PurchasesSection extends StatelessWidget {
     await showDialog<void>(
       context: context,
       builder: (context) => _PurchaseOverviewDialog(state: state),
+    );
+  }
+
+  Future<void> _showPurchaseDetailDialog(
+    BuildContext context,
+    Purchase purchase,
+  ) async {
+    await showDialog<void>(
+      context: context,
+      builder:
+          (context) => _PurchaseDetailDialog(state: state, purchase: purchase),
     );
   }
 }
@@ -501,7 +520,6 @@ class _MovementsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final alertProducts = _collectAlertProducts(state);
     final supplierMovementSummaries = _buildMovementSupplierSummaries(state);
 
     return SingleChildScrollView(
@@ -528,14 +546,14 @@ class _MovementsSection extends StatelessWidget {
                 label: 'Movimientos del periodo | TIPO',
                 value: '${state.filteredMovements.length}',
                 detail:
-                    'Compra ${state.purchaseMovementCount} | Venta ${state.saleMovementCount} | Transfer ${state.transferMovementCount}',
+                    'Compra ${state.purchaseMovementCount} | Venta ${state.saleMovementCount} | Transfer ${state.transferMovementCount} | Perdida ${state.lossMovementCount}',
                 accent: const Color(0xFF0F766E),
               ),
               MetricCard(
                 label: 'Unidades movidas | CANTIDAD',
                 value: '${state.movementUnitsTotal}',
                 detail:
-                    'Compra ${state.purchaseMovementUnits} u. | Venta ${state.saleMovementUnits} u. | Transfer ${state.transferMovementUnits} u.',
+                    'Compra ${state.purchaseMovementUnits} u. | Venta ${state.saleMovementUnits} u. | Transfer ${state.transferMovementUnits} u. | Perdida ${state.lossMovementUnits} u.',
                 accent: const Color(0xFFEA580C),
               ),
               MetricCard(
@@ -586,40 +604,42 @@ class _MovementsSection extends StatelessWidget {
           SectionCard(
             title: 'Alertas',
             subtitle:
-                'Stock de tienda y almacen junto al motivo de alerta para reaccion rapida.',
+                'Lotes vigentes por proveedor con cantidad real disponible y vencimiento proximo.',
             child: _DesktopTable(
               columns: const [
                 'Producto',
+                'Proveedor',
                 'Alerta',
-                'Tienda',
-                'Almacen',
-                'Umbral',
+                'Cant. alerta',
+                'Ubicacion',
                 'Vence',
               ],
               rows:
-                  alertProducts
+                  state.expiringLotAlerts
                       .map(
-                        (product) => _DesktopTableRow(
+                        (alert) => _DesktopTableRow(
                           cells: [
-                            Text(product.name),
-                            Text(_alertReasonLabel(state, product)),
-                            Text('${product.stockStore} u.'),
-                            Text('${product.stockWarehouse} u.'),
-                            Text('${product.lowStockThreshold} u.'),
+                            Text(alert.productName),
+                            Text(alert.supplierName),
                             Text(
-                              product.nextExpiryDate == null
-                                  ? '-'
-                                  : SystemWFormatters.shortDate.format(
-                                    product.nextExpiryDate!,
-                                  ),
+                              alert.remainingDaysFrom(DateTime.now()) < 0
+                                  ? 'Vencido'
+                                  : 'Vence pronto',
+                            ),
+                            Text('${alert.availableUnits} u.'),
+                            Text(_lotAlertLocationLabel(alert)),
+                            Text(
+                              SystemWFormatters.shortDate.format(
+                                alert.expiryDate,
+                              ),
                             ),
                           ],
                         ),
                       )
                       .toList(),
-              emptyTitle: 'Sin alertas criticas',
+              emptyTitle: 'Sin alertas de lotes',
               emptyCaption:
-                  'No hay productos por vencer ni niveles de stock comprometidos.',
+                  'No hay lotes disponibles con vencimiento cercano.',
             ),
           ),
           const SizedBox(height: 20),
@@ -757,10 +777,7 @@ class _SectionToolbar extends StatelessWidget {
 }
 
 class _PeriodSelector extends StatelessWidget {
-  const _PeriodSelector({
-    required this.period,
-    required this.onPeriodChanged,
-  });
+  const _PeriodSelector({required this.period, required this.onPeriodChanged});
 
   final DateTimeRange period;
   final ValueChanged<DateTimeRange> onPeriodChanged;
@@ -833,16 +850,14 @@ class _MetricRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 200,
-      child: Row(
-        children: [
-          for (var i = 0; i < children.length; i++) ...[
-            if (i > 0) const SizedBox(width: 14),
-            Expanded(child: children[i]),
-          ],
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < children.length; i++) ...[
+          if (i > 0) const SizedBox(width: 14),
+          Expanded(child: children[i]),
         ],
-      ),
+      ],
     );
   }
 }
@@ -968,6 +983,40 @@ class _DesktopTableState extends State<_DesktopTable> {
   }
 }
 
+class _DetailSummaryRow extends StatelessWidget {
+  const _DetailSummaryRow({
+    required this.label,
+    required this.value,
+    this.isStrong = false,
+  });
+
+  final String label;
+  final String value;
+  final bool isStrong;
+
+  @override
+  Widget build(BuildContext context) {
+    final style =
+        isStrong
+            ? Theme.of(context).textTheme.titleMedium
+            : Theme.of(context).textTheme.bodyLarge;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: Text(label, style: style)),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(value, style: style, textAlign: TextAlign.right),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _DetailDialogShell extends StatelessWidget {
   const _DetailDialogShell({
     required this.title,
@@ -1019,6 +1068,216 @@ class _DetailDialogShell extends StatelessWidget {
               Expanded(child: child),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PurchaseDetailDialog extends StatelessWidget {
+  const _PurchaseDetailDialog({required this.state, required this.purchase});
+
+  final AdminDesktopDashboardState state;
+  final Purchase purchase;
+
+  @override
+  Widget build(BuildContext context) {
+    final supplierPurchases =
+        _purchasesForSameSupplier(state, purchase)
+          ..sort((a, b) => b.receivedAt.compareTo(a.receivedAt));
+    final analytics = _buildPurchaseAnalytics(state, purchase);
+    final supplierTotal = supplierPurchases.fold<double>(
+      0,
+      (sum, item) => sum + item.total,
+    );
+    final productById = {
+      for (final product in state.products) product.id: product,
+    };
+
+    return _DetailDialogShell(
+      title: 'Detalle de compra',
+      subtitle:
+          'Compra registrada el ${SystemWFormatters.shortDateTime.format(purchase.receivedAt)} con historial separado por proveedor y detalle producto por producto.',
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 16,
+              runSpacing: 16,
+              children: [
+                MetricCard(
+                  label: 'Proveedor',
+                  value:
+                      purchase.supplier.trim().isEmpty
+                          ? 'Produccion artesanal'
+                          : purchase.supplier,
+                  detail:
+                      purchase.supplierPhone?.trim().isNotEmpty == true
+                          ? purchase.supplierPhone!
+                          : 'Sin telefono',
+                  accent: const Color(0xFF0F766E),
+                ),
+                MetricCard(
+                  label: 'Total compra',
+                  value: SystemWFormatters.currency.format(purchase.total),
+                  detail: analytics.relationshipLabel,
+                  accent: const Color(0xFFEA580C),
+                ),
+                MetricCard(
+                  label: 'Historial proveedor',
+                  value: '${supplierPurchases.length} compras',
+                  detail: SystemWFormatters.currency.format(supplierTotal),
+                  accent: const Color(0xFF2563EB),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            SectionCard(
+              title: 'Cabecera',
+              subtitle:
+                  'Resumen directo de la compra seleccionada con usuario, sincronizacion y rentabilidad proyectada.',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _DetailSummaryRow(
+                    label: 'Registrado por',
+                    value: purchase.registeredBy,
+                  ),
+                  _DetailSummaryRow(
+                    label: 'Fecha',
+                    value: SystemWFormatters.shortDateTime.format(
+                      purchase.receivedAt,
+                    ),
+                  ),
+                  _DetailSummaryRow(
+                    label: 'Estado compra',
+                    value: analytics.purchaseModeLabel,
+                  ),
+                  _DetailSummaryRow(
+                    label: 'Referencia comercial',
+                    value:
+                        analytics.canSummarizeCommercialMetrics
+                            ? '${SystemWFormatters.currency.format(analytics.referenceUnitCost)} costo | ${SystemWFormatters.currency.format(analytics.referenceSalePrice)} venta'
+                            : 'Compra mixta: revisar lineas individuales',
+                  ),
+                  _DetailSummaryRow(
+                    label: 'Ganancia proyectada',
+                    value:
+                        analytics.canSummarizeCommercialMetrics
+                            ? '${SystemWFormatters.currency.format(analytics.projectedProfit)} | ${analytics.projectedMargin.toStringAsFixed(1)}%'
+                            : 'No aplica a compras mixtas',
+                  ),
+                  _DetailSummaryRow(
+                    label: 'Sync',
+                    value: purchase.syncStatus.name,
+                    isStrong: true,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            SectionCard(
+              title: 'Lineas compradas',
+              subtitle:
+                  'Detalle producto por producto con conversion a unidades y vencimiento asociado.',
+              child: _DesktopTable(
+                columns: const [
+                  'Producto',
+                  'Tipo',
+                  'Cantidad',
+                  'Unidades',
+                  'Costo u.',
+                  'Subtotal',
+                  'Vence',
+                ],
+                rows:
+                    purchase.items
+                        .map(
+                          (item) {
+                            final product = productById[item.productId];
+                            return _DesktopTableRow(
+                              cells: [
+                                Text(item.productName),
+                                Text(product?.productType ?? 'Sin tipo'),
+                                Text(
+                                  '${item.quantity} x ${item.unitsPerPackage}',
+                                ),
+                                Text('${item.totalUnits} u.'),
+                                Text(
+                                  SystemWFormatters.currency.format(
+                                    item.unitCost,
+                                  ),
+                                ),
+                                Text(
+                                  SystemWFormatters.currency.format(
+                                    item.subtotal,
+                                  ),
+                                ),
+                                Text(
+                                  item.expiryDate == null
+                                      ? 'Sin fecha'
+                                      : SystemWFormatters.shortDate.format(
+                                        item.expiryDate!,
+                                      ),
+                                ),
+                              ],
+                            );
+                          },
+                        )
+                        .toList(),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SectionCard(
+              title: 'Compras a este proveedor',
+              subtitle:
+                  'Cada compra queda separada para ver cantidades, productos y total sin mezclar registros distintos.',
+              child: _DesktopTable(
+                columns: const [
+                  'Fecha',
+                  'Productos',
+                  'Estado',
+                  'Total',
+                  'Registrado por',
+                  'Detalle',
+                ],
+                rows:
+                    supplierPurchases
+                        .map(
+                          (item) => _DesktopTableRow(
+                            isSelected: item.id == purchase.id,
+                            cells: [
+                              Text(
+                                SystemWFormatters.shortDateTime.format(
+                                  item.receivedAt,
+                                ),
+                              ),
+                              SizedBox(
+                                width: 280,
+                                child: Text(_purchaseItemsBreakdownLabel(item)),
+                              ),
+                              Text(_buildPurchaseAnalytics(state, item).purchaseModeLabel),
+                              Text(
+                                SystemWFormatters.currency.format(item.total),
+                              ),
+                              Text(item.registeredBy),
+                              SizedBox(
+                                width: 220,
+                                child: Text(
+                                  _buildPurchaseAnalytics(
+                                    state,
+                                    item,
+                                  ).relationshipLabel,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                        .toList(),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1360,17 +1619,21 @@ class _SupplierSummary {
 class _PurchaseAnalytics {
   const _PurchaseAnalytics({
     required this.relationshipLabel,
-    required this.averageUnitCost,
-    required this.averageSalePrice,
+    required this.purchaseModeLabel,
+    required this.referenceUnitCost,
+    required this.referenceSalePrice,
     required this.projectedProfit,
     required this.projectedMargin,
+    required this.canSummarizeCommercialMetrics,
   });
 
   final String relationshipLabel;
-  final double averageUnitCost;
-  final double averageSalePrice;
+  final String purchaseModeLabel;
+  final double referenceUnitCost;
+  final double referenceSalePrice;
   final double projectedProfit;
   final double projectedMargin;
+  final bool canSummarizeCommercialMetrics;
 }
 
 class _MovementSupplierSummary {
@@ -1394,25 +1657,13 @@ class _SaleItemSummary {
     required this.productId,
     required this.productName,
     required this.quantity,
+    required this.isIced,
   });
 
   final String productId;
   final String productName;
   final num quantity;
-}
-
-class _PurchaseItemSummary {
-  const _PurchaseItemSummary({
-    required this.productName,
-    required this.quantity,
-    required this.unitsPerPackage,
-    required this.totalUnits,
-  });
-
-  final String productName;
-  final int quantity;
-  final int unitsPerPackage;
-  final int totalUnits;
+  final bool isIced;
 }
 
 class _SaleItemsCell extends StatelessWidget {
@@ -1435,7 +1686,8 @@ class _SaleItemsCell extends StatelessWidget {
               product == null
                   ? 'Sin categoria'
                   : categoryById[product.categoryId] ?? 'Sin categoria';
-          return '${item.quantity} x ${item.productName} | $categoryName';
+          final stockState = item.isIced ? 'Helada' : 'Normal';
+          return '${item.quantity} x ${item.productName} | $categoryName | $stockState';
         }).toList();
 
     return SizedBox(
@@ -1452,7 +1704,7 @@ class _SaleItemsCell extends StatelessWidget {
 class _PurchaseItemsCell extends StatelessWidget {
   const _PurchaseItemsCell({required this.items});
 
-  final List<_PurchaseItemSummary> items;
+  final List<PurchaseLine> items;
 
   @override
   Widget build(BuildContext context) {
@@ -1479,50 +1731,59 @@ List<_SaleItemSummary> _groupSaleItems(Sale sale) {
   final grouped = <String, _SaleItemSummary>{};
 
   for (final item in sale.items) {
-    final existing = grouped[item.productId];
+    final key =
+        '${item.productId}::${item.isIced ? 'iced' : 'regular'}::${item.unitPrice.toStringAsFixed(2)}';
+    final existing = grouped[key];
     if (existing == null) {
-      grouped[item.productId] = _SaleItemSummary(
+      grouped[key] = _SaleItemSummary(
         productId: item.productId,
-        productName: item.productName,
+        productName:
+            item.isIced ? '${item.productName} (helada)' : item.productName,
         quantity: item.quantity,
+        isIced: item.isIced,
       );
       continue;
     }
-    grouped[item.productId] = _SaleItemSummary(
+    grouped[key] = _SaleItemSummary(
       productId: item.productId,
       productName: existing.productName,
       quantity: existing.quantity + item.quantity,
+      isIced: existing.isIced,
     );
   }
 
   return grouped.values.toList();
 }
 
-List<_PurchaseItemSummary> _groupPurchaseItems(Purchase purchase) {
-  final grouped = <String, _PurchaseItemSummary>{};
+String _purchaseItemsBreakdownLabel(Purchase purchase) {
+  return purchase.items
+      .map(
+        (item) =>
+            '${item.productName}: ${item.quantity} x ${item.unitsPerPackage} = ${item.totalUnits} u.',
+      )
+      .join('\n');
+}
 
-  for (final item in purchase.items) {
-    final key = '${item.productId}::${item.unitsPerPackage}';
-    final existing = grouped[key];
-    if (existing == null) {
-      grouped[key] = _PurchaseItemSummary(
-        productName: item.productName,
-        quantity: item.quantity,
-        unitsPerPackage: item.unitsPerPackage,
-        totalUnits: item.totalUnits,
-      );
-      continue;
-    }
+List<Purchase> _purchasesForSameSupplier(
+  AdminDesktopDashboardState state,
+  Purchase referencePurchase,
+) {
+  return state.filteredPurchases.where((purchase) {
+    return _sameSupplierIdentity(purchase, referencePurchase);
+  }).toList();
+}
 
-    grouped[key] = _PurchaseItemSummary(
-      productName: existing.productName,
-      quantity: existing.quantity + item.quantity,
-      unitsPerPackage: existing.unitsPerPackage,
-      totalUnits: existing.totalUnits + item.totalUnits,
-    );
+bool _sameSupplierIdentity(Purchase left, Purchase right) {
+  final leftSupplierId = left.supplierId?.trim();
+  final rightSupplierId = right.supplierId?.trim();
+  if (leftSupplierId != null &&
+      leftSupplierId.isNotEmpty &&
+      rightSupplierId != null &&
+      rightSupplierId.isNotEmpty) {
+    return leftSupplierId == rightSupplierId;
   }
 
-  return grouped.values.toList();
+  return left.supplier.trim().toLowerCase() == right.supplier.trim().toLowerCase();
 }
 
 class _ProductNameCell extends StatelessWidget {
@@ -1548,6 +1809,15 @@ class _ProductNameCell extends StatelessWidget {
               context,
             ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6B7280)),
           ),
+          if (hasActivePromotion(snapshot.product)) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Promo activa',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: const Color(0xFFEA580C)),
+            ),
+          ],
         ],
       ),
     );
@@ -1757,6 +2027,15 @@ class _ProductPricingCell extends StatelessWidget {
               context,
             ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6B7280)),
           ),
+          if (hasActivePromotion(snapshot.product)) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Promo ${SystemWFormatters.currency.format(snapshot.product.promotionalPrice ?? snapshot.product.salePrice)}',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: const Color(0xFFEA580C)),
+            ),
+          ],
         ],
       ),
     );
@@ -1906,15 +2185,21 @@ _PurchaseAnalytics _buildPurchaseAnalytics(
     for (final category in state.categories) category.id: category.name,
   };
   final categoryNames = <String>{};
+  final uniqueProductIds = <String>{};
   var totalUnits = 0;
   var projectedRevenue = 0.0;
+  double? referenceUnitCost;
+  double? referenceSalePrice;
 
   for (final item in purchase.items) {
     totalUnits += item.totalUnits;
+    uniqueProductIds.add(item.productId);
 
     final product = productById[item.productId];
     final salePrice = product?.salePrice ?? 0;
     projectedRevenue += item.totalUnits * salePrice;
+    referenceUnitCost ??= item.unitCost;
+    referenceSalePrice ??= salePrice;
 
     final categoryId = product?.categoryId;
     final categoryName = categoryId == null ? null : categoryById[categoryId];
@@ -1923,9 +2208,7 @@ _PurchaseAnalytics _buildPurchaseAnalytics(
     }
   }
 
-  final averageUnitCost = totalUnits <= 0 ? 0.0 : purchase.total / totalUnits;
-  final averageSalePrice =
-      totalUnits <= 0 ? 0.0 : projectedRevenue / totalUnits;
+  final canSummarizeCommercialMetrics = uniqueProductIds.length <= 1;
   final projectedProfit = projectedRevenue - purchase.total;
   final projectedMargin =
       projectedRevenue <= 0 ? 0.0 : (projectedProfit / projectedRevenue) * 100;
@@ -1938,10 +2221,16 @@ _PurchaseAnalytics _buildPurchaseAnalytics(
 
   return _PurchaseAnalytics(
     relationshipLabel: '$supplierLabel -> $categoriesLabel',
-    averageUnitCost: averageUnitCost,
-    averageSalePrice: averageSalePrice,
-    projectedProfit: projectedProfit,
-    projectedMargin: projectedMargin,
+    purchaseModeLabel:
+        canSummarizeCommercialMetrics
+            ? 'Compra simple'
+            : 'Compra mixta (${uniqueProductIds.length} productos)',
+    referenceUnitCost: canSummarizeCommercialMetrics ? referenceUnitCost ?? 0 : 0,
+    referenceSalePrice:
+        canSummarizeCommercialMetrics ? referenceSalePrice ?? 0 : 0,
+    projectedProfit: canSummarizeCommercialMetrics ? projectedProfit : 0,
+    projectedMargin: canSummarizeCommercialMetrics ? projectedMargin : 0,
+    canSummarizeCommercialMetrics: canSummarizeCommercialMetrics,
   );
 }
 
@@ -1950,7 +2239,6 @@ List<Widget> _purchaseHistoryCells(
   Purchase purchase,
 ) {
   final analytics = _buildPurchaseAnalytics(state, purchase);
-  final groupedItems = _groupPurchaseItems(purchase);
 
   return [
     Text(SystemWFormatters.shortDateTime.format(purchase.receivedAt)),
@@ -1970,11 +2258,23 @@ List<Widget> _purchaseHistoryCells(
         overflow: TextOverflow.ellipsis,
       ),
     ),
-    _PurchaseItemsCell(items: groupedItems),
-    Text(SystemWFormatters.currency.format(analytics.averageUnitCost)),
-    Text(SystemWFormatters.currency.format(analytics.averageSalePrice)),
-    Text(SystemWFormatters.currency.format(analytics.projectedProfit)),
-    Text('${analytics.projectedMargin.toStringAsFixed(1)}%'),
+    _PurchaseItemsCell(items: purchase.items),
+    Text(analytics.purchaseModeLabel),
+    Text(
+      analytics.canSummarizeCommercialMetrics
+          ? '${SystemWFormatters.currency.format(analytics.referenceUnitCost)} / ${SystemWFormatters.currency.format(analytics.referenceSalePrice)}'
+          : 'Mixta',
+    ),
+    Text(
+      analytics.canSummarizeCommercialMetrics
+          ? SystemWFormatters.currency.format(analytics.projectedProfit)
+          : 'No aplica',
+    ),
+    Text(
+      analytics.canSummarizeCommercialMetrics
+          ? '${analytics.projectedMargin.toStringAsFixed(1)}%'
+          : 'No aplica',
+    ),
     Text(SystemWFormatters.currency.format(purchase.total)),
     Text(purchase.registeredBy),
     Text(purchase.syncStatus.name),
@@ -2181,6 +2481,9 @@ String _packageQuantityLabel(Product product, int stockUnits) {
 }
 
 String _movementTypeLabel(InventoryMovement movement) {
+  if (movement.type.toLowerCase() == 'loss') {
+    return 'Perdida';
+  }
   final fromLocation = movement.fromLocation.toLowerCase();
   final toLocation = movement.toLocation.toLowerCase();
   if (fromLocation.contains('sin origen')) {
@@ -2200,6 +2503,9 @@ String _movementOriginLabel(InventoryMovement movement) {
 }
 
 String _movementDestinationLabel(InventoryMovement movement) {
+  if (movement.type.toLowerCase() == 'loss') {
+    return 'Perdida';
+  }
   if (movement.toLocation.toLowerCase().contains('sin destino')) {
     return 'Venta';
   }
@@ -2215,8 +2521,16 @@ String _movementSupplierLabel(InventoryMovement movement) {
   return switch (_movementTypeLabel(movement)) {
     'Compra' => 'Sin proveedor',
     'Transferencia' => 'Sin proveedor',
-    _ => 'No aplica',
+    'Perdida' => 'Sin proveedor',
+      _ => 'No aplica',
   };
+}
+
+String _lotAlertLocationLabel(InventoryLotAlert alert) {
+  if (alert.availableUnits <= 0) {
+    return 'Sin stock';
+  }
+  return 'Almacen';
 }
 
 bool _isWarehouseToStoreTransfer(InventoryMovement movement) {
@@ -2228,7 +2542,9 @@ bool _isWarehouseToStoreTransfer(InventoryMovement movement) {
 DateTimeRange _currentWeekRange() {
   final now = DateTime.now();
   final today = DateTime(now.year, now.month, now.day);
-  final monday = today.subtract(Duration(days: today.weekday - DateTime.monday));
+  final monday = today.subtract(
+    Duration(days: today.weekday - DateTime.monday),
+  );
   final sunday = monday.add(const Duration(days: 6));
   return DateTimeRange(start: monday, end: sunday);
 }

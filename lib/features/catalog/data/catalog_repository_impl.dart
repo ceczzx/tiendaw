@@ -84,6 +84,63 @@ class CatalogRepositoryImpl implements CatalogRepository {
   }
 
   @override
+  Future<List<InventoryLotAlert>> getInventoryLotAlerts({
+    int daysAhead = 14,
+    bool expiredOnly = false,
+  }) async {
+    try {
+      final alerts = await _remote.getInventoryLotAlerts(
+        daysAhead: daysAhead,
+        expiredOnly: expiredOnly,
+      );
+      await _local.saveInventoryLotAlerts(
+        daysAhead: daysAhead,
+        expiredOnly: expiredOnly,
+        alerts: alerts,
+      );
+      return alerts;
+    } catch (_) {
+      final cached = await _local.getInventoryLotAlerts(
+        daysAhead: daysAhead,
+        expiredOnly: expiredOnly,
+      );
+      if (cached.isEmpty) {
+        rethrow;
+      }
+      return cached;
+    }
+  }
+
+  @override
+  Stream<List<InventoryLotAlert>> watchInventoryLotAlerts({
+    int daysAhead = 14,
+    bool expiredOnly = false,
+  }) async* {
+    try {
+      await for (final alerts in _remote.watchInventoryLotAlerts(
+        daysAhead: daysAhead,
+        expiredOnly: expiredOnly,
+      )) {
+        await _local.saveInventoryLotAlerts(
+          daysAhead: daysAhead,
+          expiredOnly: expiredOnly,
+          alerts: alerts,
+        );
+        yield alerts;
+      }
+    } catch (_) {
+      final cached = await _local.getInventoryLotAlerts(
+        daysAhead: daysAhead,
+        expiredOnly: expiredOnly,
+      );
+      if (cached.isNotEmpty) {
+        yield cached;
+      }
+      rethrow;
+    }
+  }
+
+  @override
   Future<List<WarehouseSupplierLot>> getWarehouseSupplierLots({
     required String productId,
     String? supplierId,
@@ -174,6 +231,134 @@ class CatalogRepositoryImpl implements CatalogRepository {
   }
 
   @override
+  Future<List<PromotableLot>> getPromotableLots({
+    int daysAhead = 14,
+    bool expiredOnly = false,
+  }) async {
+    try {
+      final lots = await _remote.getPromotableLots(
+        daysAhead: daysAhead,
+        expiredOnly: expiredOnly,
+      );
+      await _local.savePromotableLots(
+        daysAhead: daysAhead,
+        expiredOnly: expiredOnly,
+        lots: lots,
+      );
+      return lots;
+    } catch (_) {
+      final cached = await _local.getPromotableLots(
+        daysAhead: daysAhead,
+        expiredOnly: expiredOnly,
+      );
+      if (cached.isEmpty) {
+        rethrow;
+      }
+      return cached;
+    }
+  }
+
+  @override
+  Stream<List<PromotableLot>> watchPromotableLots({
+    int daysAhead = 14,
+    bool expiredOnly = false,
+  }) async* {
+    try {
+      await for (final lots in _remote.watchPromotableLots(
+        daysAhead: daysAhead,
+        expiredOnly: expiredOnly,
+      )) {
+        await _local.savePromotableLots(
+          daysAhead: daysAhead,
+          expiredOnly: expiredOnly,
+          lots: lots,
+        );
+        yield lots;
+      }
+    } catch (_) {
+      final cached = await _local.getPromotableLots(
+        daysAhead: daysAhead,
+        expiredOnly: expiredOnly,
+      );
+      if (cached.isNotEmpty) {
+        yield cached;
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<LotPromotion>> getActiveLotPromotions() async {
+    try {
+      final promotions = await _remote.getActiveLotPromotions();
+      await _local.saveActiveLotPromotions(promotions);
+      return promotions;
+    } catch (_) {
+      final cached = await _local.getActiveLotPromotions();
+      if (cached.isEmpty) {
+        rethrow;
+      }
+      return cached;
+    }
+  }
+
+  @override
+  Stream<List<LotPromotion>> watchActiveLotPromotions() async* {
+    try {
+      await for (final promotions in _remote.watchActiveLotPromotions()) {
+        await _local.saveActiveLotPromotions(promotions);
+        yield promotions;
+      }
+    } catch (_) {
+      final cached = await _local.getActiveLotPromotions();
+      if (cached.isNotEmpty) {
+        yield cached;
+      }
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<PromotionNotice>> getPromotionNotices({
+    bool openOnly = true,
+  }) async {
+    try {
+      final notices = await _remote.getPromotionNotices(openOnly: openOnly);
+      await _local.savePromotionNotices(openOnly: openOnly, notices: notices);
+      return notices;
+    } catch (_) {
+      final cached = await _local.getPromotionNotices(openOnly: openOnly);
+      if (cached.isEmpty) {
+        rethrow;
+      }
+      return cached;
+    }
+  }
+
+  @override
+  Stream<List<PromotionNotice>> watchPromotionNotices({
+    bool openOnly = true,
+  }) async* {
+    try {
+      await for (final notices in _remote.watchPromotionNotices(
+        openOnly: openOnly,
+      )) {
+        await _local.savePromotionNotices(
+          openOnly: openOnly,
+          notices: notices,
+        );
+        yield notices;
+      }
+    } catch (_) {
+      final cached = await _local.getPromotionNotices(openOnly: openOnly);
+      if (cached.isNotEmpty) {
+        yield cached;
+      }
+      rethrow;
+    }
+  }
+
+  @override
   Future<Product> ensureProduct({
     required String categoryId,
     required String name,
@@ -234,6 +419,52 @@ class CatalogRepositoryImpl implements CatalogRepository {
       lastPurchaseCost: lastPurchaseCost,
       unitsPerPackage: unitsPerPackage,
       costDetails: costDetails,
+    );
+  }
+
+  @override
+  Future<void> activateLotPromotion({
+    required String purchaseItemId,
+    required int promotionalQuantity,
+    required double promotionalPrice,
+    String? promotionNote,
+  }) {
+    return _remote.activateLotPromotion(
+      purchaseItemId: purchaseItemId,
+      promotionalQuantity: promotionalQuantity,
+      promotionalPrice: promotionalPrice,
+      promotionNote: promotionNote,
+    );
+  }
+
+  @override
+  Future<void> updateProductColdState({
+    required String productId,
+    required int coldStockUnits,
+    required double coldPriceIncrement,
+  }) {
+    return _remote.updateProductColdState(
+      productId: productId,
+      coldStockUnits: coldStockUnits,
+      coldPriceIncrement: coldPriceIncrement,
+    );
+  }
+
+  @override
+  Future<void> cancelLotPromotion({required String promotionId}) {
+    return _remote.cancelLotPromotion(promotionId: promotionId);
+  }
+
+  @override
+  Future<void> registerInventoryLoss({
+    required String purchaseItemId,
+    required int quantity,
+    String? notes,
+  }) {
+    return _remote.registerInventoryLoss(
+      purchaseItemId: purchaseItemId,
+      quantity: quantity,
+      notes: notes,
     );
   }
 

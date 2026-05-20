@@ -10,14 +10,42 @@ import 'package:tiendaw/core/utils/formatters.dart';
 import 'package:tiendaw/features/auth/domain/app_user.dart';
 import 'package:tiendaw/features/auth/presentation/session_view_model.dart';
 import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
+import 'package:tiendaw/features/catalog/domain/product_pricing_rules.dart';
 import 'package:tiendaw/features/inventory/domain/inventory_entities.dart';
 import 'package:tiendaw/features/purchases/domain/purchase_entities.dart';
 import 'package:tiendaw/features/purchases/presentation/admin_mobile_dashboard_view_model.dart';
 import 'package:tiendaw/shared/widgets/system_w_widgets.dart';
 
-enum _AdminMobileSection { home, purchases, suppliers, movements }
+enum _AdminMobileSection {
+  home,
+  purchases,
+  suppliers,
+  promotions,
+  losses,
+  movements,
+}
 
 typedef _PurchaseCartSubmit = Future<bool> Function();
+typedef _PromotionSubmit =
+    Future<bool> Function({
+      required String purchaseItemId,
+      required int promotionalQuantity,
+      required double promotionalPrice,
+      String? promotionNote,
+    });
+typedef _PromotionClearSubmit = Future<bool> Function(String promotionId);
+typedef _LossSubmit =
+    Future<bool> Function({
+      required String purchaseItemId,
+      required int quantity,
+      String? notes,
+    });
+typedef _ColdStateSubmit =
+    Future<bool> Function({
+      required String productId,
+      required int coldStockUnits,
+      required double coldPriceIncrement,
+    });
 
 final _warehouseSupplierLotsProvider = FutureProvider.autoDispose
     .family<List<WarehouseSupplierLot>, _SupplierLotQuery>((ref, query) async {
@@ -90,6 +118,15 @@ class _AdminMobileDashboardPageState
               Expanded(
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 220),
+                  layoutBuilder: (currentChild, previousChildren) {
+                    return Stack(
+                      alignment: Alignment.topCenter,
+                      children: [
+                        ...previousChildren,
+                        if (currentChild != null) currentChild,
+                      ],
+                    );
+                  },
                   child: KeyedSubtree(
                     key: ValueKey(_activeSection),
                     child: _buildSectionContent(state, currentUser),
@@ -97,35 +134,13 @@ class _AdminMobileDashboardPageState
                 ),
               ),
               const Divider(height: 1),
-              NavigationBar(
-                selectedIndex: _activeSection.index,
-                onDestinationSelected: (index) {
+              _AdminSectionStrip(
+                activeSection: _activeSection,
+                onSectionSelected: (section) {
                   setState(() {
-                    _activeSection = _AdminMobileSection.values[index];
+                    _activeSection = section;
                   });
                 },
-                destinations: const [
-                  NavigationDestination(
-                    icon: Icon(Icons.home_outlined),
-                    selectedIcon: Icon(Icons.home_rounded),
-                    label: 'Inicio',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.shopping_bag_outlined),
-                    selectedIcon: Icon(Icons.shopping_bag_rounded),
-                    label: 'Compras',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.local_shipping_outlined),
-                    selectedIcon: Icon(Icons.local_shipping_rounded),
-                    label: 'Proveedores',
-                  ),
-                  NavigationDestination(
-                    icon: Icon(Icons.swap_horiz_outlined),
-                    selectedIcon: Icon(Icons.swap_horiz_rounded),
-                    label: 'Movimientos',
-                  ),
-                ],
               ),
             ],
           ),
@@ -177,11 +192,23 @@ class _AdminMobileDashboardPageState
             currentUser == null ? null : _buildPurchaseCartSubmit(currentUser),
       ),
       _AdminMobileSection.suppliers => _SuppliersSection(state: state),
+      _AdminMobileSection.promotions => _PromotionsSection(
+        state: state,
+        isBusy: _isActionInProgress,
+        onUpdatePromotion: _handlePromotionUpdate,
+        onClearPromotion: _handlePromotionClear,
+      ),
+      _AdminMobileSection.losses => _LossesSection(
+        state: state,
+        isBusy: _isActionInProgress,
+        onRegisterLoss: _handleRegisterLoss,
+      ),
       _AdminMobileSection.movements => _MovementsSection(
         state: state,
         isBusy: _isActionInProgress,
         currentUser: currentUser,
         onTransfer: currentUser == null ? null : _handleTransfer,
+        onUpdateColdState: _handleColdStateUpdate,
       ),
     };
   }
@@ -222,6 +249,84 @@ class _AdminMobileDashboardPageState
         .transferToStore(supplierId: supplierId);
   }
 
+  Future<bool> _handlePromotionUpdate({
+    required String purchaseItemId,
+    required int promotionalQuantity,
+    required double promotionalPrice,
+    String? promotionNote,
+  }) async {
+    if (_isActionInProgress) {
+      return false;
+    }
+
+    setState(() {
+      _isActionInProgress = true;
+    });
+    return ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .activateLotPromotion(
+          purchaseItemId: purchaseItemId,
+          promotionalQuantity: promotionalQuantity,
+          promotionalPrice: promotionalPrice,
+          promotionNote: promotionNote,
+        );
+  }
+
+  Future<bool> _handlePromotionClear(String promotionId) async {
+    if (_isActionInProgress) {
+      return false;
+    }
+
+    setState(() {
+      _isActionInProgress = true;
+    });
+    return ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .cancelLotPromotion(promotionId);
+  }
+
+  Future<bool> _handleRegisterLoss({
+    required String purchaseItemId,
+    required int quantity,
+    String? notes,
+  }) async {
+    if (_isActionInProgress) {
+      return false;
+    }
+
+    setState(() {
+      _isActionInProgress = true;
+    });
+    return ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .registerInventoryLoss(
+          purchaseItemId: purchaseItemId,
+          quantity: quantity,
+          notes: notes,
+        );
+  }
+
+  Future<bool> _handleColdStateUpdate({
+    required String productId,
+    required int coldStockUnits,
+    required double coldPriceIncrement,
+  }) async {
+    if (_isActionInProgress) {
+      return false;
+    }
+
+    setState(() {
+      _isActionInProgress = true;
+    });
+    return ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .updateProductColdState(
+          productId: productId,
+          coldStockUnits: coldStockUnits,
+          coldPriceIncrement: coldPriceIncrement,
+        );
+  }
+
   _PurchaseCartSubmit _buildPurchaseCartSubmit(AppUser currentUser) {
     return () => _handlePurchaseCartSubmit(currentUser);
   }
@@ -260,6 +365,82 @@ class _AdminMobileDashboardPageState
         _isActionInProgress = false;
       });
     });
+  }
+}
+
+class _AdminSectionStrip extends StatelessWidget {
+  const _AdminSectionStrip({
+    required this.activeSection,
+    required this.onSectionSelected,
+  });
+
+  final _AdminMobileSection activeSection;
+  final ValueChanged<_AdminMobileSection> onSectionSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final items =
+        <({IconData icon, String label, _AdminMobileSection section})>[
+          (
+            icon: Icons.home_rounded,
+            label: 'Inicio',
+            section: _AdminMobileSection.home,
+          ),
+          (
+            icon: Icons.shopping_bag_rounded,
+            label: 'Compras',
+            section: _AdminMobileSection.purchases,
+          ),
+          (
+            icon: Icons.local_shipping_rounded,
+            label: 'Proveedores',
+            section: _AdminMobileSection.suppliers,
+          ),
+          (
+            icon: Icons.local_offer_rounded,
+            label: 'Promocion',
+            section: _AdminMobileSection.promotions,
+          ),
+          (
+            icon: Icons.inventory_2_rounded,
+            label: 'Perdidas',
+            section: _AdminMobileSection.losses,
+          ),
+          (
+            icon: Icons.swap_horiz_rounded,
+            label: 'Movimientos',
+            section: _AdminMobileSection.movements,
+          ),
+        ];
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      color: Colors.white,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children:
+              items.map((item) {
+                final selected = item.section == activeSection;
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    selected: selected,
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(item.icon, size: 18),
+                        const SizedBox(width: 6),
+                        Text(item.label),
+                      ],
+                    ),
+                    onSelected: (_) => onSectionSelected(item.section),
+                  ),
+                );
+              }).toList(),
+        ),
+      ),
+    );
   }
 }
 
@@ -871,18 +1052,613 @@ class _SuppliersSectionState extends State<_SuppliersSection> {
   }
 }
 
+class _PromotionsSection extends StatefulWidget {
+  const _PromotionsSection({
+    required this.state,
+    required this.isBusy,
+    required this.onUpdatePromotion,
+    required this.onClearPromotion,
+  });
+
+  final AdminMobileDashboardState state;
+  final bool isBusy;
+  final _PromotionSubmit onUpdatePromotion;
+  final _PromotionClearSubmit onClearPromotion;
+
+  @override
+  State<_PromotionsSection> createState() => _PromotionsSectionState();
+}
+
+class _PromotionsSectionState extends State<_PromotionsSection> {
+  @override
+  Widget build(BuildContext context) {
+    final items = _buildPromotionLotRows(widget.state);
+    final openNotices =
+        widget.state.promotionNotices.where((notice) => notice.isOpen).toList()
+          ..sort((left, right) => right.createdAt.compareTo(left.createdAt));
+    final activePromotionCount =
+        widget.state.activeLotPromotions
+            .where(
+              (promotion) =>
+                  promotion.status == 'active_store' ||
+                  promotion.status == 'pending_transfer',
+            )
+            .length;
+    final candidateCount =
+        items.where((item) => item.activePromotion == null).length;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _MobileSectionHeading(
+            title: 'Promocion',
+            subtitle:
+                'Activa promociones por lote respetando proveedor, vencimiento, ubicacion y cantidad comprometida.',
+          ),
+          const SizedBox(height: 16),
+          _MetricWrap(
+            children: [
+              MetricCard(
+                label: 'Lotes por activar',
+                value: '$candidateCount',
+                detail: 'Listos para promocionarse por lote',
+                accent: const Color(0xFFEA580C),
+              ),
+              MetricCard(
+                label: 'Promos activas',
+                value: '$activePromotionCount',
+                detail: 'Con cantidad y precio ya definidos',
+                accent: const Color(0xFF0F766E),
+              ),
+              MetricCard(
+                label: 'Avisos',
+                value: '${openNotices.length}',
+                detail: 'Pendientes por revisar en admin',
+                accent: const Color(0xFF2563EB),
+              ),
+            ],
+          ),
+          if (openNotices.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            SectionCard(
+              title: 'Avisos de promo',
+              subtitle:
+                  'Aqui se muestran promociones agotadas o que siguen pendientes de mover a tienda.',
+              child: Column(
+                children:
+                    openNotices.map((notice) {
+                      return Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: const BoxDecoration(
+                          border: Border(
+                            bottom: BorderSide(color: Color(0xFFE5E7EB)),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _promotionNoticeLabel(notice),
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              notice.message,
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              SystemWFormatters.shortDateTime.format(
+                                notice.createdAt,
+                              ),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(color: const Color(0xFF6B7280)),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Lista promocionable',
+            subtitle:
+                'Cada fila mantiene trazabilidad por lote antes de cambiar el precio y separa lo que esta activo de lo que aun debes preparar.',
+            child:
+                items.isEmpty
+                    ? const EmptyStateCard(
+                      title: 'Sin lotes por promocionar',
+                      caption:
+                          'Cuando existan lotes proximos a vencer o promos activas apareceran aqui.',
+                    )
+                    : Column(
+                      children:
+                          items.map((item) {
+                            final product = item.product;
+                            final activePromotion = item.activePromotion;
+                            final isActive = activePromotion != null;
+                            final currentPromoPrice =
+                                activePromotion?.promotionalPrice;
+                            final currentPromoQuantity =
+                                activePromotion?.promoQuantityRemaining;
+                            return Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              decoration: const BoxDecoration(
+                                border: Border(
+                                  bottom: BorderSide(color: Color(0xFFE5E7EB)),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    item.productName,
+                                    style:
+                                        Theme.of(context).textTheme.titleSmall,
+                                  ),
+                                  const SizedBox(height: 6),
+                                  _InfoLine(
+                                    label: 'Proveedor',
+                                    value: item.supplierName,
+                                  ),
+                                  _InfoLine(
+                                    label: 'Vence',
+                                    value: SystemWFormatters.shortDate.format(
+                                      item.expiryDate,
+                                    ),
+                                  ),
+                                  _InfoLine(
+                                    label: 'Disponible total',
+                                    value: '${item.totalAvailableUnits} u.',
+                                  ),
+                                  _InfoLine(
+                                    label: 'Ubicacion',
+                                    value: item.locationLabel,
+                                  ),
+                                  _InfoLine(
+                                    label: 'En tienda',
+                                    value: '${item.storeAvailableUnits} u.',
+                                  ),
+                                  _InfoLine(
+                                    label: 'En almacen',
+                                    value: '${item.warehouseAvailableUnits} u.',
+                                  ),
+                                  _InfoLine(
+                                    label: 'Accion sugerida',
+                                    value: item.recommendationLabel,
+                                  ),
+                                  _InfoLine(
+                                    label: 'Precio base',
+                                    value: SystemWFormatters.currency.format(
+                                      product?.salePrice ?? 0,
+                                    ),
+                                  ),
+                                  if (currentPromoPrice != null)
+                                    _InfoLine(
+                                      label: 'Precio promo',
+                                      value: SystemWFormatters.currency.format(
+                                        currentPromoPrice,
+                                      ),
+                                    ),
+                                  if (currentPromoQuantity != null)
+                                    _InfoLine(
+                                      label: 'Cantidad promo',
+                                      value: '$currentPromoQuantity u.',
+                                    ),
+                                  if (activePromotion != null)
+                                    _InfoLine(
+                                      label: 'Estado',
+                                      value: _promotionStatusLabel(
+                                        activePromotion,
+                                      ),
+                                    ),
+                                  if ((activePromotion?.note ?? '')
+                                      .trim()
+                                      .isNotEmpty)
+                                    _InfoLine(
+                                      label: 'Nota promo',
+                                      value: activePromotion!.note!,
+                                    ),
+                                  const SizedBox(height: 12),
+                                  Wrap(
+                                    spacing: 12,
+                                    runSpacing: 12,
+                                    children: [
+                                      FilledButton.icon(
+                                        onPressed:
+                                            widget.isBusy
+                                                ? null
+                                                : () =>
+                                                    _openPromotionDialog(item),
+                                        icon: const Icon(
+                                          Icons.local_offer_rounded,
+                                        ),
+                                        label: Text(
+                                          isActive
+                                              ? 'Editar promo'
+                                              : 'Activar promo',
+                                        ),
+                                      ),
+                                      OutlinedButton.icon(
+                                        onPressed:
+                                            widget.isBusy ||
+                                                    activePromotion == null
+                                                ? null
+                                                : () => widget.onClearPromotion(
+                                                  activePromotion.promotionId,
+                                                ),
+                                        icon: const Icon(
+                                          Icons.remove_circle_outline_rounded,
+                                        ),
+                                        label: const Text('Quitar promo'),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                    ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openPromotionDialog(_PromotionLotRow item) async {
+    final product = item.product;
+    final activePromotion = item.activePromotion;
+    final priceController = TextEditingController(
+      text: (activePromotion?.promotionalPrice ?? product?.salePrice ?? 0)
+          .toStringAsFixed(2),
+    );
+    final quantityController = TextEditingController(
+      text:
+          (activePromotion?.promoQuantityRemaining ?? item.totalAvailableUnits)
+              .toString(),
+    );
+    final noteController = TextEditingController(
+      text:
+          activePromotion?.note ??
+          'Promo por lote ${item.supplierName} | vence ${SystemWFormatters.shortDate.format(item.expiryDate)}',
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        String? errorMessage;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text(item.productName),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Proveedor ${item.supplierName} | vence ${SystemWFormatters.shortDate.format(item.expiryDate)} | ${item.totalAvailableUnits} u. disponibles.',
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Ubicacion: ${item.locationLabel}. ${item.recommendationLabel}.',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: quantityController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'Cantidad en promo',
+                      helperText:
+                          'Maximo ${item.totalAvailableUnits} unidades de este lote.',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: priceController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Precio promocional',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: noteController,
+                    decoration: const InputDecoration(
+                      labelText: 'Nota interna',
+                    ),
+                    maxLines: 2,
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      errorMessage!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFFB91C1C),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    final quantity = int.tryParse(quantityController.text);
+                    final value = double.tryParse(priceController.text);
+                    if (quantity == null || quantity <= 0) {
+                      setState(() {
+                        errorMessage = 'Ingresa una cantidad promocional valida.';
+                      });
+                      return;
+                    }
+                    if (quantity > item.totalAvailableUnits) {
+                      setState(() {
+                        errorMessage =
+                            'Solo hay ${item.totalAvailableUnits} unidades disponibles en este lote.';
+                      });
+                      return;
+                    }
+                    if (value == null || value <= 0) {
+                      setState(() {
+                        errorMessage = 'Ingresa un precio promocional valido.';
+                      });
+                      return;
+                    }
+                    final salePrice = product?.salePrice ?? 0;
+                    if (salePrice <= 0) {
+                      setState(() {
+                        errorMessage =
+                            'No encontramos el precio base del producto para este lote.';
+                      });
+                      return;
+                    }
+                    if (value >= salePrice) {
+                      setState(() {
+                        errorMessage =
+                            'La promocion debe ser menor al precio base.';
+                      });
+                      return;
+                    }
+                    final success = await widget.onUpdatePromotion(
+                      purchaseItemId: item.purchaseItemId,
+                      promotionalQuantity: quantity,
+                      promotionalPrice: value,
+                      promotionNote: noteController.text.trim(),
+                    );
+                    if (success && mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  },
+                  child: const Text('Guardar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _LossesSection extends StatefulWidget {
+  const _LossesSection({
+    required this.state,
+    required this.isBusy,
+    required this.onRegisterLoss,
+  });
+
+  final AdminMobileDashboardState state;
+  final bool isBusy;
+  final _LossSubmit onRegisterLoss;
+
+  @override
+  State<_LossesSection> createState() => _LossesSectionState();
+}
+
+class _LossesSectionState extends State<_LossesSection> {
+  @override
+  Widget build(BuildContext context) {
+    final alerts = [...widget.state.expiredLotAlerts]
+      ..sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _MobileSectionHeading(
+            title: 'Perdidas',
+            subtitle:
+                'Gestiona lotes vencidos del almacen y registra la salida por perdida con proveedor y cantidad trazable.',
+          ),
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Lotes vencidos',
+            subtitle:
+                'La salida se registra desde el lote exacto para no romper la trazabilidad por proveedor.',
+            child:
+                alerts.isEmpty
+                    ? const EmptyStateCard(
+                      title: 'Sin lotes vencidos',
+                      caption:
+                          'Cuando existan unidades vencidas disponibles en almacen, apareceran aqui.',
+                    )
+                    : Column(
+                      children:
+                          alerts.map((alert) {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              decoration: const BoxDecoration(
+                                border: Border(
+                                  bottom: BorderSide(color: Color(0xFFE5E7EB)),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    alert.productName,
+                                    style:
+                                        Theme.of(context).textTheme.titleSmall,
+                                  ),
+                                  const SizedBox(height: 6),
+                                  _InfoLine(
+                                    label: 'Proveedor',
+                                    value: alert.supplierName,
+                                  ),
+                                  _InfoLine(
+                                    label: 'Vencio',
+                                    value: SystemWFormatters.shortDate.format(
+                                      alert.expiryDate,
+                                    ),
+                                  ),
+                                  _InfoLine(
+                                    label: 'Disponible',
+                                    value: '${alert.availableUnits} u.',
+                                  ),
+                                  _InfoLine(
+                                    label: 'Recepcion',
+                                    value: SystemWFormatters.shortDate.format(
+                                      alert.receivedAt,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  OutlinedButton.icon(
+                                    onPressed:
+                                        widget.isBusy
+                                            ? null
+                                            : () => _openLossDialog(alert),
+                                    icon: const Icon(
+                                      Icons.delete_sweep_rounded,
+                                    ),
+                                    label: const Text('Marcar perdida'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                    ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openLossDialog(InventoryLotAlert alert) async {
+    final quantityController = TextEditingController(
+      text: '${alert.availableUnits}',
+    );
+    final notesController = TextEditingController(
+      text: 'Perdida por vencimiento',
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        String? errorMessage;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text(alert.productName),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${alert.supplierName} | Vencio ${SystemWFormatters.shortDate.format(alert.expiryDate)}',
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: quantityController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Cantidad perdida',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: notesController,
+                    decoration: const InputDecoration(
+                      labelText: 'Decision / nota',
+                    ),
+                    maxLines: 2,
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      errorMessage!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFFB91C1C),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    final value = int.tryParse(quantityController.text);
+                    if (value == null || value <= 0) {
+                      setState(() {
+                        errorMessage = 'Ingresa una cantidad valida.';
+                      });
+                      return;
+                    }
+                    if (value > alert.availableUnits) {
+                      setState(() {
+                        errorMessage =
+                            'Solo tienes ${alert.availableUnits} u. disponibles en este lote.';
+                      });
+                      return;
+                    }
+                    final success = await widget.onRegisterLoss(
+                      purchaseItemId: alert.purchaseItemId,
+                      quantity: value,
+                      notes: notesController.text.trim(),
+                    );
+                    if (success && mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  },
+                  child: const Text('Registrar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
 class _MovementsSection extends ConsumerStatefulWidget {
   const _MovementsSection({
     required this.state,
     required this.isBusy,
     required this.currentUser,
     required this.onTransfer,
+    required this.onUpdateColdState,
   });
 
   final AdminMobileDashboardState state;
   final bool isBusy;
   final AppUser? currentUser;
   final Future<void> Function(String? supplierId)? onTransfer;
+  final _ColdStateSubmit onUpdateColdState;
 
   @override
   ConsumerState<_MovementsSection> createState() => _MovementsSectionState();
@@ -892,6 +1668,8 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
   String? _selectedSupplierId;
   String? _selectedCategoryId;
   String _searchQuery = '';
+  String _coldSearchQuery = '';
+  String? _selectedColdProductId;
 
   @override
   void didUpdateWidget(covariant _MovementsSection oldWidget) {
@@ -900,12 +1678,50 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
         widget.state.selectedProductId == null) {
       _selectedSupplierId = null;
     }
+    if (!widget.state.products.any(
+      (product) => product.id == _selectedColdProductId,
+    )) {
+      _selectedColdProductId = null;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final state = widget.state;
     final selectedProduct = state.selectedProduct;
+    final beverageProducts =
+        state.products.where((product) {
+            return isBeverageProduct(product, state.categories);
+          }).toList()
+          ..sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
+    final filteredColdProducts =
+        beverageProducts.where((product) {
+            final query = _coldSearchQuery.trim().toLowerCase();
+            if (query.isEmpty) {
+              return true;
+            }
+            return product.name.toLowerCase().contains(query);
+          }).toList()
+          ..sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
+    final selectedColdProduct =
+        filteredColdProducts.any(
+              (product) => product.id == _selectedColdProductId,
+            )
+            ? filteredColdProducts.firstWhere(
+              (product) => product.id == _selectedColdProductId,
+            )
+            : filteredColdProducts.isEmpty
+            ? null
+            : filteredColdProducts.first;
+    final activeColdProducts =
+        beverageProducts.where((product) => product.coldStockUnits > 0).toList()
+          ..sort(
+            (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+          );
     final effectiveCategoryId =
         state.categories.any((category) => category.id == _selectedCategoryId)
             ? _selectedCategoryId
@@ -1300,6 +2116,211 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
           ),
           const SizedBox(height: 16),
           SectionCard(
+            title: 'Bebidas heladas - En tienda',
+            subtitle:
+                'Busca la bebida, define cuantas unidades pasan a helarse y deja visible solo lo que ya esta en estado helado.',
+            child:
+                beverageProducts.isEmpty
+                    ? const EmptyStateCard(
+                      title: 'Sin bebidas registradas',
+                      caption:
+                          'Cuando existan bebidas en el catalogo, podras definir cuantas pasan a estado helado.',
+                    )
+                    : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextField(
+                          onChanged: (value) {
+                            setState(() {
+                              _coldSearchQuery = value;
+                            });
+                          },
+                          decoration: InputDecoration(
+                            labelText: 'Buscar bebida',
+                            hintText: 'Ej. Coca Cola, Inca Kola, Agua...',
+                            prefixIcon: const Icon(Icons.search_rounded),
+                            filled: true,
+                            fillColor: const Color(0xFFF8FAFC),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(16),
+                              borderSide: const BorderSide(
+                                color: Color(0xFFE5E7EB),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          value: selectedColdProduct?.id,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Bebida seleccionada',
+                          ),
+                          items:
+                              filteredColdProducts
+                                  .map(
+                                    (product) => DropdownMenuItem(
+                                      value: product.id,
+                                      child: Text(product.name),
+                                    ),
+                                  )
+                                  .toList(),
+                          onChanged:
+                              filteredColdProducts.isEmpty
+                                  ? null
+                                  : (value) {
+                                    setState(() {
+                                      _selectedColdProductId = value;
+                                    });
+                                  },
+                        ),
+                        if (selectedColdProduct != null) ...[
+                          const SizedBox(height: 16),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: const Color(0xFFE2E8F0),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  selectedColdProduct.name,
+                                  style: Theme.of(context).textTheme.titleSmall,
+                                ),
+                                const SizedBox(height: 10),
+                                _InfoLine(
+                                  label: 'Normal en tienda',
+                                  value:
+                                      '${_normalStoreUnits(selectedColdProduct)} u.',
+                                ),
+                                _InfoLine(
+                                  label: 'Helada en tienda',
+                                  value:
+                                      '${_icedStoreUnits(selectedColdProduct)} u.',
+                                ),
+                                _InfoLine(
+                                  label: 'Precio normal',
+                                  value: SystemWFormatters.currency.format(
+                                    effectiveBaseSalePrice(selectedColdProduct),
+                                  ),
+                                ),
+                                _InfoLine(
+                                  label: 'Precio helado',
+                                  value: SystemWFormatters.currency.format(
+                                    effectiveSalePrice(
+                                      selectedColdProduct,
+                                      isIced: true,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: OutlinedButton.icon(
+                                    onPressed:
+                                        widget.isBusy
+                                            ? null
+                                            : () => _openColdStateDialog(
+                                              selectedColdProduct,
+                                            ),
+                                    icon: const Icon(Icons.ac_unit_rounded),
+                                    label: const Text(
+                                      'Definir cantidad a helar',
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                        if (selectedColdProduct == null) ...[
+                          const SizedBox(height: 16),
+                          const EmptyStateCard(
+                            title: 'Sin bebida seleccionada',
+                            caption:
+                                'Busca una bebida y selecciona una opcion para configurar sus unidades heladas.',
+                          ),
+                        ],
+                        const SizedBox(height: 18),
+                        Text(
+                          'Bebidas ya heladas',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        const SizedBox(height: 8),
+                        activeColdProducts.isEmpty
+                            ? const EmptyStateCard(
+                              title: 'Aun no hay bebidas heladas',
+                              caption:
+                                  'Cuando una bebida tenga unidades heladas, aparecera aqui con su precio y cantidades.',
+                            )
+                            : _PaginatedList<Product>(
+                              items: activeColdProducts,
+                              itemBuilder: (context, product) {
+                                return Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 10,
+                                  ),
+                                  decoration: const BoxDecoration(
+                                    border: Border(
+                                      bottom: BorderSide(
+                                        color: Color(0xFFE5E7EB),
+                                      ),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        product.name,
+                                        style:
+                                            Theme.of(
+                                              context,
+                                            ).textTheme.titleSmall,
+                                      ),
+                                      const SizedBox(height: 8),
+                                      _InfoLine(
+                                        label: 'Normal',
+                                        value:
+                                            '${_normalStoreUnits(product)} u.',
+                                      ),
+                                      _InfoLine(
+                                        label: 'Helada',
+                                        value: '${_icedStoreUnits(product)} u.',
+                                      ),
+                                      _InfoLine(
+                                        label: 'Recargo',
+                                        value: SystemWFormatters.currency
+                                            .format(
+                                              coldPriceIncrement(product),
+                                            ),
+                                      ),
+                                      _InfoLine(
+                                        label: 'Precio helado',
+                                        value: SystemWFormatters.currency
+                                            .format(
+                                              effectiveSalePrice(
+                                                product,
+                                                isIced: true,
+                                              ),
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                      ],
+                    ),
+          ),
+          const SizedBox(height: 16),
+          SectionCard(
             title: 'Movimientos recientes',
             subtitle:
                 'Compras, ventas y transferencias con paginacion desde 10 registros.',
@@ -1332,6 +2353,103 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _openColdStateDialog(Product product) async {
+    final quantityController = TextEditingController(
+      text: '${product.coldStockUnits}',
+    );
+    final incrementController = TextEditingController(
+      text: product.coldPriceIncrement.toStringAsFixed(2),
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        String? errorMessage;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text(product.name),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Disponible en tienda: ${product.stockStore} u.'),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: quantityController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Cantidad a helar',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: incrementController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Recargo por helada',
+                    ),
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      errorMessage!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFFB91C1C),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    final quantity = int.tryParse(quantityController.text);
+                    final increment = double.tryParse(incrementController.text);
+                    if (quantity == null || quantity < 0) {
+                      setState(() {
+                        errorMessage = 'Ingresa una cantidad valida.';
+                      });
+                      return;
+                    }
+                    if (quantity > product.stockStore) {
+                      setState(() {
+                        errorMessage =
+                            'No puedes helar mas de ${product.stockStore} u. en tienda.';
+                      });
+                      return;
+                    }
+                    if (increment == null || increment < 0) {
+                      setState(() {
+                        errorMessage = 'Ingresa un recargo valido.';
+                      });
+                      return;
+                    }
+                    final success = await widget.onUpdateColdState(
+                      productId: product.id,
+                      coldStockUnits: quantity,
+                      coldPriceIncrement: increment,
+                    );
+                    if (success && mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  },
+                  child: const Text('Guardar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -2292,7 +3410,7 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
           productValue == _newProductValue || categoryValue == _newCategoryValue
               ? null
               : productValue,
-      productName: productNameForCreation ?? '',
+      productName: productNameForCreation,
       productType: effectiveProductType,
       quantity: currentState.quantity,
       unitsPerPackage: currentState.unitsPerPackage,
@@ -2613,28 +3731,40 @@ class _MetricWrap extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isCompact = constraints.maxWidth < 720;
+        const spacing = 12.0;
+        const minCardWidth = 240.0;
+        final maxWidth = constraints.maxWidth;
+        final isCompact = maxWidth < 720;
+        if (children.isEmpty) {
+          return const SizedBox.shrink();
+        }
         if (isCompact) {
           return Column(
             children: [
               for (var i = 0; i < children.length; i++) ...[
                 if (i > 0) const SizedBox(height: 12),
-                SizedBox(height: 168, child: children[i]),
+                children[i],
               ],
             ],
           );
         }
 
-        return SizedBox(
-          height: 180,
-          child: Row(
-            children: [
-              for (var i = 0; i < children.length; i++) ...[
-                if (i > 0) const SizedBox(width: 12),
-                Expanded(child: children[i]),
-              ],
-            ],
-          ),
+        final cardsPerRow = math.max(
+          1,
+          ((maxWidth + spacing) / (minCardWidth + spacing)).floor(),
+        );
+        final normalizedCardsPerRow = math.min(cardsPerRow, children.length);
+        final cardWidth =
+            (maxWidth - spacing * (normalizedCardsPerRow - 1)) /
+            normalizedCardsPerRow;
+
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final child in children)
+              SizedBox(width: cardWidth, child: child),
+          ],
         );
       },
     );
@@ -3043,6 +4173,34 @@ String _categoryOptionLabel(Category category) {
   }
 
   return '${category.name} ($prefix)';
+}
+
+bool _isBeverageSelection({
+  required List<Category> categories,
+  required String categoryValue,
+  required String newCategoryName,
+  required String newCategoryPrefix,
+  String? productValue,
+  List<Product>? products,
+}) {
+  if (productValue != null && products != null) {
+    final product = _findProductById(products, productValue);
+    if (product != null) {
+      return isBeverageProduct(product, categories);
+    }
+  }
+
+  if (categoryValue == _PurchaseFormState._newCategoryValue) {
+    final draftCategory = Category(
+      id: 'draft',
+      name: newCategoryName.trim(),
+      prefix: newCategoryPrefix.trim(),
+    );
+    return isBeverageCategory(draftCategory);
+  }
+
+  final category = _findCategoryById(categories, categoryValue);
+  return category != null && isBeverageCategory(category);
 }
 
 int _missingUnits(Product product) {
@@ -3484,6 +4642,84 @@ List<_CategoryDetailRow> _buildCategoryDetailRows(
   return rows;
 }
 
+List<_PromotionLotRow> _buildPromotionLotRows(AdminMobileDashboardState state) {
+  final productById = {
+    for (final product in state.products) product.id: product,
+  };
+  final activeByPurchaseItemId = {
+    for (final promotion in state.activeLotPromotions)
+      promotion.purchaseItemId: promotion,
+  };
+  final items = <_PromotionLotRow>[];
+  final seenPurchaseItemIds = <String>{};
+
+  for (final promotion in state.activeLotPromotions) {
+    seenPurchaseItemIds.add(promotion.purchaseItemId);
+    items.add(
+      _PromotionLotRow(
+        purchaseItemId: promotion.purchaseItemId,
+        productId: promotion.productId,
+        productName: promotion.productName,
+        product: productById[promotion.productId],
+        supplierName: promotion.supplierName,
+        expiryDate: promotion.expiryDate ?? DateTime.now(),
+        warehouseAvailableUnits: promotion.warehouseAvailableUnits,
+        storeAvailableUnits: promotion.storeAvailableUnits,
+        totalAvailableUnits:
+            promotion.warehouseAvailableUnits + promotion.storeAvailableUnits,
+        locationLabel: _promotionLocationLabel(
+          storeAvailableUnits: promotion.storeAvailableUnits,
+          warehouseAvailableUnits: promotion.warehouseAvailableUnits,
+        ),
+        recommendationLabel: _promotionRecommendationLabel(
+          storeAvailableUnits: promotion.storeAvailableUnits,
+          warehouseAvailableUnits: promotion.warehouseAvailableUnits,
+        ),
+        activePromotion: promotion,
+      ),
+    );
+  }
+
+  for (final lot in state.promotableLots) {
+    if (seenPurchaseItemIds.contains(lot.purchaseItemId)) {
+      continue;
+    }
+    items.add(
+      _PromotionLotRow(
+        purchaseItemId: lot.purchaseItemId,
+        productId: lot.productId,
+        productName: lot.productName,
+        product: productById[lot.productId],
+        supplierName: lot.supplierName,
+        expiryDate: lot.expiryDate,
+        warehouseAvailableUnits: lot.warehouseAvailableUnits,
+        storeAvailableUnits: lot.storeAvailableUnits,
+        totalAvailableUnits: lot.totalAvailableUnits,
+        locationLabel: _promotionLocationLabel(
+          storeAvailableUnits: lot.storeAvailableUnits,
+          warehouseAvailableUnits: lot.warehouseAvailableUnits,
+        ),
+        recommendationLabel: _promotionRecommendationLabel(
+          storeAvailableUnits: lot.storeAvailableUnits,
+          warehouseAvailableUnits: lot.warehouseAvailableUnits,
+        ),
+        activePromotion: activeByPurchaseItemId[lot.purchaseItemId],
+      ),
+    );
+  }
+
+  items.sort((left, right) {
+    final expiryCompare = left.expiryDate.compareTo(right.expiryDate);
+    if (expiryCompare != 0) {
+      return expiryCompare;
+    }
+    return left.productName.toLowerCase().compareTo(
+      right.productName.toLowerCase(),
+    );
+  });
+  return items;
+}
+
 class _CategoryDetailAccumulator {
   _CategoryDetailAccumulator({
     required this.supplierName,
@@ -3510,6 +4746,91 @@ class _CategoryDetailAccumulator {
   DateTime firstPurchaseAt;
   DateTime latestPurchaseAt;
   DateTime? nextExpiryDate;
+}
+
+class _PromotionLotRow {
+  const _PromotionLotRow({
+    required this.purchaseItemId,
+    required this.productId,
+    required this.productName,
+    required this.product,
+    required this.supplierName,
+    required this.expiryDate,
+    required this.warehouseAvailableUnits,
+    required this.storeAvailableUnits,
+    required this.totalAvailableUnits,
+    required this.locationLabel,
+    required this.recommendationLabel,
+    this.activePromotion,
+  });
+
+  final String purchaseItemId;
+  final String productId;
+  final String productName;
+  final Product? product;
+  final String supplierName;
+  final DateTime expiryDate;
+  final int warehouseAvailableUnits;
+  final int storeAvailableUnits;
+  final int totalAvailableUnits;
+  final String locationLabel;
+  final String recommendationLabel;
+  final LotPromotion? activePromotion;
+}
+
+String _promotionLocationLabel({
+  required int storeAvailableUnits,
+  required int warehouseAvailableUnits,
+}) {
+  if (storeAvailableUnits > 0 && warehouseAvailableUnits > 0) {
+    return 'Tienda y almacen';
+  }
+  if (storeAvailableUnits > 0) {
+    return 'Tienda';
+  }
+  if (warehouseAvailableUnits > 0) {
+    return 'Solo almacen';
+  }
+  return 'Sin stock';
+}
+
+String _promotionRecommendationLabel({
+  required int storeAvailableUnits,
+  required int warehouseAvailableUnits,
+}) {
+  if (storeAvailableUnits > 0 && warehouseAvailableUnits > 0) {
+    return 'Ya puedes vender la promo en tienda y conviene mover el resto antes de que venza.';
+  }
+  if (storeAvailableUnits > 0) {
+    return 'La promo ya esta lista para mostrarse en productos de tienda.';
+  }
+  if (warehouseAvailableUnits > 0) {
+    return 'El lote sigue en almacen: muevelo rapido a tienda antes de vender la promo.';
+  }
+  return 'Este lote ya no tiene stock disponible para promo.';
+}
+
+String _promotionStatusLabel(LotPromotion promotion) {
+  if (promotion.status == 'active_store') {
+    return 'Activa en tienda';
+  }
+  if (promotion.status == 'pending_transfer') {
+    return 'Pendiente de mover a tienda';
+  }
+  if (promotion.status == 'exhausted') {
+    return 'Agotada';
+  }
+  return 'Cancelada';
+}
+
+String _promotionNoticeLabel(PromotionNotice notice) {
+  if (notice.noticeType == 'promo_pending_transfer') {
+    return 'Promo pendiente de traslado';
+  }
+  if (notice.noticeType == 'promo_exhausted') {
+    return 'Promo agotada';
+  }
+  return 'Aviso de promocion';
 }
 
 List<_WarehouseTransferAllocation> _buildWarehouseTransferPreviewFromLots(
@@ -3642,6 +4963,9 @@ String? _latestSupplierPhone(List<Purchase> purchases) {
 }
 
 String _movementTypeLabel(InventoryMovement movement) {
+  if (movement.type.toLowerCase() == 'loss') {
+    return 'Perdida';
+  }
   final fromLocation = movement.fromLocation.toLowerCase();
   final toLocation = movement.toLocation.toLowerCase();
   if (fromLocation.contains('sin origen')) {
@@ -3661,10 +4985,29 @@ String _movementOriginLabel(InventoryMovement movement) {
 }
 
 String _movementDestinationLabel(InventoryMovement movement) {
+  if (movement.type.toLowerCase() == 'loss') {
+    return 'Perdida';
+  }
   if (movement.toLocation.toLowerCase().contains('sin destino')) {
     return 'Venta';
   }
   return movement.toLocation;
+}
+
+int _icedStoreUnits(Product product) {
+  final icedUnits = product.coldStockUnits;
+  if (icedUnits <= 0) {
+    return 0;
+  }
+  if (icedUnits >= product.stockStore) {
+    return product.stockStore;
+  }
+  return icedUnits;
+}
+
+int _normalStoreUnits(Product product) {
+  final normalUnits = product.stockStore - _icedStoreUnits(product);
+  return normalUnits < 0 ? 0 : normalUnits;
 }
 
 String _purchaseItemsBreakdownLabel(Purchase purchase) {

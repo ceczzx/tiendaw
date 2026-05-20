@@ -7,6 +7,7 @@ import 'package:tiendaw/features/auth/domain/app_user.dart';
 import 'package:tiendaw/features/auth/presentation/session_view_model.dart';
 import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
 import 'package:tiendaw/features/catalog/domain/load_catalog_overview_use_case.dart';
+import 'package:tiendaw/features/catalog/domain/product_pricing_rules.dart';
 import 'package:tiendaw/features/sales/domain/create_sale_use_case.dart';
 import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 import 'package:uuid/uuid.dart';
@@ -98,12 +99,43 @@ class SellerDashboardState {
   bool get hasOpenShift => currentShift?.isOpen ?? false;
 
   int quantityInCart(String productId) {
+    var total = 0;
     for (final item in cartItems) {
       if (item.productId == productId) {
-        return item.quantity;
+        total += item.quantity;
       }
     }
-    return 0;
+    return total;
+  }
+
+  int icedQuantityInCart(String productId) {
+    var total = 0;
+    for (final item in cartItems) {
+      if (item.productId == productId && item.isIced) {
+        total += item.quantity;
+      }
+    }
+    return total;
+  }
+
+  int normalQuantityInCart(String productId) {
+    var total = 0;
+    for (final item in cartItems) {
+      if (item.productId == productId && !item.isIced) {
+        total += item.quantity;
+      }
+    }
+    return total;
+  }
+
+  int promotionalQuantityInCart(String productId) {
+    var total = 0;
+    for (final item in cartItems) {
+      if (item.productId == productId && item.usedPromotionalPrice) {
+        total += item.quantity;
+      }
+    }
+    return total;
   }
 }
 
@@ -202,7 +234,11 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     state = AsyncData(current.copyWith(feedbackMessage: null));
   }
 
-  Future<void> addToCart(Product product, int quantity) async {
+  Future<void> addToCart(
+    Product product,
+    int quantity, {
+    bool isIced = false,
+  }) async {
     final current = state.valueOrNull;
     if (current == null || quantity <= 0) {
       return;
@@ -217,90 +253,183 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       return;
     }
 
-    final stockStore = _storeStockForProduct(current, product.id);
-    final existingQuantity = current.quantityInCart(product.id);
-    final nextQuantity = existingQuantity + quantity;
-    if (stockStore <= 0 || nextQuantity > stockStore) {
-      state = AsyncData(
-        current.copyWith(
-          feedbackMessage:
-              'Solo tienes $stockStore unidades disponibles en tienda para ${product.name}.',
-        ),
-      );
-      return;
-    }
-
-    final next = [...current.cartItems];
-    final index = next.indexWhere((item) => item.productId == product.id);
-    if (index == -1) {
-      next.add(
-        SaleLine(
-          productId: product.id,
-          productName: product.name,
-          quantity: quantity,
-          unitPrice: product.salePrice,
-        ),
-      );
-    } else {
-      final existing = next[index];
-      next[index] = SaleLine(
-        productId: existing.productId,
-        productName: existing.productName,
-        quantity: existing.quantity + quantity,
-        unitPrice: existing.unitPrice,
-      );
-    }
-
-    state = AsyncData(current.copyWith(cartItems: next));
-  }
-
-  Future<void> updateCartQuantity(String productId, int quantity) async {
-    final current = state.valueOrNull;
-    if (current == null) {
-      return;
-    }
-
-    final next = [...current.cartItems];
-    final index = next.indexWhere((item) => item.productId == productId);
-    if (index == -1) {
-      return;
-    }
-
-    if (quantity <= 0) {
-      next.removeAt(index);
-    } else {
-      final product = _productById(current, productId);
-      final stockStore = _storeStockForProduct(current, productId);
-      if (stockStore <= 0 || quantity > stockStore) {
+    if (isIced) {
+      final availableIcedStock = _icedStockForProduct(product);
+      final nextIcedQuantity =
+          current.icedQuantityInCart(product.id) + quantity;
+      if (availableIcedStock <= 0 || nextIcedQuantity > availableIcedStock) {
         state = AsyncData(
           current.copyWith(
             feedbackMessage:
-                'Solo tienes $stockStore unidades disponibles en tienda para ${product?.name ?? 'este producto'}.',
+                'Solo tienes $availableIcedStock unidades heladas disponibles para ${product.name}.',
           ),
         );
         return;
       }
-      final existing = next[index];
-      next[index] = SaleLine(
-        productId: existing.productId,
-        productName: existing.productName,
-        quantity: quantity,
-        unitPrice: existing.unitPrice,
-      );
+    } else {
+      final availableNormalStock = _normalStockForProduct(product);
+      final nextNormalQuantity =
+          current.normalQuantityInCart(product.id) + quantity;
+      if (availableNormalStock <= 0 || nextNormalQuantity > availableNormalStock) {
+        state = AsyncData(
+          current.copyWith(
+            feedbackMessage:
+                'Solo tienes $availableNormalStock unidades normales disponibles para ${product.name}.',
+          ),
+        );
+        return;
+      }
+    }
+
+    final next = [...current.cartItems];
+    final newLines = _buildSaleLinesForSelection(
+      product: product,
+      quantity: quantity,
+      isIced: isIced,
+      reservedPromotionUnits: current.promotionalQuantityInCart(product.id),
+    );
+    for (final line in newLines) {
+      _mergeCartLine(next, line);
     }
 
     state = AsyncData(current.copyWith(cartItems: next));
   }
 
-  Future<void> removeFromCart(String productId) async {
+  Future<void> updateCartQuantity(String cartKey, int quantity) async {
     final current = state.valueOrNull;
     if (current == null) {
       return;
     }
 
-    final next = current.cartItems
-        .where((item) => item.productId != productId)
-        .toList();
+    final next = [...current.cartItems];
+    final index = next.indexWhere((item) => item.cartKey == cartKey);
+    if (index == -1) {
+      return;
+    }
+
+    final existing = next[index];
+    final productId = existing.productId;
+    final product = _productById(current, productId);
+    if (product == null) {
+      return;
+    }
+
+    final sameModeIndexes =
+        next.asMap().entries.where((entry) {
+          final item = entry.value;
+          return item.productId == productId && item.isIced == existing.isIced;
+        }).map((entry) => entry.key).toList()
+          ..sort((left, right) => right.compareTo(left));
+    final otherModePromotionalUnits = next
+        .where(
+          (item) =>
+              item.productId == productId &&
+              item.isIced != existing.isIced &&
+              item.usedPromotionalPrice,
+        )
+        .fold(0, (sum, item) => sum + item.quantity);
+    final desiredModeQuantity = next
+            .asMap()
+            .entries
+            .where(
+              (entry) =>
+                  entry.value.productId == productId &&
+                  entry.value.isIced == existing.isIced &&
+                  entry.key != index,
+            )
+            .fold(0, (sum, entry) => sum + entry.value.quantity) +
+        (quantity > 0 ? quantity : 0);
+
+    final availableUnits =
+        existing.isIced
+            ? _icedStockForProduct(product)
+            : _normalStockForProduct(product);
+    if (quantity > 0 &&
+        (availableUnits <= 0 || desiredModeQuantity > availableUnits)) {
+      final stockLabel = existing.isIced ? 'heladas' : 'normales';
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage:
+              'Solo tienes $availableUnits unidades $stockLabel disponibles para ${product.name}.',
+        ),
+      );
+      return;
+    }
+
+    for (final sameModeIndex in sameModeIndexes) {
+      next.removeAt(sameModeIndex);
+    }
+    final rebuiltLines = _buildSaleLinesForSelection(
+      product: product,
+      quantity: desiredModeQuantity,
+      isIced: existing.isIced,
+      reservedPromotionUnits: otherModePromotionalUnits,
+    );
+    for (final line in rebuiltLines) {
+      _mergeCartLine(next, line);
+    }
+
+    state = AsyncData(current.copyWith(cartItems: next));
+  }
+
+  Future<void> removeFromCart(String cartKey) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    final next = [...current.cartItems];
+    final index = next.indexWhere((item) => item.cartKey == cartKey);
+    if (index == -1) {
+      return;
+    }
+
+    final existing = next[index];
+    final product = _productById(current, existing.productId);
+    if (product == null) {
+      next.removeAt(index);
+      state = AsyncData(current.copyWith(cartItems: next));
+      return;
+    }
+
+    final sameModeIndexes =
+        next.asMap().entries.where((entry) {
+          final item = entry.value;
+          return item.productId == existing.productId &&
+              item.isIced == existing.isIced;
+        }).map((entry) => entry.key).toList()
+          ..sort((left, right) => right.compareTo(left));
+    final remainingModeQuantity = next
+        .asMap()
+        .entries
+        .where(
+          (entry) =>
+              entry.key != index &&
+              entry.value.productId == existing.productId &&
+              entry.value.isIced == existing.isIced,
+        )
+        .fold(0, (sum, entry) => sum + entry.value.quantity);
+    final otherModePromotionalUnits = next
+        .where(
+          (item) =>
+              item.productId == existing.productId &&
+              item.isIced != existing.isIced &&
+              item.usedPromotionalPrice,
+        )
+        .fold(0, (sum, item) => sum + item.quantity);
+
+    for (final sameModeIndex in sameModeIndexes) {
+      next.removeAt(sameModeIndex);
+    }
+    final rebuiltLines = _buildSaleLinesForSelection(
+      product: product,
+      quantity: remainingModeQuantity,
+      isIced: existing.isIced,
+      reservedPromotionUnits: otherModePromotionalUnits,
+    );
+    for (final line in rebuiltLines) {
+      _mergeCartLine(next, line);
+    }
     state = AsyncData(current.copyWith(cartItems: next));
   }
 
@@ -335,11 +464,10 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       sellerId: user.id,
       sellerName: user.name,
       items: [
-        SaleLine(
-          productId: selectedProduct.id,
-          productName: selectedProduct.name,
+        ..._buildSaleLinesForSelection(
+          product: selectedProduct,
           quantity: current.quantity,
-          unitPrice: selectedProduct.salePrice,
+          reservedPromotionUnits: 0,
         ),
       ],
       paymentMethod: current.paymentMethod,
@@ -384,12 +512,48 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
 
     for (final item in current.cartItems) {
-      final stockStore = _storeStockForProduct(current, item.productId);
-      if (item.quantity > stockStore) {
+      final product = _productById(current, item.productId);
+      if (product == null) {
+        continue;
+      }
+      final availableUnits =
+          item.isIced
+              ? _icedStockForProduct(product)
+              : _normalStockForProduct(product);
+      final stockLabel = item.isIced ? 'heladas' : 'normales';
+      if (item.quantity > availableUnits) {
         state = AsyncData(
           current.copyWith(
             feedbackMessage:
-            'La tienda solo tiene $stockStore unidades disponibles para ${item.productName}.',
+                'La tienda solo tiene $availableUnits unidades $stockLabel disponibles para ${item.productName}.',
+          ),
+        );
+        return false;
+      }
+    }
+
+    final promotionalQuantityByProduct = <String, int>{};
+    for (final item in current.cartItems) {
+      if (!item.usedPromotionalPrice) {
+        continue;
+      }
+      promotionalQuantityByProduct.update(
+        item.productId,
+        (value) => value + item.quantity,
+        ifAbsent: () => item.quantity,
+      );
+    }
+    for (final entry in promotionalQuantityByProduct.entries) {
+      final product = _productById(current, entry.key);
+      if (product == null) {
+        continue;
+      }
+      final availablePromo = availablePromotionUnits(product);
+      if (entry.value > availablePromo) {
+        state = AsyncData(
+          current.copyWith(
+            feedbackMessage:
+                'La promo disponible para ${product.name} ahora solo cubre $availablePromo unidades. Revisa el carrito antes de vender.',
           ),
         );
         return false;
@@ -579,6 +743,96 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     return null;
   }
 
+  List<SaleLine> _buildSaleLinesForSelection({
+    required Product product,
+    required int quantity,
+    bool isIced = false,
+    required int reservedPromotionUnits,
+  }) {
+    if (quantity <= 0) {
+      return const [];
+    }
+
+    final priceAdjustment = isIced ? coldPriceIncrement(product) : 0.0;
+    final lines = <SaleLine>[];
+    var remainingQuantity = quantity;
+    var remainingReservedPromotionUnits = reservedPromotionUnits;
+
+    for (final offer in activePromotionOffers(product)) {
+      if (remainingQuantity <= 0) {
+        break;
+      }
+
+      var availablePromoUnits = offer.allocatableUnits;
+      if (remainingReservedPromotionUnits >= availablePromoUnits) {
+        remainingReservedPromotionUnits -= availablePromoUnits;
+        continue;
+      }
+      if (remainingReservedPromotionUnits > 0) {
+        availablePromoUnits -= remainingReservedPromotionUnits;
+        remainingReservedPromotionUnits = 0;
+      }
+      if (availablePromoUnits <= 0) {
+        continue;
+      }
+
+      final promotionalQuantity =
+          remainingQuantity < availablePromoUnits
+              ? remainingQuantity
+              : availablePromoUnits;
+      lines.add(
+        SaleLine(
+          productId: product.id,
+          productName: product.name,
+          quantity: promotionalQuantity,
+          unitPrice: offer.promotionalPrice + priceAdjustment,
+          baseUnitPrice: offer.promotionalPrice,
+          priceAdjustment: priceAdjustment,
+          isIced: isIced,
+          usedPromotionalPrice: true,
+        ),
+      );
+      remainingQuantity -= promotionalQuantity;
+    }
+
+    if (remainingQuantity > 0) {
+      lines.add(
+        SaleLine(
+          productId: product.id,
+          productName: product.name,
+          quantity: remainingQuantity,
+          unitPrice: product.salePrice + priceAdjustment,
+          baseUnitPrice: product.salePrice,
+          priceAdjustment: priceAdjustment,
+          isIced: isIced,
+          usedPromotionalPrice: false,
+        ),
+      );
+    }
+
+    return lines;
+  }
+
+  void _mergeCartLine(List<SaleLine> cartItems, SaleLine incoming) {
+    final index = cartItems.indexWhere((item) => item.cartKey == incoming.cartKey);
+    if (index == -1) {
+      cartItems.add(incoming);
+      return;
+    }
+
+    final current = cartItems[index];
+    cartItems[index] = SaleLine(
+      productId: current.productId,
+      productName: current.productName,
+      quantity: current.quantity + incoming.quantity,
+      unitPrice: current.unitPrice,
+      baseUnitPrice: current.baseUnitPrice,
+      priceAdjustment: current.priceAdjustment,
+      isIced: current.isIced,
+      usedPromotionalPrice: current.usedPromotionalPrice,
+    );
+  }
+
   int _storeStockForProduct(SellerDashboardState state, String productId) {
     final product = _productById(state, productId);
     return product?.stockStore ?? 0;
@@ -687,4 +941,20 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       ),
     );
   }
+}
+
+int _icedStockForProduct(Product product) {
+  final icedUnits = product.coldStockUnits;
+  if (icedUnits <= 0) {
+    return 0;
+  }
+  if (icedUnits >= product.stockStore) {
+    return product.stockStore;
+  }
+  return icedUnits;
+}
+
+int _normalStockForProduct(Product product) {
+  final normalUnits = product.stockStore - _icedStockForProduct(product);
+  return normalUnits < 0 ? 0 : normalUnits;
 }

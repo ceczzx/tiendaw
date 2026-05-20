@@ -58,12 +58,22 @@ class _SystemWShellState extends ConsumerState<SystemWShell> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isLaptop = constraints.maxWidth >= AppBreakpoints.laptop;
-        final isLaptopAdmin = isLaptop && user.role == UserRole.admin;
-        final body = _resolveBody(isLaptop, user.role);
+        final isTablet =
+            constraints.maxWidth >= AppBreakpoints.tablet &&
+            constraints.maxWidth < AppBreakpoints.laptop;
+        final isWideScreen = isLaptop || isTablet;
+        final isWideAdmin = isWideScreen && user.role == UserRole.admin;
+        final modeLabel =
+            isLaptop
+                ? 'Modo laptop'
+                : isTablet
+                ? 'Modo tablet'
+                : 'Modo celular';
+        final body = _resolveBody(isWideScreen, user.role);
 
         return Scaffold(
           appBar: AppBar(
-            toolbarHeight: isLaptop ? 88 : 72,
+            toolbarHeight: isWideScreen ? 88 : 72,
             title: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -72,14 +82,11 @@ class _SystemWShellState extends ConsumerState<SystemWShell> {
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  isLaptop ? 'Modo laptop' : 'Modo celular',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
+                Text(modeLabel, style: Theme.of(context).textTheme.bodyMedium),
               ],
             ),
             actions: [
-              if (isLaptopAdmin)
+              if (isWideAdmin)
                 Padding(
                   padding: const EdgeInsets.only(right: 12),
                   child: Center(
@@ -127,6 +134,17 @@ class _SystemWShellState extends ConsumerState<SystemWShell> {
                                         AdminDesktopSection.movements,
                               ),
                         ),
+                        _HeaderSectionButton(
+                          label: 'Operaciones',
+                          selected:
+                              _adminSection == AdminDesktopSection.operations,
+                          onPressed:
+                              () => setState(
+                                () =>
+                                    _adminSection =
+                                        AdminDesktopSection.operations,
+                              ),
+                        ),
                       ],
                     ),
                   ),
@@ -148,7 +166,7 @@ class _SystemWShellState extends ConsumerState<SystemWShell> {
           body: Column(
             children: [
               Padding(
-                padding: EdgeInsets.fromLTRB(20, isLaptop ? 8 : 0, 20, 12),
+                padding: EdgeInsets.fromLTRB(20, isWideScreen ? 8 : 0, 20, 12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -222,12 +240,12 @@ class _SystemWShellState extends ConsumerState<SystemWShell> {
     );
   }
 
-  Widget _resolveBody(bool isLaptop, UserRole role) {
-    if (isLaptop && role == UserRole.admin) {
+  Widget _resolveBody(bool isWideScreen, UserRole role) {
+    if (isWideScreen && role == UserRole.admin) {
       return AdminDesktopDashboardPage(activeSection: _adminSection);
     }
 
-    if (isLaptop && role == UserRole.seller) {
+    if (isWideScreen && role == UserRole.seller) {
       return const _LaptopAdminOnlyState();
     }
 
@@ -271,7 +289,10 @@ class _SystemWShellState extends ConsumerState<SystemWShell> {
   Future<void> _confirmSignOut(BuildContext context, AppUser user) async {
     final showCashWarning =
         user.role == UserRole.seller
-            ? (ref.read(sellerDashboardViewModelProvider).valueOrNull?.hasOpenShift ??
+            ? (ref
+                    .read(sellerDashboardViewModelProvider)
+                    .valueOrNull
+                    ?.hasOpenShift ??
                 true)
             : false;
     final shouldSignOut = await showDialog<bool>(
@@ -334,10 +355,7 @@ class _SessionNoticeCard extends StatelessWidget {
 }
 
 class _SignOutDialog extends StatelessWidget {
-  const _SignOutDialog({
-    required this.user,
-    required this.showCashWarning,
-  });
+  const _SignOutDialog({required this.user, required this.showCashWarning});
 
   final AppUser user;
   final bool showCashWarning;
@@ -465,7 +483,7 @@ class _LaptopAdminOnlyState extends StatelessWidget {
           child: SectionCard(
             title: 'Acceso restringido',
             subtitle:
-                'En laptop el dashboard esta reservado para administracion.',
+                'En laptop o tablet el dashboard esta reservado para administracion.',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [

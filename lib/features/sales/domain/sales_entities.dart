@@ -8,14 +8,34 @@ class SaleLine {
     required this.productName,
     required this.quantity,
     required this.unitPrice,
+    this.baseUnitPrice,
+    this.priceAdjustment = 0,
+    this.isIced = false,
+    this.usedPromotionalPrice = false,
   });
 
   final String productId;
   final String productName;
   final int quantity;
   final double unitPrice;
+  final double? baseUnitPrice;
+  final double priceAdjustment;
+  final bool isIced;
+  final bool usedPromotionalPrice;
 
   double get subtotal => quantity * unitPrice;
+
+  String get cartKey =>
+      '$productId::${isIced ? 'iced' : 'regular'}::${unitPrice.toStringAsFixed(2)}';
+
+  Map<String, dynamic> toItemMeta() {
+    return <String, dynamic>{
+      'is_iced': isIced,
+      'base_unit_price': baseUnitPrice ?? unitPrice,
+      'price_adjustment': priceAdjustment,
+      'used_promotional_price': usedPromotionalPrice,
+    };
+  }
 }
 
 class Sale {

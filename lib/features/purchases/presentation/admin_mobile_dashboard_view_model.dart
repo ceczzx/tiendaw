@@ -56,9 +56,14 @@ class AdminMobileDashboardState {
   const AdminMobileDashboardState({
     required this.categories,
     required this.products,
+    required this.promotableLots,
+    required this.activeLotPromotions,
+    required this.promotionNotices,
     required this.priceHistory,
     required this.purchases,
     required this.movements,
+    required this.expiringLotAlerts,
+    required this.expiredLotAlerts,
     required this.selectedProductId,
     required this.quantity,
     required this.unitsPerPackage,
@@ -72,9 +77,14 @@ class AdminMobileDashboardState {
 
   final List<Category> categories;
   final List<Product> products;
+  final List<PromotableLot> promotableLots;
+  final List<LotPromotion> activeLotPromotions;
+  final List<PromotionNotice> promotionNotices;
   final List<PriceHistoryEntry> priceHistory;
   final List<Purchase> purchases;
   final List<InventoryMovement> movements;
+  final List<InventoryLotAlert> expiringLotAlerts;
+  final List<InventoryLotAlert> expiredLotAlerts;
   final String? selectedProductId;
   final int quantity;
   final int unitsPerPackage;
@@ -125,9 +135,14 @@ class AdminMobileDashboardState {
   AdminMobileDashboardState copyWith({
     List<Category>? categories,
     List<Product>? products,
+    List<PromotableLot>? promotableLots,
+    List<LotPromotion>? activeLotPromotions,
+    List<PromotionNotice>? promotionNotices,
     List<PriceHistoryEntry>? priceHistory,
     List<Purchase>? purchases,
     List<InventoryMovement>? movements,
+    List<InventoryLotAlert>? expiringLotAlerts,
+    List<InventoryLotAlert>? expiredLotAlerts,
     String? selectedProductId,
     bool clearSelectedProduct = false,
     int? quantity,
@@ -142,9 +157,14 @@ class AdminMobileDashboardState {
     return AdminMobileDashboardState(
       categories: categories ?? this.categories,
       products: products ?? this.products,
+      promotableLots: promotableLots ?? this.promotableLots,
+      activeLotPromotions: activeLotPromotions ?? this.activeLotPromotions,
+      promotionNotices: promotionNotices ?? this.promotionNotices,
       priceHistory: priceHistory ?? this.priceHistory,
       purchases: purchases ?? this.purchases,
       movements: movements ?? this.movements,
+      expiringLotAlerts: expiringLotAlerts ?? this.expiringLotAlerts,
+      expiredLotAlerts: expiredLotAlerts ?? this.expiredLotAlerts,
       selectedProductId:
           clearSelectedProduct
               ? null
@@ -170,9 +190,14 @@ class AdminMobileDashboardViewModel
     extends AsyncNotifier<AdminMobileDashboardState> {
   final _uuid = const Uuid();
   StreamSubscription<CatalogOverview>? _catalogSubscription;
+  StreamSubscription<List<PromotableLot>>? _promotableLotsSubscription;
+  StreamSubscription<List<LotPromotion>>? _activeLotPromotionsSubscription;
+  StreamSubscription<List<PromotionNotice>>? _promotionNoticesSubscription;
   StreamSubscription<List<PriceHistoryEntry>>? _priceHistorySubscription;
   StreamSubscription<List<Purchase>>? _purchasesSubscription;
   StreamSubscription<List<InventoryMovement>>? _movementsSubscription;
+  StreamSubscription<List<InventoryLotAlert>>? _expiringLotAlertsSubscription;
+  StreamSubscription<List<InventoryLotAlert>>? _expiredLotAlertsSubscription;
 
   @override
   Future<AdminMobileDashboardState> build() async {
@@ -293,6 +318,135 @@ class AdminMobileDashboardViewModel
     }
 
     state = AsyncData(current.copyWith(feedbackMessage: null));
+  }
+
+  Future<bool> activateLotPromotion({
+    required String purchaseItemId,
+    required int promotionalQuantity,
+    required double promotionalPrice,
+    String? promotionNote,
+  }) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    try {
+      await ref.read(catalogRepositoryProvider).activateLotPromotion(
+        purchaseItemId: purchaseItemId,
+        promotionalQuantity: promotionalQuantity,
+        promotionalPrice: promotionalPrice,
+        promotionNote: promotionNote,
+      );
+      await _refreshAll(selectedProductId: current.selectedProductId);
+      state = AsyncData(
+        state.requireValue.copyWith(
+          feedbackMessage: 'Promocion por lote actualizada.',
+        ),
+      );
+      return true;
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'No se pudo guardar la promocion: $error',
+        ),
+      );
+      return false;
+    }
+  }
+
+  Future<bool> cancelLotPromotion(String promotionId) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    try {
+      await ref
+          .read(catalogRepositoryProvider)
+          .cancelLotPromotion(promotionId: promotionId);
+      await _refreshAll(selectedProductId: current.selectedProductId);
+      state = AsyncData(
+        state.requireValue.copyWith(
+          feedbackMessage: 'Promocion retirada.',
+        ),
+      );
+      return true;
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'No se pudo retirar la promocion: $error',
+        ),
+      );
+      return false;
+    }
+  }
+
+  Future<bool> updateProductColdState({
+    required String productId,
+    required int coldStockUnits,
+    required double coldPriceIncrement,
+  }) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    try {
+      await ref.read(catalogRepositoryProvider).updateProductColdState(
+        productId: productId,
+        coldStockUnits: coldStockUnits,
+        coldPriceIncrement: coldPriceIncrement,
+      );
+      await _refreshAll(selectedProductId: productId);
+      state = AsyncData(
+        state.requireValue.copyWith(
+          feedbackMessage: 'Bebida helada actualizada.',
+        ),
+      );
+      return true;
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage:
+              'No se pudo actualizar el estado helado: $error',
+        ),
+      );
+      return false;
+    }
+  }
+
+  Future<bool> registerInventoryLoss({
+    required String purchaseItemId,
+    required int quantity,
+    String? notes,
+  }) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    try {
+      await ref.read(catalogRepositoryProvider).registerInventoryLoss(
+        purchaseItemId: purchaseItemId,
+        quantity: quantity,
+        notes: notes,
+      );
+      await _refreshAll(selectedProductId: current.selectedProductId);
+      state = AsyncData(
+        state.requireValue.copyWith(
+          feedbackMessage: 'Perdida registrada.',
+        ),
+      );
+      return true;
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'No se pudo registrar la perdida: $error',
+        ),
+      );
+      return false;
+    }
   }
 
   Future<bool> addPurchaseDraftLine(PurchaseDraftLine line) async {
@@ -478,11 +632,23 @@ class AdminMobileDashboardViewModel
     String? feedbackMessage,
   }) async {
     final catalog = await ref.read(loadCatalogOverviewUseCaseProvider)();
+    final promotableLots =
+        await ref.read(catalogRepositoryProvider).getPromotableLots();
+    final activeLotPromotions =
+        await ref.read(catalogRepositoryProvider).getActiveLotPromotions();
+    final promotionNotices =
+        await ref.read(catalogRepositoryProvider).getPromotionNotices();
     final priceHistory =
         await ref.read(catalogRepositoryProvider).getPriceHistory();
     final purchases = await ref.read(purchaseRepositoryProvider).getPurchases();
     final movements =
         await ref.read(catalogRepositoryProvider).getInventoryMovements();
+    final expiringLotAlerts =
+        await ref.read(catalogRepositoryProvider).getInventoryLotAlerts();
+    final expiredLotAlerts =
+        await ref.read(
+          catalogRepositoryProvider,
+        ).getInventoryLotAlerts(expiredOnly: true);
 
     final productId =
         catalog.products.any((product) => product.id == selectedProductId)
@@ -498,9 +664,14 @@ class AdminMobileDashboardViewModel
     return AdminMobileDashboardState(
       categories: catalog.categories,
       products: catalog.products,
+      promotableLots: promotableLots,
+      activeLotPromotions: activeLotPromotions,
+      promotionNotices: promotionNotices,
       priceHistory: priceHistory,
       purchases: purchases,
       movements: movements,
+      expiringLotAlerts: expiringLotAlerts,
+      expiredLotAlerts: expiredLotAlerts,
       selectedProductId: productId,
       quantity: quantity ?? 1,
       unitsPerPackage: unitsPerPackage ?? selectedProduct?.unitsPerPackage ?? 1,
@@ -611,10 +782,22 @@ class AdminMobileDashboardViewModel
   void _bindRealtime() {
     _disposeRealtimeSubscriptions();
 
-    _catalogSubscription = ref.read(loadCatalogOverviewUseCaseProvider).watch().listen(
-      _handleCatalogUpdate,
-      onError: (_, __) {},
-    );
+    _catalogSubscription = ref
+        .read(loadCatalogOverviewUseCaseProvider)
+        .watch()
+        .listen(_handleCatalogUpdate, onError: (_, __) {});
+    _promotableLotsSubscription = ref
+        .read(catalogRepositoryProvider)
+        .watchPromotableLots()
+        .listen(_handlePromotableLotsUpdate, onError: (_, __) {});
+    _activeLotPromotionsSubscription = ref
+        .read(catalogRepositoryProvider)
+        .watchActiveLotPromotions()
+        .listen(_handleActiveLotPromotionsUpdate, onError: (_, __) {});
+    _promotionNoticesSubscription = ref
+        .read(catalogRepositoryProvider)
+        .watchPromotionNotices()
+        .listen(_handlePromotionNoticesUpdate, onError: (_, __) {});
     _priceHistorySubscription = ref
         .read(catalogRepositoryProvider)
         .watchPriceHistory()
@@ -627,17 +810,35 @@ class AdminMobileDashboardViewModel
         .read(catalogRepositoryProvider)
         .watchInventoryMovements()
         .listen(_handleMovementsUpdate, onError: (_, __) {});
+    _expiringLotAlertsSubscription = ref
+        .read(catalogRepositoryProvider)
+        .watchInventoryLotAlerts()
+        .listen(_handleExpiringLotAlertsUpdate, onError: (_, __) {});
+    _expiredLotAlertsSubscription = ref
+        .read(catalogRepositoryProvider)
+        .watchInventoryLotAlerts(expiredOnly: true)
+        .listen(_handleExpiredLotAlertsUpdate, onError: (_, __) {});
   }
 
   void _disposeRealtimeSubscriptions() {
     _catalogSubscription?.cancel();
+    _promotableLotsSubscription?.cancel();
+    _activeLotPromotionsSubscription?.cancel();
+    _promotionNoticesSubscription?.cancel();
     _priceHistorySubscription?.cancel();
     _purchasesSubscription?.cancel();
     _movementsSubscription?.cancel();
+    _expiringLotAlertsSubscription?.cancel();
+    _expiredLotAlertsSubscription?.cancel();
     _catalogSubscription = null;
+    _promotableLotsSubscription = null;
+    _activeLotPromotionsSubscription = null;
+    _promotionNoticesSubscription = null;
     _priceHistorySubscription = null;
     _purchasesSubscription = null;
     _movementsSubscription = null;
+    _expiringLotAlertsSubscription = null;
+    _expiredLotAlertsSubscription = null;
   }
 
   void _handleCatalogUpdate(CatalogOverview catalog) {
@@ -691,6 +892,33 @@ class AdminMobileDashboardViewModel
     state = AsyncData(current.copyWith(priceHistory: entries));
   }
 
+  void _handlePromotableLotsUpdate(List<PromotableLot> lots) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(promotableLots: lots));
+  }
+
+  void _handleActiveLotPromotionsUpdate(List<LotPromotion> promotions) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(activeLotPromotions: promotions));
+  }
+
+  void _handlePromotionNoticesUpdate(List<PromotionNotice> notices) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(promotionNotices: notices));
+  }
+
   void _handlePurchasesUpdate(List<Purchase> purchases) {
     final current = state.valueOrNull;
     if (current == null) {
@@ -707,6 +935,24 @@ class AdminMobileDashboardViewModel
     }
 
     state = AsyncData(current.copyWith(movements: movements));
+  }
+
+  void _handleExpiringLotAlertsUpdate(List<InventoryLotAlert> alerts) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(expiringLotAlerts: alerts));
+  }
+
+  void _handleExpiredLotAlertsUpdate(List<InventoryLotAlert> alerts) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(expiredLotAlerts: alerts));
   }
 }
 

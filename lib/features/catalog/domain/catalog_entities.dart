@@ -6,6 +6,53 @@ class Category {
   final String prefix;
 }
 
+class ProductPromotionOffer {
+  const ProductPromotionOffer({
+    required this.promotionId,
+    required this.purchaseItemId,
+    required this.supplierName,
+    required this.promotionalPrice,
+    required this.promoQuantityTotal,
+    required this.promoQuantityRemaining,
+    required this.storeAvailableUnits,
+    required this.warehouseAvailableUnits,
+    required this.status,
+    required this.createdAt,
+    this.supplierId,
+    this.expiryDate,
+    this.note,
+  });
+
+  final String promotionId;
+  final String purchaseItemId;
+  final String? supplierId;
+  final String supplierName;
+  final DateTime? expiryDate;
+  final double promotionalPrice;
+  final int promoQuantityTotal;
+  final int promoQuantityRemaining;
+  final int storeAvailableUnits;
+  final int warehouseAvailableUnits;
+  final String status;
+  final String? note;
+  final DateTime createdAt;
+
+  int get allocatableUnits {
+    final boundedPromoUnits =
+        promoQuantityRemaining < 0 ? 0 : promoQuantityRemaining;
+    final boundedStoreUnits = storeAvailableUnits < 0 ? 0 : storeAvailableUnits;
+    return boundedPromoUnits < boundedStoreUnits
+        ? boundedPromoUnits
+        : boundedStoreUnits;
+  }
+
+  bool get isActiveInStore =>
+      status != 'cancelled' &&
+      status != 'exhausted' &&
+      storeAvailableUnits > 0 &&
+      allocatableUnits > 0;
+}
+
 class Product {
   const Product({
     required this.id,
@@ -23,6 +70,11 @@ class Product {
     this.packageName = 'caja',
     this.unitName = 'unid',
     this.nextExpiryDate,
+    this.coldStockUnits = 0,
+    this.coldPriceIncrement = 0.50,
+    this.promotionalPrice,
+    this.promotionNote,
+    this.promotionOffers = const [],
   });
 
   final String id;
@@ -40,6 +92,11 @@ class Product {
   final String packageName;
   final String unitName;
   final DateTime? nextExpiryDate;
+  final int coldStockUnits;
+  final double coldPriceIncrement;
+  final double? promotionalPrice;
+  final String? promotionNote;
+  final List<ProductPromotionOffer> promotionOffers;
 
   Product copyWith({
     String? id,
@@ -57,6 +114,13 @@ class Product {
     String? packageName,
     String? unitName,
     DateTime? nextExpiryDate,
+    int? coldStockUnits,
+    double? coldPriceIncrement,
+    double? promotionalPrice,
+    String? promotionNote,
+    List<ProductPromotionOffer>? promotionOffers,
+    bool clearPromotionalPrice = false,
+    bool clearPromotionNote = false,
   }) {
     return Product(
       id: id ?? this.id,
@@ -74,8 +138,117 @@ class Product {
       packageName: packageName ?? this.packageName,
       unitName: unitName ?? this.unitName,
       nextExpiryDate: nextExpiryDate ?? this.nextExpiryDate,
+      coldStockUnits: coldStockUnits ?? this.coldStockUnits,
+      coldPriceIncrement: coldPriceIncrement ?? this.coldPriceIncrement,
+      promotionalPrice:
+          clearPromotionalPrice
+              ? null
+              : promotionalPrice ?? this.promotionalPrice,
+      promotionNote:
+          clearPromotionNote ? null : promotionNote ?? this.promotionNote,
+      promotionOffers: promotionOffers ?? this.promotionOffers,
     );
   }
+}
+
+class PromotableLot {
+  const PromotableLot({
+    required this.purchaseItemId,
+    required this.productId,
+    required this.productName,
+    required this.supplierName,
+    required this.receivedAt,
+    required this.expiryDate,
+    required this.warehouseAvailableUnits,
+    required this.storeAvailableUnits,
+    required this.totalAvailableUnits,
+    required this.recommendedLocation,
+    this.supplierId,
+  });
+
+  final String purchaseItemId;
+  final String productId;
+  final String productName;
+  final String? supplierId;
+  final String supplierName;
+  final DateTime receivedAt;
+  final DateTime expiryDate;
+  final int warehouseAvailableUnits;
+  final int storeAvailableUnits;
+  final int totalAvailableUnits;
+  final String recommendedLocation;
+}
+
+class LotPromotion {
+  const LotPromotion({
+    required this.promotionId,
+    required this.purchaseItemId,
+    required this.productId,
+    required this.productName,
+    required this.supplierName,
+    required this.promotionalPrice,
+    required this.promoQuantityTotal,
+    required this.promoQuantityRemaining,
+    required this.warehouseAvailableUnits,
+    required this.storeAvailableUnits,
+    required this.status,
+    required this.createdAt,
+    this.supplierId,
+    this.expiryDate,
+    this.note,
+  });
+
+  final String promotionId;
+  final String purchaseItemId;
+  final String productId;
+  final String productName;
+  final String? supplierId;
+  final String supplierName;
+  final DateTime? expiryDate;
+  final double promotionalPrice;
+  final int promoQuantityTotal;
+  final int promoQuantityRemaining;
+  final int warehouseAvailableUnits;
+  final int storeAvailableUnits;
+  final String status;
+  final String? note;
+  final DateTime createdAt;
+
+  int get allocatableUnits {
+    final boundedPromoUnits =
+        promoQuantityRemaining < 0 ? 0 : promoQuantityRemaining;
+    final boundedStoreUnits = storeAvailableUnits < 0 ? 0 : storeAvailableUnits;
+    return boundedPromoUnits < boundedStoreUnits
+        ? boundedPromoUnits
+        : boundedStoreUnits;
+  }
+
+  bool get hasStoreAvailability => storeAvailableUnits > 0;
+  bool get isActiveInStore =>
+      status != 'cancelled' &&
+      status != 'exhausted' &&
+      storeAvailableUnits > 0 &&
+      allocatableUnits > 0;
+}
+
+class PromotionNotice {
+  const PromotionNotice({
+    required this.id,
+    required this.promotionId,
+    required this.noticeType,
+    required this.message,
+    required this.createdAt,
+    this.resolvedAt,
+  });
+
+  final String id;
+  final String promotionId;
+  final String noticeType;
+  final String message;
+  final DateTime createdAt;
+  final DateTime? resolvedAt;
+
+  bool get isOpen => resolvedAt == null;
 }
 
 class PriceHistoryEntry {

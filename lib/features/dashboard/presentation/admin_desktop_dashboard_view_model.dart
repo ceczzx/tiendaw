@@ -18,6 +18,7 @@ class AdminDesktopDashboardState {
     required this.cashShifts,
     required this.purchases,
     required this.movements,
+    required this.expiringLotAlerts,
     required this.lowStockProducts,
     required this.expiringProducts,
     required this.pendingSyncCount,
@@ -32,6 +33,7 @@ class AdminDesktopDashboardState {
   final List<CashShift> cashShifts;
   final List<Purchase> purchases;
   final List<InventoryMovement> movements;
+  final List<InventoryLotAlert> expiringLotAlerts;
   final List<Product> lowStockProducts;
   final List<Product> expiringProducts;
   final int pendingSyncCount;
@@ -182,6 +184,11 @@ class AdminDesktopDashboardState {
           .where((movement) => _movementBucket(movement) == 'transfer')
           .length;
 
+  int get lossMovementCount =>
+      filteredMovements
+          .where((movement) => _movementBucket(movement) == 'loss')
+          .length;
+
   int get purchaseMovementUnits => filteredMovements
       .where((movement) => _movementBucket(movement) == 'purchase')
       .fold(0, (sum, movement) => sum + movement.quantity);
@@ -194,7 +201,11 @@ class AdminDesktopDashboardState {
       .where((movement) => _movementBucket(movement) == 'transfer')
       .fold(0, (sum, movement) => sum + movement.quantity);
 
-  int get activeAlertCount => lowStockProducts.length + expiringProducts.length;
+  int get lossMovementUnits => filteredMovements
+      .where((movement) => _movementBucket(movement) == 'loss')
+      .fold(0, (sum, movement) => sum + movement.quantity);
+
+  int get activeAlertCount => lowStockProducts.length + expiringLotAlerts.length;
 
   List<Map<String, String>> get sellerOptions {
     final sellers = <String, String>{};
@@ -222,6 +233,7 @@ class AdminDesktopDashboardState {
     List<CashShift>? cashShifts,
     List<Purchase>? purchases,
     List<InventoryMovement>? movements,
+    List<InventoryLotAlert>? expiringLotAlerts,
     List<Product>? lowStockProducts,
     List<Product>? expiringProducts,
     int? pendingSyncCount,
@@ -236,6 +248,7 @@ class AdminDesktopDashboardState {
       cashShifts: cashShifts ?? this.cashShifts,
       purchases: purchases ?? this.purchases,
       movements: movements ?? this.movements,
+      expiringLotAlerts: expiringLotAlerts ?? this.expiringLotAlerts,
       lowStockProducts: lowStockProducts ?? this.lowStockProducts,
       expiringProducts: expiringProducts ?? this.expiringProducts,
       pendingSyncCount: pendingSyncCount ?? this.pendingSyncCount,
@@ -270,6 +283,7 @@ class AdminDesktopDashboardViewModel
   StreamSubscription<List<CashShift>>? _cashShiftsSubscription;
   StreamSubscription<List<Purchase>>? _purchasesSubscription;
   StreamSubscription<List<InventoryMovement>>? _movementsSubscription;
+  StreamSubscription<List<InventoryLotAlert>>? _expiringLotAlertsSubscription;
 
   @override
   Future<AdminDesktopDashboardState> build() async {
@@ -311,22 +325,17 @@ class AdminDesktopDashboardViewModel
     final purchases = await ref.read(purchaseRepositoryProvider).getPurchases();
     final movements =
         await ref.read(catalogRepositoryProvider).getInventoryMovements();
-    final today = DateTime.now();
+    final expiringLotAlerts =
+        await ref.read(catalogRepositoryProvider).getInventoryLotAlerts();
 
     final lowStockProducts =
         catalog.products
             .where((product) => product.stockStore < product.lowStockThreshold)
             .toList();
-    final expiringProducts =
-        catalog.products.where((product) {
-          final expiryDate = product.nextExpiryDate;
-          if (expiryDate == null) {
-            return false;
-          }
-
-          final remainingDays = expiryDate.difference(today).inDays;
-          return remainingDays <= 14;
-        }).toList();
+    final expiringProducts = _productsFromLotAlerts(
+      products: catalog.products,
+      alerts: expiringLotAlerts,
+    );
 
     return AdminDesktopDashboardState(
       categories: catalog.categories,
@@ -335,6 +344,7 @@ class AdminDesktopDashboardViewModel
       cashShifts: cashShifts,
       purchases: purchases,
       movements: movements,
+      expiringLotAlerts: expiringLotAlerts,
       lowStockProducts: lowStockProducts,
       expiringProducts: expiringProducts,
       pendingSyncCount: 0,
@@ -367,6 +377,10 @@ class AdminDesktopDashboardViewModel
         .read(catalogRepositoryProvider)
         .watchInventoryMovements()
         .listen(_handleMovementsUpdate, onError: (_, __) {});
+    _expiringLotAlertsSubscription = ref
+        .read(catalogRepositoryProvider)
+        .watchInventoryLotAlerts()
+        .listen(_handleExpiringLotAlertsUpdate, onError: (_, __) {});
   }
 
   void _disposeRealtimeSubscriptions() {
@@ -375,11 +389,13 @@ class AdminDesktopDashboardViewModel
     _cashShiftsSubscription?.cancel();
     _purchasesSubscription?.cancel();
     _movementsSubscription?.cancel();
+    _expiringLotAlertsSubscription?.cancel();
     _catalogSubscription = null;
     _salesSubscription = null;
     _cashShiftsSubscription = null;
     _purchasesSubscription = null;
     _movementsSubscription = null;
+    _expiringLotAlertsSubscription = null;
   }
 
   void _handleCatalogUpdate(CatalogOverview catalog) {
@@ -388,7 +404,10 @@ class AdminDesktopDashboardViewModel
       return;
     }
 
-    final alerts = _buildProductAlerts(catalog.products);
+    final alerts = _buildProductAlerts(
+      products: catalog.products,
+      expiringLotAlerts: current.expiringLotAlerts,
+    );
     state = AsyncData(
       current.copyWith(
         categories: catalog.categories,
@@ -434,24 +453,38 @@ class AdminDesktopDashboardViewModel
 
     state = AsyncData(current.copyWith(movements: movements));
   }
+
+  void _handleExpiringLotAlertsUpdate(List<InventoryLotAlert> alerts) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    final productAlerts = _buildProductAlerts(
+      products: current.products,
+      expiringLotAlerts: alerts,
+    );
+    state = AsyncData(
+      current.copyWith(
+        expiringLotAlerts: alerts,
+        expiringProducts: productAlerts.expiringProducts,
+      ),
+    );
+  }
 }
 
-_DashboardProductAlerts _buildProductAlerts(List<Product> products) {
-  final today = DateTime.now();
+_DashboardProductAlerts _buildProductAlerts({
+  required List<Product> products,
+  required List<InventoryLotAlert> expiringLotAlerts,
+}) {
   final lowStockProducts =
       products
           .where((product) => product.stockStore < product.lowStockThreshold)
           .toList();
-  final expiringProducts =
-      products.where((product) {
-        final expiryDate = product.nextExpiryDate;
-        if (expiryDate == null) {
-          return false;
-        }
-
-        final remainingDays = expiryDate.difference(today).inDays;
-        return remainingDays <= 14;
-      }).toList();
+  final expiringProducts = _productsFromLotAlerts(
+    products: products,
+    alerts: expiringLotAlerts,
+  );
 
   return _DashboardProductAlerts(
     lowStockProducts: lowStockProducts,
@@ -467,6 +500,23 @@ class _DashboardProductAlerts {
 
   final List<Product> lowStockProducts;
   final List<Product> expiringProducts;
+}
+
+List<Product> _productsFromLotAlerts({
+  required List<Product> products,
+  required List<InventoryLotAlert> alerts,
+}) {
+  final productById = {for (final product in products) product.id: product};
+  final result = <String, Product>{};
+
+  for (final alert in alerts) {
+    final product = productById[alert.productId];
+    if (product != null) {
+      result[product.id] = product;
+    }
+  }
+
+  return result.values.toList();
 }
 
 DateTime _dateOnly(DateTime value) {

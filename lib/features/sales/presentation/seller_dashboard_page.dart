@@ -4,6 +4,7 @@ import 'package:tiendaw/core/utils/formatters.dart';
 import 'package:tiendaw/features/auth/domain/app_user.dart';
 import 'package:tiendaw/features/auth/presentation/session_view_model.dart';
 import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
+import 'package:tiendaw/features/catalog/domain/product_pricing_rules.dart';
 import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 import 'package:tiendaw/features/sales/presentation/seller_dashboard_view_model.dart';
 import 'package:tiendaw/shared/widgets/system_w_widgets.dart';
@@ -284,10 +285,17 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                     final product = filteredProducts[index];
                                     final selected =
                                         product.id == state.selectedProductId;
-                                    final remainingStock =
-                                        product.stockStore -
-                                        state.quantityInCart(product.id);
-                                    final canAddMore = remainingStock > 0;
+                                    final isBeverage = isBeverageProduct(
+                                      product,
+                                      state.categories,
+                                    );
+                                    final remainingNormalStock =
+                                        _remainingNormalStock(state, product);
+                                    final remainingIcedStock =
+                                        _remainingIcedStock(state, product);
+                                    final canAddMore =
+                                        remainingNormalStock > 0 ||
+                                        remainingIcedStock > 0;
 
                                     return InkWell(
                                       borderRadius: BorderRadius.circular(18),
@@ -336,7 +344,9 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                             ),
                                             const SizedBox(height: 6),
                                             Text(
-                                              'Tienda: ${product.stockStore}',
+                                              isBeverage
+                                                  ? 'Normal: $remainingNormalStock | Helada: $remainingIcedStock'
+                                                  : 'Tienda: ${product.stockStore}',
                                               style: Theme.of(
                                                 context,
                                               ).textTheme.bodySmall?.copyWith(
@@ -348,10 +358,27 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                                         ),
                                               ),
                                             ),
+                                            if (hasActivePromotion(product)) ...[
+                                              const SizedBox(height: 6),
+                                              Text(
+                                                'Promo: ${availablePromotionUnits(product)} u. desde ${SystemWFormatters.currency.format(bestPromotionalPrice(product) ?? product.salePrice)}',
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodySmall
+                                                    ?.copyWith(
+                                                      color:
+                                                          selected
+                                                              ? Colors.white
+                                                              : const Color(
+                                                                0xFFEA580C,
+                                                              ),
+                                                    ),
+                                              ),
+                                            ],
                                             const Spacer(),
                                             Text(
                                               SystemWFormatters.currency.format(
-                                                product.salePrice,
+                                                effectiveBaseSalePrice(product),
                                               ),
                                               style: Theme.of(
                                                 context,
@@ -428,9 +455,10 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                             : Column(
                               children:
                                   state.cartItems.map((item) {
-                                    final stockStore = _storeStockForItem(
+                                    final availableUnits = _storeStockForItem(
                                       state,
                                       item.productId,
+                                      isIced: item.isIced,
                                     );
                                     return Padding(
                                       padding: const EdgeInsets.only(
@@ -438,7 +466,7 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                       ),
                                       child: _CartItemRow(
                                         item: item,
-                                        stockStore: stockStore,
+                                        stockStore: availableUnits,
                                         onDecrease:
                                             () => ref
                                                 .read(
@@ -446,11 +474,11 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                                       .notifier,
                                                 )
                                                 .updateCartQuantity(
-                                                  item.productId,
+                                                  item.cartKey,
                                                   item.quantity - 1,
                                                 ),
                                         onIncrease:
-                                            item.quantity >= stockStore
+                                            item.quantity >= availableUnits
                                                 ? null
                                                 : () => ref
                                                     .read(
@@ -458,7 +486,7 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                                           .notifier,
                                                     )
                                                     .updateCartQuantity(
-                                                      item.productId,
+                                                      item.cartKey,
                                                       item.quantity + 1,
                                                     ),
                                         onRemove:
@@ -467,7 +495,7 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                                   sellerDashboardViewModelProvider
                                                       .notifier,
                                                 )
-                                                .removeFromCart(item.productId),
+                                                .removeFromCart(item.cartKey),
                                       ),
                                     );
                                   }).toList(),
@@ -712,8 +740,10 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
     WidgetRef ref,
     Product product,
   ) async {
-    final maxAddable = product.stockStore - state.quantityInCart(product.id);
-    if (maxAddable <= 0) {
+    final availableNormalUnits = _remainingNormalStock(state, product);
+    final availableIcedUnits = _remainingIcedStock(state, product);
+    final totalAvailableUnits = availableNormalUnits + availableIcedUnits;
+    if (totalAvailableUnits <= 0) {
       await showSystemWActionDialog(
         context,
         message:
@@ -727,6 +757,9 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
         .read(sellerDashboardViewModelProvider.notifier)
         .selectProduct(product.id);
     var quantity = 1;
+    var isIced = availableNormalUnits <= 0 && availableIcedUnits > 0;
+    final canSellIced = availableIcedUnits > 0;
+    final canSellNormal = availableNormalUnits > 0;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -737,6 +770,19 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setState) {
+            final maxAddableForMode =
+                isIced ? availableIcedUnits : availableNormalUnits;
+            final previewSubtotal = _previewSelectionSubtotal(
+              state,
+              product,
+              quantity,
+              isIced: isIced,
+            );
+            final startingPrice = _startingSelectionPrice(
+              state,
+              product,
+              isIced: isIced,
+            );
             return Padding(
               padding: EdgeInsets.fromLTRB(
                 20,
@@ -754,16 +800,66 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    SystemWFormatters.currency.format(product.salePrice),
+                    startingPrice == null
+                        ? SystemWFormatters.currency.format(
+                          effectiveSalePrice(product, isIced: isIced),
+                        )
+                        : 'Desde ${SystemWFormatters.currency.format(startingPrice)}',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       color: const Color(0xFF0F766E),
                     ),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Disponible en tienda: $maxAddable unidades',
+                    'Normal: $availableNormalUnits u. | Helada: $availableIcedUnits u.',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
+                  if (hasActivePromotion(product)) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Promo disponible: ${availablePromotionUnits(product)} u. desde ${SystemWFormatters.currency.format(bestPromotionalPrice(product) ?? product.salePrice)}.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFFEA580C),
+                      ),
+                    ),
+                  ],
+                  if (canSellIced || canSellNormal) ...[
+                    const SizedBox(height: 12),
+                    SwitchListTile.adaptive(
+                      contentPadding: EdgeInsets.zero,
+                      value: isIced,
+                      onChanged:
+                          canSellIced
+                              ? (value) {
+                                setState(() {
+                                  isIced = value;
+                                  final modeMax =
+                                      isIced
+                                          ? availableIcedUnits
+                                          : availableNormalUnits;
+                                  if (modeMax <= 0) {
+                                    quantity = 1;
+                                  } else if (quantity > modeMax) {
+                                    quantity = modeMax;
+                                  }
+                                });
+                              }
+                              : null,
+                      secondary: Icon(
+                        isIced
+                            ? Icons.ac_unit_rounded
+                            : Icons.local_drink_rounded,
+                      ),
+                      title: Text(
+                        isIced ? 'Vender como helada' : 'Vender como normal',
+                      ),
+                      subtitle: Text(
+                        isIced
+                            ? '$availableIcedUnits u. heladas | Recargo ${SystemWFormatters.currency.format(coldPriceIncrement(product))}'
+                            : '$availableNormalUnits u. normales disponibles',
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Row(
                     children: [
@@ -791,7 +887,7 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                       ),
                       IconButton(
                         onPressed:
-                            quantity >= maxAddable
+                            quantity >= maxAddableForMode
                                 ? null
                                 : () => setState(() => quantity += 1),
                         icon: const Icon(Icons.add_circle_outline),
@@ -808,7 +904,7 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                       ),
                       Text(
                         SystemWFormatters.currency.format(
-                          product.salePrice * quantity,
+                          previewSubtotal,
                         ),
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
@@ -818,12 +914,21 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: () {
-                        ref
-                            .read(sellerDashboardViewModelProvider.notifier)
-                            .addToCart(product, quantity);
-                        Navigator.of(context).pop();
-                      },
+                      onPressed:
+                          maxAddableForMode <= 0
+                              ? null
+                              : () {
+                                ref
+                                    .read(
+                                      sellerDashboardViewModelProvider.notifier,
+                                    )
+                                    .addToCart(
+                                      product,
+                                      quantity,
+                                      isIced: isIced,
+                                    );
+                                Navigator.of(context).pop();
+                              },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF0F766E),
                         foregroundColor: Colors.white,
@@ -881,7 +986,9 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                         children: [
                           Expanded(
                             child: Text(
-                              item.productName,
+                              item.isIced
+                                  ? '${item.productName} (helada)'
+                                  : item.productName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -987,10 +1094,16 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
     }
   }
 
-  int _storeStockForItem(SellerDashboardState state, String productId) {
+  int _storeStockForItem(
+    SellerDashboardState state,
+    String productId, {
+    required bool isIced,
+  }) {
     for (final product in state.products) {
       if (product.id == productId) {
-        return product.stockStore;
+        return isIced
+            ? _remainingIcedStock(state, product)
+            : _remainingNormalStock(state, product);
       }
     }
     return 0;
@@ -1028,14 +1141,18 @@ class _CartItemRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  item.productName,
+                  item.isIced
+                      ? '${item.productName} (helada)'
+                      : item.productName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Tienda: $stockStore u.',
+                  item.isIced
+                      ? 'Heladas disponibles: $stockStore u.'
+                      : 'Normales disponibles: $stockStore u.',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 4),
@@ -1045,6 +1162,13 @@ class _CartItemRow extends StatelessWidget {
                     color: const Color(0xFF0F766E),
                   ),
                 ),
+                if (item.usedPromotionalPrice || item.isIced) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    _saleLineDescriptor(item),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
               ],
             ),
           ),
@@ -1173,4 +1297,141 @@ bool _isErrorFeedback(String message) {
       message.trim().toLowerCase().startsWith('la tienda solo tiene') ||
       message.trim().toLowerCase().startsWith('inicia la caja') ||
       message.trim().toLowerCase().startsWith('no hay una caja');
+}
+
+String _saleLineDescriptor(SaleLine item) {
+  final details = <String>[];
+  details.add(item.isIced ? 'estado: helada' : 'estado: normal');
+  if (item.usedPromotionalPrice) {
+    details.add('promo lote');
+  }
+  if (item.isIced && item.priceAdjustment > 0) {
+    details.add(
+      'helada +${SystemWFormatters.currency.format(item.priceAdjustment)}',
+    );
+  }
+  return details.join(' | ');
+}
+
+double? _startingSelectionPrice(
+  SellerDashboardState state,
+  Product product, {
+  required bool isIced,
+}) {
+  final lines = _previewSelectionLines(state, product, 1, isIced: isIced);
+  if (lines.isEmpty) {
+    return null;
+  }
+  return lines.first.unitPrice;
+}
+
+double _previewSelectionSubtotal(
+  SellerDashboardState state,
+  Product product,
+  int quantity, {
+  required bool isIced,
+}) {
+  return _previewSelectionLines(
+    state,
+    product,
+    quantity,
+    isIced: isIced,
+  ).fold(0, (sum, item) => sum + item.subtotal);
+}
+
+List<SaleLine> _previewSelectionLines(
+  SellerDashboardState state,
+  Product product,
+  int quantity, {
+  required bool isIced,
+}) {
+  if (quantity <= 0) {
+    return const [];
+  }
+
+  final priceAdjustment = isIced ? coldPriceIncrement(product) : 0.0;
+  final lines = <SaleLine>[];
+  var remainingQuantity = quantity;
+  var reservedPromotionUnits = state.promotionalQuantityInCart(product.id);
+
+  for (final offer in activePromotionOffers(product)) {
+    if (remainingQuantity <= 0) {
+      break;
+    }
+
+    var availablePromoUnits = offer.allocatableUnits;
+    if (reservedPromotionUnits >= availablePromoUnits) {
+      reservedPromotionUnits -= availablePromoUnits;
+      continue;
+    }
+    if (reservedPromotionUnits > 0) {
+      availablePromoUnits -= reservedPromotionUnits;
+      reservedPromotionUnits = 0;
+    }
+    if (availablePromoUnits <= 0) {
+      continue;
+    }
+
+    final promotionalQuantity =
+        remainingQuantity < availablePromoUnits
+            ? remainingQuantity
+            : availablePromoUnits;
+    lines.add(
+      SaleLine(
+        productId: product.id,
+        productName: product.name,
+        quantity: promotionalQuantity,
+        unitPrice: offer.promotionalPrice + priceAdjustment,
+        baseUnitPrice: offer.promotionalPrice,
+        priceAdjustment: priceAdjustment,
+        isIced: isIced,
+        usedPromotionalPrice: true,
+      ),
+    );
+    remainingQuantity -= promotionalQuantity;
+  }
+
+  if (remainingQuantity > 0) {
+    lines.add(
+      SaleLine(
+        productId: product.id,
+        productName: product.name,
+        quantity: remainingQuantity,
+        unitPrice: product.salePrice + priceAdjustment,
+        baseUnitPrice: product.salePrice,
+        priceAdjustment: priceAdjustment,
+        isIced: isIced,
+      ),
+    );
+  }
+
+  return lines;
+}
+
+int _remainingIcedStock(SellerDashboardState state, Product product) {
+  final icedStock = _icedStockForProduct(product);
+  final remaining = icedStock - state.icedQuantityInCart(product.id);
+  return remaining < 0 ? 0 : remaining;
+}
+
+int _remainingNormalStock(SellerDashboardState state, Product product) {
+  final normalStock = _normalStockForProduct(product);
+  final remaining = normalStock - state.normalQuantityInCart(product.id);
+  return remaining < 0 ? 0 : remaining;
+}
+
+int _icedStockForProduct(Product product) {
+  final icedUnits = product.coldStockUnits;
+  if (icedUnits <= 0) {
+    return 0;
+  }
+  if (icedUnits >= product.stockStore) {
+    return product.stockStore;
+  }
+  return icedUnits;
+}
+
+int _normalStockForProduct(Product product) {
+  final normalUnits = product.stockStore - _icedStockForProduct(product);
+  return normalUnits < 0 ? 0 : normalUnits;
 }

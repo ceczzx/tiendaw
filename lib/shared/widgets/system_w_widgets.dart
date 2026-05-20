@@ -66,52 +66,71 @@ class MetricCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final content = Padding(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isTight =
+            constraints.maxHeight.isFinite && constraints.maxHeight <= 180;
+        final padding = isTight ? 16.0 : 18.0;
+        final iconSize = isTight ? 40.0 : 42.0;
+        final gapAfterIcon = isTight ? 12.0 : 16.0;
+        final gapAfterLabel = isTight ? 6.0 : 8.0;
+        final gapBeforeDetail = isTight ? 4.0 : 6.0;
+
+        final content = Padding(
+          padding: EdgeInsets.all(padding),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: accent.withAlpha(31),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(Icons.insights_rounded, color: accent),
+              Row(
+                children: [
+                  Container(
+                    width: iconSize,
+                    height: iconSize,
+                    decoration: BoxDecoration(
+                      color: accent.withAlpha(31),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Icon(Icons.insights_rounded, color: accent),
+                  ),
+                  const Spacer(),
+                  if (onTap != null)
+                    Icon(
+                      Icons.open_in_new_rounded,
+                      size: 18,
+                      color: accent.withAlpha(190),
+                    ),
+                ],
               ),
-              const Spacer(),
-              if (onTap != null)
-                Icon(
-                  Icons.open_in_new_rounded,
-                  size: 18,
-                  color: accent.withAlpha(190),
+              SizedBox(height: gapAfterIcon),
+              Text(label, style: Theme.of(context).textTheme.bodyMedium),
+              SizedBox(height: gapAfterLabel),
+              Text(value, style: Theme.of(context).textTheme.headlineMedium),
+              if (detail != null) ...[
+                SizedBox(height: gapBeforeDetail),
+                Text(
+                  detail!,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                  maxLines: isTight ? 2 : null,
+                  overflow:
+                      isTight ? TextOverflow.ellipsis : TextOverflow.visible,
                 ),
+              ],
             ],
           ),
-          const Spacer(),
-          Text(label, style: Theme.of(context).textTheme.bodyMedium),
-          const SizedBox(height: 8),
-          Text(value, style: Theme.of(context).textTheme.headlineMedium),
-          if (detail != null) ...[
-            const SizedBox(height: 6),
-            Text(detail!, style: Theme.of(context).textTheme.bodyMedium),
-          ],
-        ],
-      ),
-    );
+        );
 
-    return Card(
-      child:
-          onTap == null
-              ? content
-              : InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: onTap,
-                child: content,
-              ),
+        return Card(
+          child:
+              onTap == null
+                  ? content
+                  : InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: onTap,
+                    child: content,
+                  ),
+        );
+      },
     );
   }
 }
@@ -213,8 +232,7 @@ class SystemWActionDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent =
-        isError ? const Color(0xFFB91C1C) : const Color(0xFF0F766E);
+    final accent = isError ? const Color(0xFFB91C1C) : const Color(0xFF0F766E);
     final softBackground =
         isError ? const Color(0xFFFEF2F2) : const Color(0xFFECFDF5);
     final borderColor =
@@ -235,7 +253,9 @@ class SystemWActionDialog extends StatelessWidget {
               border: Border.all(color: borderColor),
             ),
             child: Icon(
-              isError ? Icons.warning_amber_rounded : Icons.check_circle_rounded,
+              isError
+                  ? Icons.warning_amber_rounded
+                  : Icons.check_circle_rounded,
               color: accent,
             ),
           ),

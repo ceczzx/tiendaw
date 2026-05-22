@@ -46,9 +46,12 @@ class PurchaseRepositoryImpl implements PurchaseRepository {
 
   @override
   Future<void> registerPurchase(Purchase purchase) async {
-    await _remote.pushPurchase(purchase);
+    final persistedPurchase = await _remote.pushPurchase(purchase);
     await _local.upsertPurchase(
-      purchase.copyWith(syncStatus: SyncStatus.synced, syncAttempts: 0),
+      persistedPurchase.copyWith(
+        syncStatus: SyncStatus.synced,
+        syncAttempts: 0,
+      ),
     );
   }
 
@@ -59,9 +62,12 @@ class PurchaseRepositoryImpl implements PurchaseRepository {
       return;
     }
 
-    await _remote.pushPurchase(purchase);
+    final persistedPurchase = await _remote.pushPurchase(purchase);
     await _local.upsertPurchase(
-      purchase.copyWith(syncStatus: SyncStatus.synced, syncAttempts: 0),
+      persistedPurchase.copyWith(
+        syncStatus: SyncStatus.synced,
+        syncAttempts: 0,
+      ),
     );
   }
 }

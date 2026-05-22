@@ -4,6 +4,9 @@ class PurchaseLine {
   const PurchaseLine({
     required this.productId,
     required this.productName,
+    this.categoryId,
+    this.sku,
+    this.salePrice,
     required this.quantity,
     required this.unitsPerPackage,
     required this.unitCost,
@@ -12,6 +15,9 @@ class PurchaseLine {
 
   final String productId;
   final String productName;
+  final String? categoryId;
+  final String? sku;
+  final double? salePrice;
   final int quantity;
   final int unitsPerPackage;
   final double unitCost;

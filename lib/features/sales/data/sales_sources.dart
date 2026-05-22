@@ -1,3 +1,5 @@
+// ignore_for_file: library_private_types_in_public_api, unused_element
+
 import 'dart:async';
 
 import 'package:supabase_flutter/supabase_flutter.dart';

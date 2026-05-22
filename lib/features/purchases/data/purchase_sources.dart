@@ -1,3 +1,5 @@
+// ignore_for_file: unused_catch_clause
+
 import 'dart:async';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -48,7 +50,7 @@ class PurchaseRemoteDataSource {
     final rows = await _client
         .from('purchases')
         .select(
-          'id, received_at, supplier:suppliers(id, name, phone), admin:profiles(full_name), purchase_items(product_id, quantity, unit_cost, expiry_date, product:products(name, units_per_package))',
+          'id, received_at, supplier:suppliers!purchases_supplier_id_fkey(id, name, phone), admin:profiles!purchases_admin_id_fkey(full_name), purchase_items(id, product_id, quantity, unit_cost, expiry_date, product:products!purchase_items_product_id_fkey(name, units_per_package))',
         )
         .order('received_at', ascending: false);
 
@@ -101,7 +103,7 @@ class PurchaseRemoteDataSource {
     );
   }
 
-  Future<void> pushPurchase(Purchase purchase) async {
+  Future<Purchase> pushPurchase(Purchase purchase) async {
     final currentUser = _client.auth.currentUser;
     if (currentUser == null) {
       throw StateError('No hay una sesion activa para registrar compras.');
@@ -117,50 +119,77 @@ class PurchaseRemoteDataSource {
             );
     final warehouseId = await _resolveLocationId('warehouse');
 
-    await _client.from('purchases').insert({
-      'id': purchase.id,
-      'supplier_id': supplierId,
-      'admin_id': currentUser.id,
-      'warehouse_id': warehouseId,
-      'total_price': purchase.total,
-      'received_at': _toSupabaseDateTime(purchase.receivedAt),
-    });
+    // La BD crea productos nuevos cuando product_id es null.
+    final itemsPayload =
+        purchase.items.map((item) {
+          final isNewProduct = item.productId.trim().isEmpty;
+          return {
+            'product_id': isNewProduct ? null : item.productId,
+            'quantity': item.quantity,
+            'unit_cost': item.unitCost,
+            'expiry_date': item.expiryDate?.toIso8601String(),
+            'name': isNewProduct ? item.productName : null,
+            'category_id': isNewProduct ? item.categoryId : null,
+            'sku': isNewProduct ? item.sku : null,
+            'sale_price': isNewProduct ? item.salePrice : null,
+            'units_per_package': isNewProduct ? item.unitsPerPackage : 1,
+          };
+        }).toList();
 
-    await _client
-        .from('purchase_items')
-        .insert(
-          purchase.items
-              .map(
-                (item) => {
-                  'purchase_id': purchase.id,
-                  'product_id': item.productId,
-                  'quantity': item.quantity,
-                  'unit_cost': item.unitCost,
-                  'expiry_date': item.expiryDate?.toIso8601String(),
-                },
-              )
-              .toList(),
-        );
+    dynamic result;
+    try {
+      result = await _client.rpc(
+        'registrar_compra', // Llama a la versión limpia y definitiva
+        params: {
+          'p_supplier_id': supplierId,
+          'p_admin_id': currentUser.id,
+          'p_warehouse_id': warehouseId,
+          'p_total_price': purchase.total,
+          'p_items': itemsPayload,
+          // Omitimos p_received_at a propósito para que la BD use now() automático
+        },
+      );
+    } on PostgrestException catch (error) {
+      rethrow;
+    } catch (e) {
+      rethrow;
+    }
+
+    final response = Map<String, dynamic>.from(result as Map);
+    final purchaseId = response['purchase_id']?.toString();
+
+    if (purchaseId == null || purchaseId.isEmpty) {
+      throw StateError(
+        // Corregí el nombre de la función en tu mensaje de error para que no te confundas
+        'La funcion registrar_compra no devolvio el id de la compra.',
+      );
+    }
 
     if (supplierId != null) {
-      await _client
-          .from('product_prices')
-          .insert(
-            purchase.items
-                .map(
-                  (item) => {
-                    'product_id': item.productId,
-                    'supplier_id': supplierId,
-                    'unit_cost': item.unitCost,
-                    'effective_at': _toSupabaseDateTime(purchase.receivedAt),
-                  },
-                )
-                .toList(),
-          );
+      final priceItems =
+          purchase.items
+              .where((item) => item.productId.trim().isNotEmpty)
+              .map(
+                (item) => {
+                  'product_id': item.productId,
+                  'supplier_id': supplierId,
+                  'unit_cost': item.unitCost,
+                  'effective_at': _toSupabaseDateTime(purchase.receivedAt),
+                },
+              )
+              .toList();
+      if (priceItems.isNotEmpty) {
+        await _client.from('product_prices').insert(priceItems);
+      }
     }
+
+    return purchase.copyWith(id: purchaseId, supplierId: supplierId);
   }
 
-  Future<String> _resolveSupplierId(String supplierName, {String? phone}) async {
+  Future<String> _resolveSupplierId(
+    String supplierName, {
+    String? phone,
+  }) async {
     final normalizedPhone = phone?.trim();
     final rows = await _client
         .from('suppliers')

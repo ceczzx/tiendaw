@@ -1,3 +1,5 @@
+// ignore_for_file: unused_element
+
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -49,7 +51,8 @@ class PurchaseDraftLine {
 
   double get subtotal => totalUnits * unitCost;
 
-  bool get requiresSupplier => _normalizeProductType(productType) == 'proveedor';
+  bool get requiresSupplier =>
+      _normalizeProductType(productType) == 'proveedor';
 }
 
 class AdminMobileDashboardState {
@@ -332,12 +335,14 @@ class AdminMobileDashboardViewModel
     }
 
     try {
-      await ref.read(catalogRepositoryProvider).activateLotPromotion(
-        purchaseItemId: purchaseItemId,
-        promotionalQuantity: promotionalQuantity,
-        promotionalPrice: promotionalPrice,
-        promotionNote: promotionNote,
-      );
+      await ref
+          .read(catalogRepositoryProvider)
+          .activateLotPromotion(
+            purchaseItemId: purchaseItemId,
+            promotionalQuantity: promotionalQuantity,
+            promotionalPrice: promotionalPrice,
+            promotionNote: promotionNote,
+          );
       await _refreshAll(selectedProductId: current.selectedProductId);
       state = AsyncData(
         state.requireValue.copyWith(
@@ -367,9 +372,7 @@ class AdminMobileDashboardViewModel
           .cancelLotPromotion(promotionId: promotionId);
       await _refreshAll(selectedProductId: current.selectedProductId);
       state = AsyncData(
-        state.requireValue.copyWith(
-          feedbackMessage: 'Promocion retirada.',
-        ),
+        state.requireValue.copyWith(feedbackMessage: 'Promocion retirada.'),
       );
       return true;
     } catch (error) {
@@ -393,11 +396,13 @@ class AdminMobileDashboardViewModel
     }
 
     try {
-      await ref.read(catalogRepositoryProvider).updateProductColdState(
-        productId: productId,
-        coldStockUnits: coldStockUnits,
-        coldPriceIncrement: coldPriceIncrement,
-      );
+      await ref
+          .read(catalogRepositoryProvider)
+          .updateProductColdState(
+            productId: productId,
+            coldStockUnits: coldStockUnits,
+            coldPriceIncrement: coldPriceIncrement,
+          );
       await _refreshAll(selectedProductId: productId);
       state = AsyncData(
         state.requireValue.copyWith(
@@ -408,8 +413,7 @@ class AdminMobileDashboardViewModel
     } catch (error) {
       state = AsyncData(
         current.copyWith(
-          feedbackMessage:
-              'No se pudo actualizar el estado helado: $error',
+          feedbackMessage: 'No se pudo actualizar el estado helado: $error',
         ),
       );
       return false;
@@ -427,16 +431,16 @@ class AdminMobileDashboardViewModel
     }
 
     try {
-      await ref.read(catalogRepositoryProvider).registerInventoryLoss(
-        purchaseItemId: purchaseItemId,
-        quantity: quantity,
-        notes: notes,
-      );
+      await ref
+          .read(catalogRepositoryProvider)
+          .registerInventoryLoss(
+            purchaseItemId: purchaseItemId,
+            quantity: quantity,
+            notes: notes,
+          );
       await _refreshAll(selectedProductId: current.selectedProductId);
       state = AsyncData(
-        state.requireValue.copyWith(
-          feedbackMessage: 'Perdida registrada.',
-        ),
+        state.requireValue.copyWith(feedbackMessage: 'Perdida registrada.'),
       );
       return true;
     } catch (error) {
@@ -520,7 +524,8 @@ class AdminMobileDashboardViewModel
     if (current.purchaseDraftItems.isEmpty) {
       state = AsyncData(
         current.copyWith(
-          feedbackMessage: 'Agrega al menos un producto antes de registrar la compra.',
+          feedbackMessage:
+              'Agrega al menos un producto antes de registrar la compra.',
         ),
       );
       return false;
@@ -529,11 +534,13 @@ class AdminMobileDashboardViewModel
     try {
       final purchaseItems = <PurchaseLine>[];
       for (final draft in current.purchaseDraftItems) {
-        final product = await _resolvePurchaseDraftProduct(draft, current);
         purchaseItems.add(
           PurchaseLine(
-            productId: product.id,
-            productName: product.name,
+            productId: draft.productId ?? '',
+            productName: draft.productName,
+            categoryId: draft.categoryId,
+            sku: null,
+            salePrice: draft.salePrice,
             quantity: draft.quantity,
             unitsPerPackage: draft.unitsPerPackage,
             unitCost: draft.unitCost,
@@ -645,10 +652,9 @@ class AdminMobileDashboardViewModel
         await ref.read(catalogRepositoryProvider).getInventoryMovements();
     final expiringLotAlerts =
         await ref.read(catalogRepositoryProvider).getInventoryLotAlerts();
-    final expiredLotAlerts =
-        await ref.read(
-          catalogRepositoryProvider,
-        ).getInventoryLotAlerts(expiredOnly: true);
+    final expiredLotAlerts = await ref
+        .read(catalogRepositoryProvider)
+        .getInventoryLotAlerts(expiredOnly: true);
 
     final productId =
         catalog.products.any((product) => product.id == selectedProductId)
@@ -723,8 +729,7 @@ class AdminMobileDashboardViewModel
           (await repository.ensureCategory(
             name: draft.categoryName?.trim() ?? '',
             prefix: draft.categoryPrefix?.trim().toUpperCase() ?? '',
-          ))
-              .id;
+          )).id;
 
       return repository.ensureProduct(
         categoryId: resolvedCategoryId,

@@ -1,3 +1,5 @@
+// ignore_for_file: unused_local_variable, unused_element, prefer_null_aware_operators
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tiendaw/core/utils/formatters.dart';
@@ -638,8 +640,7 @@ class _MovementsSection extends StatelessWidget {
                       )
                       .toList(),
               emptyTitle: 'Sin alertas de lotes',
-              emptyCaption:
-                  'No hay lotes disponibles con vencimiento cercano.',
+              emptyCaption: 'No hay lotes disponibles con vencimiento cercano.',
             ),
           ),
           const SizedBox(height: 20),
@@ -1082,9 +1083,8 @@ class _PurchaseDetailDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final supplierPurchases =
-        _purchasesForSameSupplier(state, purchase)
-          ..sort((a, b) => b.receivedAt.compareTo(a.receivedAt));
+    final supplierPurchases = _purchasesForSameSupplier(state, purchase)
+      ..sort((a, b) => b.receivedAt.compareTo(a.receivedAt));
     final analytics = _buildPurchaseAnalytics(state, purchase);
     final supplierTotal = supplierPurchases.fold<double>(
       0,
@@ -1192,40 +1192,30 @@ class _PurchaseDetailDialog extends StatelessWidget {
                   'Vence',
                 ],
                 rows:
-                    purchase.items
-                        .map(
-                          (item) {
-                            final product = productById[item.productId];
-                            return _DesktopTableRow(
-                              cells: [
-                                Text(item.productName),
-                                Text(product?.productType ?? 'Sin tipo'),
-                                Text(
-                                  '${item.quantity} x ${item.unitsPerPackage}',
+                    purchase.items.map((item) {
+                      final product = productById[item.productId];
+                      return _DesktopTableRow(
+                        cells: [
+                          Text(item.productName),
+                          Text(product?.productType ?? 'Sin tipo'),
+                          Text('${item.quantity} x ${item.unitsPerPackage}'),
+                          Text('${item.totalUnits} u.'),
+                          Text(
+                            SystemWFormatters.currency.format(item.unitCost),
+                          ),
+                          Text(
+                            SystemWFormatters.currency.format(item.subtotal),
+                          ),
+                          Text(
+                            item.expiryDate == null
+                                ? 'Sin fecha'
+                                : SystemWFormatters.shortDate.format(
+                                  item.expiryDate!,
                                 ),
-                                Text('${item.totalUnits} u.'),
-                                Text(
-                                  SystemWFormatters.currency.format(
-                                    item.unitCost,
-                                  ),
-                                ),
-                                Text(
-                                  SystemWFormatters.currency.format(
-                                    item.subtotal,
-                                  ),
-                                ),
-                                Text(
-                                  item.expiryDate == null
-                                      ? 'Sin fecha'
-                                      : SystemWFormatters.shortDate.format(
-                                        item.expiryDate!,
-                                      ),
-                                ),
-                              ],
-                            );
-                          },
-                        )
-                        .toList(),
+                          ),
+                        ],
+                      );
+                    }).toList(),
               ),
             ),
             const SizedBox(height: 20),
@@ -1257,7 +1247,12 @@ class _PurchaseDetailDialog extends StatelessWidget {
                                 width: 280,
                                 child: Text(_purchaseItemsBreakdownLabel(item)),
                               ),
-                              Text(_buildPurchaseAnalytics(state, item).purchaseModeLabel),
+                              Text(
+                                _buildPurchaseAnalytics(
+                                  state,
+                                  item,
+                                ).purchaseModeLabel,
+                              ),
                               Text(
                                 SystemWFormatters.currency.format(item.total),
                               ),
@@ -1783,7 +1778,8 @@ bool _sameSupplierIdentity(Purchase left, Purchase right) {
     return leftSupplierId == rightSupplierId;
   }
 
-  return left.supplier.trim().toLowerCase() == right.supplier.trim().toLowerCase();
+  return left.supplier.trim().toLowerCase() ==
+      right.supplier.trim().toLowerCase();
 }
 
 class _ProductNameCell extends StatelessWidget {
@@ -2225,7 +2221,8 @@ _PurchaseAnalytics _buildPurchaseAnalytics(
         canSummarizeCommercialMetrics
             ? 'Compra simple'
             : 'Compra mixta (${uniqueProductIds.length} productos)',
-    referenceUnitCost: canSummarizeCommercialMetrics ? referenceUnitCost ?? 0 : 0,
+    referenceUnitCost:
+        canSummarizeCommercialMetrics ? referenceUnitCost ?? 0 : 0,
     referenceSalePrice:
         canSummarizeCommercialMetrics ? referenceSalePrice ?? 0 : 0,
     projectedProfit: canSummarizeCommercialMetrics ? projectedProfit : 0,
@@ -2522,7 +2519,7 @@ String _movementSupplierLabel(InventoryMovement movement) {
     'Compra' => 'Sin proveedor',
     'Transferencia' => 'Sin proveedor',
     'Perdida' => 'Sin proveedor',
-      _ => 'No aplica',
+    _ => 'No aplica',
   };
 }
 

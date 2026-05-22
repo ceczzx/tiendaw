@@ -93,8 +93,7 @@ class SellerDashboardState {
   int get cartItemsCount =>
       cartItems.fold(0, (sum, item) => sum + item.quantity);
 
-  double get cartTotal =>
-      cartItems.fold(0, (sum, item) => sum + item.subtotal);
+  double get cartTotal => cartItems.fold(0, (sum, item) => sum + item.subtotal);
 
   bool get hasOpenShift => currentShift?.isOpen ?? false;
 
@@ -247,7 +246,8 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     if (!current.hasOpenShift) {
       state = AsyncData(
         current.copyWith(
-          feedbackMessage: 'Inicia la caja antes de agregar productos a la venta.',
+          feedbackMessage:
+              'Inicia la caja antes de agregar productos a la venta.',
         ),
       );
       return;
@@ -270,7 +270,8 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       final availableNormalStock = _normalStockForProduct(product);
       final nextNormalQuantity =
           current.normalQuantityInCart(product.id) + quantity;
-      if (availableNormalStock <= 0 || nextNormalQuantity > availableNormalStock) {
+      if (availableNormalStock <= 0 ||
+          nextNormalQuantity > availableNormalStock) {
         state = AsyncData(
           current.copyWith(
             feedbackMessage:
@@ -315,10 +316,16 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
 
     final sameModeIndexes =
-        next.asMap().entries.where((entry) {
-          final item = entry.value;
-          return item.productId == productId && item.isIced == existing.isIced;
-        }).map((entry) => entry.key).toList()
+        next
+            .asMap()
+            .entries
+            .where((entry) {
+              final item = entry.value;
+              return item.productId == productId &&
+                  item.isIced == existing.isIced;
+            })
+            .map((entry) => entry.key)
+            .toList()
           ..sort((left, right) => right.compareTo(left));
     final otherModePromotionalUnits = next
         .where(
@@ -328,7 +335,8 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
               item.usedPromotionalPrice,
         )
         .fold(0, (sum, item) => sum + item.quantity);
-    final desiredModeQuantity = next
+    final desiredModeQuantity =
+        next
             .asMap()
             .entries
             .where(
@@ -393,11 +401,16 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
 
     final sameModeIndexes =
-        next.asMap().entries.where((entry) {
-          final item = entry.value;
-          return item.productId == existing.productId &&
-              item.isIced == existing.isIced;
-        }).map((entry) => entry.key).toList()
+        next
+            .asMap()
+            .entries
+            .where((entry) {
+              final item = entry.value;
+              return item.productId == existing.productId &&
+                  item.isIced == existing.isIced;
+            })
+            .map((entry) => entry.key)
+            .toList()
           ..sort((left, right) => right.compareTo(left));
     final remainingModeQuantity = next
         .asMap()
@@ -495,8 +508,10 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
   }
 
-  Future<bool> registerCartSale(AppUser user, PaymentMethod paymentMethod)
-      async {
+  Future<bool> registerCartSale(
+    AppUser user,
+    PaymentMethod paymentMethod,
+  ) async {
     final current = state.valueOrNull;
     if (current == null || current.cartItems.isEmpty) {
       return false;
@@ -633,7 +648,9 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
 
     if (!current.hasOpenShift) {
       state = AsyncData(
-        current.copyWith(feedbackMessage: 'No hay una caja abierta para cerrar.'),
+        current.copyWith(
+          feedbackMessage: 'No hay una caja abierta para cerrar.',
+        ),
       );
       return false;
     }
@@ -814,7 +831,9 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
   }
 
   void _mergeCartLine(List<SaleLine> cartItems, SaleLine incoming) {
-    final index = cartItems.indexWhere((item) => item.cartKey == incoming.cartKey);
+    final index = cartItems.indexWhere(
+      (item) => item.cartKey == incoming.cartKey,
+    );
     if (index == -1) {
       cartItems.add(incoming);
       return;
@@ -833,6 +852,7 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     );
   }
 
+  // ignore: unused_element
   int _storeStockForProduct(SellerDashboardState state, String productId) {
     final product = _productById(state, productId);
     return product?.stockStore ?? 0;
@@ -935,10 +955,7 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
 
     state = AsyncData(
-      current.copyWith(
-        currentShift: shift,
-        clearCurrentShift: shift == null,
-      ),
+      current.copyWith(currentShift: shift, clearCurrentShift: shift == null),
     );
   }
 }

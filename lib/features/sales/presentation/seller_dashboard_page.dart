@@ -293,6 +293,16 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                         _remainingNormalStock(state, product);
                                     final remainingIcedStock =
                                         _remainingIcedStock(state, product);
+                                    final remainingPromotionStock =
+                                        _remainingPromotionStock(
+                                          state,
+                                          product,
+                                        );
+                                    final remainingRegularStoreStock =
+                                        _remainingRegularStoreStock(
+                                          state,
+                                          product,
+                                        );
                                     final canAddMore =
                                         remainingNormalStock > 0 ||
                                         remainingIcedStock > 0;
@@ -361,7 +371,22 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                             if (hasActivePromotion(product)) ...[
                                               const SizedBox(height: 6),
                                               Text(
-                                                'Promo: ${availablePromotionUnits(product)} u. desde ${SystemWFormatters.currency.format(bestPromotionalPrice(product) ?? product.salePrice)}',
+                                                'Promo: $remainingPromotionStock u. | Regular: $remainingRegularStoreStock u.',
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodySmall
+                                                    ?.copyWith(
+                                                      color:
+                                                          selected
+                                                              ? Colors.white
+                                                              : const Color(
+                                                                0xFFEA580C,
+                                                              ),
+                                                    ),
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                'Precio promo desde ${SystemWFormatters.currency.format(bestPromotionalPrice(product) ?? product.salePrice)}',
                                                 style: Theme.of(context)
                                                     .textTheme
                                                     .bodySmall
@@ -1302,9 +1327,9 @@ bool _isErrorFeedback(String message) {
 String _saleLineDescriptor(SaleLine item) {
   final details = <String>[];
   details.add(item.isIced ? 'estado: helada' : 'estado: normal');
-  if (item.usedPromotionalPrice) {
-    details.add('promo lote');
-  }
+  details.add(
+    item.usedPromotionalPrice ? 'precio promo por lote' : 'precio normal',
+  );
   if (item.isIced && item.priceAdjustment > 0) {
     details.add(
       'helada +${SystemWFormatters.currency.format(item.priceAdjustment)}',
@@ -1419,6 +1444,19 @@ int _remainingIcedStock(SellerDashboardState state, Product product) {
 int _remainingNormalStock(SellerDashboardState state, Product product) {
   final normalStock = _normalStockForProduct(product);
   final remaining = normalStock - state.normalQuantityInCart(product.id);
+  return remaining < 0 ? 0 : remaining;
+}
+
+int _remainingPromotionStock(SellerDashboardState state, Product product) {
+  final remaining =
+      availablePromotionUnits(product) -
+      state.promotionalQuantityInCart(product.id);
+  return remaining < 0 ? 0 : remaining;
+}
+
+int _remainingRegularStoreStock(SellerDashboardState state, Product product) {
+  final remainingStore = product.stockStore - state.quantityInCart(product.id);
+  final remaining = remainingStore - _remainingPromotionStock(state, product);
   return remaining < 0 ? 0 : remaining;
 }
 

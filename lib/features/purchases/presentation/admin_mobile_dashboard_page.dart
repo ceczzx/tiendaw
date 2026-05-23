@@ -4090,6 +4090,11 @@ class _MovementPreviewCard extends StatelessWidget {
                       : '${_movementPromotionStatusLabel(promotionStatus)} | ${SystemWFormatters.currency.format(promotionalPrice!)}',
               isStrong: true,
             ),
+          if (!isPromotionPriority)
+            const _InfoLine(
+              label: 'Tipo de lote',
+              value: 'Stock normal',
+            ),
           if ((promotionNote ?? '').trim().isNotEmpty)
             _InfoLine(label: 'Nota promo', value: promotionNote!.trim()),
           _InfoLine(label: 'Cantidad a mover', value: '$quantity u.'),
@@ -4236,6 +4241,11 @@ class _MovementLotSelectorCard extends StatelessWidget {
                                         : '${_movementPromotionStatusLabel(lot.promotionStatus)} | ${SystemWFormatters.currency.format(lot.promotionalPrice!)}',
                                 isStrong: true,
                               ),
+                            if (!lot.isPromotionPriority)
+                              const _InfoLine(
+                                label: 'Tipo de lote',
+                                value: 'Stock normal',
+                              ),
                             if ((lot.promotionNote ?? '').trim().isNotEmpty)
                               _InfoLine(
                                 label: 'Nota promo',
@@ -4343,7 +4353,9 @@ class _MovementDraftCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final promoPriorityCount = items.where((item) => item.isPromotionPriority).length;
+    final promoPriorityCount =
+        items.where((item) => item.isPromotionPriority).length;
+    final regularCount = items.length - promoPriorityCount;
 
     return Container(
       width: double.infinity,
@@ -4385,6 +4397,10 @@ class _MovementDraftCard extends StatelessWidget {
               label: 'Lotes en promo',
               value: '$promoPriorityCount',
             ),
+            _InfoLine(
+              label: 'Lotes normales',
+              value: '$regularCount',
+            ),
             const SizedBox(height: 8),
             ...items.asMap().entries.map((entry) {
               final index = entry.key;
@@ -4422,8 +4438,14 @@ class _MovementDraftCard extends StatelessWidget {
                             'Vence: ${_formatOptionalDate(item.expiryDate)}',
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
+                          const SizedBox(height: 4),
+                          Text(
+                            item.isPromotionPriority
+                                ? 'Tipo: lote en promo'
+                                : 'Tipo: stock normal',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
                           if (item.isPromotionPriority) ...[
-                            const SizedBox(height: 4),
                             Text(
                               item.promotionalPrice == null
                                   ? 'Promo por lote: ${_movementPromotionStatusLabel(item.promotionStatus)}'

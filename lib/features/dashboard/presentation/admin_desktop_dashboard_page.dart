@@ -604,7 +604,7 @@ class _MovementsSection extends StatelessWidget {
           ),
           const SizedBox(height: 20),
           SectionCard(
-            title: 'Alertas',
+            title: 'Alertas - NO APARECE PRODUCTOS YA VENCIDOS',
             subtitle:
                 'Lotes vigentes por proveedor con cantidad real disponible y vencimiento proximo.',
             child: _DesktopTable(

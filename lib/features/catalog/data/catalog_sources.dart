@@ -882,7 +882,7 @@ class CatalogRemoteDataSource {
     final rows = await _client
         .from('inventory_movements')
         .select(
-          'id, product_id, supplier_id, movement_type, quantity, notes, happened_at, '
+          'id, product_id, batch_id, supplier_id, movement_type, quantity, notes, happened_at, '
           'product:products(name), supplier:suppliers(name), actor:profiles(full_name), '
           'from_location:locations!inventory_movements_from_location_id_fkey(name), '
           'to_location:locations!inventory_movements_to_location_id_fkey(name)',
@@ -900,6 +900,7 @@ class CatalogRemoteDataSource {
         id: row['id'] as String,
         productId: row['product_id'] as String,
         productName: product['name']?.toString() ?? 'Producto',
+        batchId: row['batch_id']?.toString(),
         supplierId: row['supplier_id']?.toString(),
         supplierName: supplier['name']?.toString(),
         type: row['movement_type'] as String,
@@ -1040,8 +1041,21 @@ class CatalogRemoteDataSource {
 
       final removedUnits = remaining < row.quantity ? remaining : row.quantity;
       await _decrementStockRow(row, removedUnits);
+      await _client.from('losses').insert({
+        'product_id': row.productId,
+        'batch_id': purchaseItemId,
+        'location_id': row.locationId,
+        'quantity': removedUnits,
+        'reason': 'other',
+        'financial_impact': lot.unitCost * removedUnits,
+        'storage_condition': row.storageCondition,
+        'notes': normalizedNotes,
+        'reported_by': currentUserId,
+        'created_at': now,
+      });
       await _client.from('inventory_movements').insert({
         'product_id': row.productId,
+        'batch_id': purchaseItemId,
         'movement_type': 'loss',
         'from_location_id': row.locationId,
         'to_location_id': null,
@@ -1052,9 +1066,12 @@ class CatalogRemoteDataSource {
         'supplier_id': lot.supplierId,
         'happened_at': now,
         'notes': normalizedNotes,
+        'from_storage_condition': row.storageCondition,
       });
       remaining -= removedUnits;
     }
+
+    await _syncLotPromotionStatusForBatch(purchaseItemId);
   }
 
   Future<List<WarehouseSupplierLot>> getWarehouseSupplierLots({
@@ -1065,23 +1082,40 @@ class CatalogRemoteDataSource {
       productId: productId,
       supplierId: supplierId,
     );
+    final activePromotionByPurchaseItemId =
+        await _loadActivePromotionByPurchaseItemId();
 
     final result =
         lots
             .where((lot) => lot.warehouseAvailableUnits > 0)
             .map(
-              (lot) => WarehouseSupplierLot(
-                purchaseItemId: lot.purchaseItemId,
-                productId: lot.productId,
-                supplierId: lot.supplierId,
-                supplierName: lot.supplierName,
-                receivedAt: lot.receivedAt,
-                availableUnits: lot.warehouseAvailableUnits,
-                expiryDate: lot.expiryDate,
-              ),
+              (lot) {
+                final promotion =
+                    activePromotionByPurchaseItemId[lot.purchaseItemId];
+                return WarehouseSupplierLot(
+                  purchaseItemId: lot.purchaseItemId,
+                  productId: lot.productId,
+                  supplierId: lot.supplierId,
+                  supplierName: lot.supplierName,
+                  receivedAt: lot.receivedAt,
+                  availableUnits: lot.warehouseAvailableUnits,
+                  expiryDate: lot.expiryDate,
+                  isPromotionPriority: promotion != null,
+                  promotionId: promotion?.promotionId,
+                  promotionStatus: promotion?.status,
+                  promotionalPrice: promotion?.promotionalPrice,
+                  promotionNote: promotion?.note,
+                );
+              },
             )
             .toList()
           ..sort((left, right) {
+            final leftRank = _warehouseLotPromotionRank(left);
+            final rightRank = _warehouseLotPromotionRank(right);
+            if (leftRank != rightRank) {
+              return leftRank.compareTo(rightRank);
+            }
+
             final leftExpiry = left.expiryDate;
             final rightExpiry = right.expiryDate;
             if (leftExpiry != null && rightExpiry != null) {
@@ -1115,22 +1149,39 @@ class CatalogRemoteDataSource {
 
     final warehouseId = await _resolveLocationId('warehouse');
     final storeId = await _resolveLocationId('store');
-    final lots = await getWarehouseSupplierLots(
+    final allLots = await getWarehouseSupplierLots(
       productId: productId,
       supplierId: supplierId,
     );
+    final normalizedPurchaseItemId = purchaseItemId?.trim();
+    final lots =
+        normalizedPurchaseItemId == null || normalizedPurchaseItemId.isEmpty
+            ? allLots
+            : allLots
+                .where((lot) => lot.purchaseItemId == normalizedPurchaseItemId)
+                .toList();
+    if (lots.isEmpty) {
+      throw StateError(
+        normalizedPurchaseItemId == null || normalizedPurchaseItemId.isEmpty
+            ? 'No hay lotes disponibles para mover a tienda.'
+            : 'El lote seleccionado ya no tiene stock en almacen.',
+      );
+    }
     final totalWarehouseUnits = lots.fold<int>(
       0,
       (sum, lot) => sum + lot.availableUnits,
     );
     if (quantity > totalWarehouseUnits) {
       throw StateError(
-        'No hay suficiente stock en almacen para la transferencia.',
+        normalizedPurchaseItemId == null || normalizedPurchaseItemId.isEmpty
+            ? 'No hay suficiente stock en almacen para la transferencia.'
+            : 'El lote seleccionado solo tiene ${lots.first.availableUnits} unidades disponibles en almacen.',
       );
     }
 
     var remaining = quantity;
     final now = _toSupabaseDateTime(DateTime.now());
+    final normalizedNotes = _normalizeOptionalText(notes);
     for (final lot in lots) {
       if (remaining <= 0) {
         break;
@@ -1161,6 +1212,7 @@ class CatalogRemoteDataSource {
         );
         await _client.from('inventory_movements').insert({
           'product_id': row.productId,
+          'batch_id': row.batchId,
           'movement_type': 'transfer',
           'from_location_id': warehouseId,
           'to_location_id': storeId,
@@ -1170,9 +1222,16 @@ class CatalogRemoteDataSource {
           'created_by': currentUserId,
           'supplier_id': lot.supplierId,
           'happened_at': now,
+          'notes': normalizedNotes,
+          'from_storage_condition': row.storageCondition,
+          'to_storage_condition': row.storageCondition,
         });
         lotRemaining -= movedUnits;
         remaining -= movedUnits;
+      }
+
+      if (lotToMove > 0) {
+        await _syncLotPromotionStatusForBatch(lot.purchaseItemId);
       }
     }
   }
@@ -1460,7 +1519,7 @@ class CatalogRemoteDataSource {
     dynamic query = _client
         .from('purchase_items')
         .select(
-          'id, product_id, expiry_date, '
+          'id, product_id, unit_cost, expiry_date, '
           'product:products!purchase_items_product_id_fkey(name), '
           'purchase:purchases!purchase_items_purchase_id_fkey('
           'received_at, supplier_id, '
@@ -1492,6 +1551,7 @@ class CatalogRemoteDataSource {
           purchaseItemId: row['id'] as String,
           productId: row['product_id'] as String,
           productName: product['name']?.toString() ?? 'Producto',
+          unitCost: (row['unit_cost'] as num?)?.toDouble() ?? 0,
           supplierId: resolvedSupplierId,
           supplierName: supplier['name']?.toString() ?? 'Proveedor',
           receivedAt: _parseSupabaseDateTime(purchase['received_at'] as String),
@@ -1524,6 +1584,60 @@ class CatalogRemoteDataSource {
     });
 
     return lots;
+  }
+
+  Future<Map<String, LotPromotion>> _loadActivePromotionByPurchaseItemId()
+      async {
+    final promotions = await getActiveLotPromotions();
+    final map = <String, LotPromotion>{};
+    for (final promotion in promotions) {
+      map[promotion.purchaseItemId] = promotion;
+    }
+    return map;
+  }
+
+  Future<void> _syncLotPromotionStatusForBatch(String purchaseItemId) async {
+    final rows = await _client
+        .from('lot_promotions')
+        .select('id, status, promo_quantity_remaining')
+        .eq('purchase_item_id', purchaseItemId)
+        .neq('status', 'cancelled')
+        .order('created_at', ascending: false)
+        .limit(1);
+    final data = _mapRows(rows);
+    if (data.isEmpty) {
+      return;
+    }
+
+    final promotion = data.first;
+    final stock =
+        (await _loadBatchStockSummaries())[purchaseItemId] ??
+        _BatchStockSummary();
+    final remaining =
+        (promotion['promo_quantity_remaining'] as num?)?.toInt() ?? 0;
+    final nextStatus =
+        remaining <= 0 || stock.totalUnits <= 0
+            ? 'exhausted'
+            : stock.storeUnits > 0
+            ? 'active_store'
+            : 'pending_transfer';
+    final currentStatus =
+        promotion['status']?.toString() ?? 'pending_transfer';
+    if (currentStatus == nextStatus) {
+      return;
+    }
+
+    await _client
+        .from('lot_promotions')
+        .update({
+          'status': nextStatus,
+          'updated_at': _toSupabaseDateTime(DateTime.now()),
+          'exhausted_at':
+              nextStatus == 'exhausted'
+                  ? _toSupabaseDateTime(DateTime.now())
+                  : null,
+        })
+        .eq('id', promotion['id'] as String);
   }
 
   Future<_LotContext?> _loadLotContextByPurchaseItemId(
@@ -1947,6 +2061,7 @@ class _LotContext {
     required this.purchaseItemId,
     required this.productId,
     required this.productName,
+    required this.unitCost,
     required this.supplierId,
     required this.supplierName,
     required this.receivedAt,
@@ -1959,6 +2074,7 @@ class _LotContext {
   final String purchaseItemId;
   final String productId;
   final String productName;
+  final double unitCost;
   final String? supplierId;
   final String supplierName;
   final DateTime receivedAt;
@@ -2001,6 +2117,19 @@ int _stockRowLossPriority(_InventoryStockRow left, _InventoryStockRow right) {
   }
 
   return left.batchId.compareTo(right.batchId);
+}
+
+int _warehouseLotPromotionRank(WarehouseSupplierLot lot) {
+  if (!lot.isPromotionPriority) {
+    return 2;
+  }
+  if (lot.promotionStatus == 'pending_transfer') {
+    return 0;
+  }
+  if (lot.promotionStatus == 'active_store') {
+    return 1;
+  }
+  return 2;
 }
 
 String _warehouseSupplierLotsKey({

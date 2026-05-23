@@ -73,8 +73,8 @@ class PurchaseRemoteDataSource {
                     (product['units_per_package'] as num?)?.toInt() ?? 1;
                 final productCostDetails = <String, dynamic>{
                   'tipo': storedProductType,
-                  'precio_caja': (item['unit_cost'] as num).toDouble() *
-                      unitsPerPackage,
+                  'precio_caja':
+                      (item['unit_cost'] as num).toDouble() * unitsPerPackage,
                   'cantidad_caja': unitsPerPackage,
                   if (_stringOrNull(product['brand']) != null)
                     'marca': _stringOrNull(product['brand']),
@@ -290,6 +290,7 @@ DateTime _parseSupabaseDateTime(String rawValue) {
   return DateTime.parse(rawValue).toLocal();
 }
 
+// ignore: unused_element
 double? _toNullableDouble(dynamic value) {
   if (value == null) {
     return null;

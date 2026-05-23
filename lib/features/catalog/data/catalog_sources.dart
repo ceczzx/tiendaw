@@ -1282,6 +1282,7 @@ class CatalogRemoteDataSource {
     return grouped;
   }
 
+  // ignore: unused_element
   Future<Map<String, _ProductPricingSnapshot>> _loadActivePricingByProduct({
     required List<String> productIds,
   }) async {

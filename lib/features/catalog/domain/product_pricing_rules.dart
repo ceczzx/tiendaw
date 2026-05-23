@@ -1,9 +1,7 @@
 import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
 
 bool isBeverageCategory(Category category) {
-  final normalizedName = category.name.trim().toLowerCase();
-  final normalizedPrefix = category.prefix.trim().toLowerCase();
-  return normalizedName.contains('bebid') || normalizedPrefix.startsWith('beb');
+  return category.prefix.trim().toUpperCase() == 'BEBI';
 }
 
 bool isBeverageProduct(Product product, List<Category> categories) {
@@ -24,7 +22,8 @@ double coldPriceIncrement(Product product) {
 }
 
 bool hasActivePromotion(Product product) {
-  return availablePromotionUnits(product) > 0;
+  return generalPromotionalPrice(product) != null ||
+      availablePromotionUnits(product) > 0;
 }
 
 double? generalPromotionalPrice(Product product) {
@@ -50,15 +49,15 @@ int availablePromotionUnits(Product product) {
 }
 
 double? bestPromotionalPrice(Product product) {
+  var bestPrice = generalPromotionalPrice(product);
   final offers = activePromotionOffers(product);
   if (offers.isEmpty) {
-    return null;
+    return bestPrice;
   }
 
-  var bestPrice = promotionalUnitPriceForOffer(product, offers.first);
-  for (final offer in offers.skip(1)) {
+  for (final offer in offers) {
     final offerPrice = promotionalUnitPriceForOffer(product, offer);
-    if (offerPrice < bestPrice) {
+    if (bestPrice == null || offerPrice < bestPrice) {
       bestPrice = offerPrice;
     }
   }

@@ -8,7 +8,18 @@ abstract class SalesRepository {
   Stream<List<CashShift>> watchCashShifts();
   Future<CashShift?> getOpenShift(String sellerId);
   Stream<CashShift?> watchOpenShift(String sellerId);
-  Future<CashShift> openShift(String sellerId);
-  Future<void> closeShift(String sellerId);
+  Future<CashShift> openShift({
+    required String sellerId,
+    required double openingAmount,
+    required double openingLatitude,
+    required double openingLongitude,
+  });
+  Future<void> closeShift({
+    required String sellerId,
+    required double cashTotal,
+    required double yapeTotal,
+    required double closingLatitude,
+    required double closingLongitude,
+  });
   Future<void> syncSale(String saleId);
 }

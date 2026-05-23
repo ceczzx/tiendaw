@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tiendaw/features/auth/presentation/session_view_model.dart';
 
@@ -12,13 +13,13 @@ class SignInPage extends ConsumerStatefulWidget {
 }
 
 class _SignInPageState extends ConsumerState<SignInPage> {
-  final _emailController = TextEditingController();
+  final _dniController = TextEditingController();
   final _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
   @override
   void dispose() {
-    _emailController.dispose();
+    _dniController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
@@ -77,7 +78,7 @@ class _SignInPageState extends ConsumerState<SignInPage> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Ingresa con tu usuario de Supabase Auth para cargar categorias, productos, ventas y compras reales.',
+                        'Ingresa tu DNI y contrasena para entrar con tu cuenta de Supabase Auth.',
                         style: theme.textTheme.bodyLarge,
                       ),
                       const SizedBox(height: 20),
@@ -108,12 +109,23 @@ class _SignInPageState extends ConsumerState<SignInPage> {
                         const SizedBox(height: 16),
                       ],
                       TextFormField(
-                        controller: _emailController,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: const InputDecoration(labelText: 'Correo'),
+                        controller: _dniController,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(8),
+                        ],
+                        decoration: const InputDecoration(
+                          labelText: 'DNI',
+                          helperText: 'Solo 8 numeros',
+                        ),
                         validator: (value) {
-                          if (value == null || value.trim().isEmpty) {
-                            return 'Ingresa tu correo.';
+                          final dni = value?.trim() ?? '';
+                          if (dni.isEmpty) {
+                            return 'Ingresa tu DNI.';
+                          }
+                          if (dni.length != 8) {
+                            return 'El DNI debe tener 8 digitos.';
                           }
                           return null;
                         },
@@ -140,14 +152,14 @@ class _SignInPageState extends ConsumerState<SignInPage> {
                           onPressed: isBusy ? null : _submit,
                           child:
                               isBusy
-                                  ? const SizedBox(
+                                  ? SizedBox(
                                     width: 20,
                                     height: 20,
-                                    child: CircularProgressIndicator(
+                                    child: const CircularProgressIndicator(
                                       strokeWidth: 2,
                                     ),
                                   )
-                                  : const Text('Ingresar con Supabase'),
+                                  : const Text('Ingresar'),
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -171,12 +183,10 @@ class _SignInPageState extends ConsumerState<SignInPage> {
       return;
     }
 
+    final dni = _dniController.text.trim();
     await ref
         .read(sessionViewModelProvider.notifier)
-        .signIn(
-          email: _emailController.text.trim(),
-          password: _passwordController.text,
-        );
+        .signIn(email: '$dni@tiendaw.com', password: _passwordController.text);
   }
 
   void _showSessionNotice({

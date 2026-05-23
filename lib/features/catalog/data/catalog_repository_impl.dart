@@ -411,6 +411,10 @@ class CatalogRepositoryImpl implements CatalogRepository {
     required double lastPurchaseCost,
     required int unitsPerPackage,
     required Map<String, dynamic> costDetails,
+    double? promotionalPrice,
+    String? promotionNote,
+    bool clearPromotionalPrice = false,
+    bool clearPromotionNote = false,
   }) {
     return _remote.updateProductCatalogData(
       productId: productId,
@@ -419,6 +423,10 @@ class CatalogRepositoryImpl implements CatalogRepository {
       lastPurchaseCost: lastPurchaseCost,
       unitsPerPackage: unitsPerPackage,
       costDetails: costDetails,
+      promotionalPrice: promotionalPrice,
+      promotionNote: promotionNote,
+      clearPromotionalPrice: clearPromotionalPrice,
+      clearPromotionNote: clearPromotionNote,
     );
   }
 
@@ -456,15 +464,39 @@ class CatalogRepositoryImpl implements CatalogRepository {
   }
 
   @override
+  Future<void> upsertGeneralPromotion({
+    required String productId,
+    required double promotionalPrice,
+    String? promotionNote,
+    DateTime? scheduledEndAt,
+  }) {
+    return _remote.upsertGeneralPromotion(
+      productId: productId,
+      promotionalPrice: promotionalPrice,
+      promotionNote: promotionNote,
+      scheduledEndAt: scheduledEndAt,
+    );
+  }
+
+  @override
+  Future<void> clearGeneralPromotion({required String productId}) {
+    return _remote.clearGeneralPromotion(productId: productId);
+  }
+
+  @override
   Future<void> registerInventoryLoss({
     required String purchaseItemId,
     required int quantity,
+    required String reason,
     String? notes,
+    String? storageCondition,
   }) {
     return _remote.registerInventoryLoss(
       purchaseItemId: purchaseItemId,
       quantity: quantity,
+      reason: reason,
       notes: notes,
+      storageCondition: storageCondition,
     );
   }
 

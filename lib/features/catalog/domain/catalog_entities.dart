@@ -277,5 +277,13 @@ class PriceHistoryEntry {
   final String createdByName;
 
   bool get hasPromotion => promotionalPrice != null;
-  bool get isActive => effectiveTo == null;
+
+  bool get isActive => isActiveAt(DateTime.now());
+
+  bool isActiveAt(DateTime time) {
+    if (effectiveFrom.isAfter(time)) {
+      return false;
+    }
+    return effectiveTo == null || effectiveTo!.isAfter(time);
+  }
 }

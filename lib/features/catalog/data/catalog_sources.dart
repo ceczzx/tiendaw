@@ -95,16 +95,8 @@ class ProductModel extends Product {
       nextExpiryDate: nextExpiryDate,
       coldStockUnits: inventory.coldStoreUnits,
       coldPriceIncrement: pricing.coldPriceIncrement,
-      promotionalPrice:
-          promotionOffers.isNotEmpty
-              ? promotionOffers
-                  .map((offer) => offer.promotionalPrice)
-                  .reduce((left, right) => left < right ? left : right)
-              : pricing.promotionalPrice,
-      promotionNote:
-          promotionOffers.isNotEmpty
-              ? promotionOffers.first.note
-              : pricing.promotionNote,
+      promotionalPrice: pricing.promotionalPrice,
+      promotionNote: pricing.promotionNote,
       promotionOffers: List<ProductPromotionOffer>.unmodifiable(
         promotionOffers,
       ),
@@ -308,59 +300,21 @@ class CatalogRemoteDataSource {
   Future<List<Product>> getProducts() async {
     final productRows = await _client
         .from('products')
-        .select(
-          '$_productSelectClause, '
-          'price_history('
-          'id, sale_price, promotional_price, promotion_note, '
-          'cold_price_increment, effective_from, effective_to'
-          ')',
-        )
+        .select(_productSelectClause)
         .eq('is_active', true)
-        .isFilter('price_history.effective_to', null)
         .order('name');
     final mappedProductRows = _mapRows(productRows);
+    final productIds =
+        mappedProductRows.map((row) => row['id'] as String).toList();
     final inventoryByProduct = await _loadStockByProduct();
     final nextExpiryByProduct = await _loadNextExpiryByProduct();
     final promotionOffersByProduct = await _loadPromotionOffersByProduct();
-    final pricingByProduct = <String, _ProductPricingSnapshot>{};
-    final missingPriceIds = <String>[];
+    final pricingByProduct = await _loadActivePricingByProduct(
+      productIds: productIds,
+    );
     final lastPurchaseCostByProduct = await _loadLastPurchaseCostByProduct();
     final latestPurchaseSnapshotsByProduct =
         await _loadLatestPurchaseSnapshotsByProduct();
-
-    for (final row in mappedProductRows) {
-      final productId = row['id'] as String;
-      final priceRows = row['price_history'];
-      if (priceRows is List && priceRows.isNotEmpty) {
-        final priceRow = Map<String, dynamic>.from(priceRows.first as Map);
-        pricingByProduct[productId] = _ProductPricingSnapshot(
-          id: priceRow['id']?.toString() ?? '',
-          salePrice: _toDoubleValue(priceRow['sale_price']),
-          promotionalPrice: _toNullableDoubleValue(
-            priceRow['promotional_price'],
-          ),
-          promotionNote: priceRow['promotion_note']?.toString(),
-          coldPriceIncrement: _toDoubleValue(
-            priceRow['cold_price_increment'],
-            fallback: 0.50,
-          ),
-        );
-      } else {
-        missingPriceIds.add(productId);
-      }
-    }
-
-    if (missingPriceIds.isNotEmpty) {
-      final fallbackSnapshots = await Future.wait(
-        missingPriceIds.map(_loadLatestPricingForProduct),
-      );
-      for (var index = 0; index < missingPriceIds.length; index += 1) {
-        final snapshot = fallbackSnapshots[index];
-        if (snapshot != null) {
-          pricingByProduct[missingPriceIds[index]] = snapshot;
-        }
-      }
-    }
 
     return mappedProductRows.map((row) {
       final productId = row['id'] as String;
@@ -714,6 +668,10 @@ class CatalogRemoteDataSource {
     required double lastPurchaseCost,
     required int unitsPerPackage,
     required Map<String, dynamic> costDetails,
+    double? promotionalPrice,
+    String? promotionNote,
+    bool clearPromotionalPrice = false,
+    bool clearPromotionNote = false,
   }) async {
     final normalizedPackageName = _productPackageName(costDetails);
     final normalizedUnitName = _productUnitName(costDetails);
@@ -732,11 +690,19 @@ class CatalogRemoteDataSource {
         .eq('id', productId);
 
     final currentPricing = await _loadLatestPricingForProduct(productId);
+    final nextPromotionalPrice =
+        clearPromotionalPrice
+            ? null
+            : promotionalPrice ?? currentPricing?.promotionalPrice;
+    final nextPromotionNote =
+        clearPromotionNote
+            ? null
+            : promotionNote ?? currentPricing?.promotionNote;
     await _upsertPriceHistory(
       productId: productId,
       salePrice: salePrice,
-      promotionalPrice: currentPricing?.promotionalPrice,
-      promotionNote: currentPricing?.promotionNote,
+      promotionalPrice: nextPromotionalPrice,
+      promotionNote: nextPromotionNote,
       coldPriceIncrement: currentPricing?.coldPriceIncrement ?? 0.50,
     );
   }
@@ -809,11 +775,101 @@ class CatalogRemoteDataSource {
         .eq('id', promotionId);
   }
 
+  Future<void> upsertGeneralPromotion({
+    required String productId,
+    required double promotionalPrice,
+    String? promotionNote,
+    DateTime? scheduledEndAt,
+  }) async {
+    final currentUserId = _currentUserId();
+    final now = DateTime.now();
+    final activePricing = await _loadLatestPricingForProduct(productId);
+    if (activePricing == null || activePricing.salePrice <= 0) {
+      throw StateError(
+        'No encontramos un precio base activo para este producto.',
+      );
+    }
+    if (promotionalPrice <= 0) {
+      throw StateError('El precio promocional debe ser mayor a cero.');
+    }
+    if (promotionalPrice >= activePricing.salePrice) {
+      throw StateError('La promocion general debe ser menor al precio base.');
+    }
+
+    final normalizedEndAt = scheduledEndAt?.toLocal();
+    if (normalizedEndAt != null && !normalizedEndAt.isAfter(now)) {
+      throw StateError('La fecha de fin debe ser posterior al momento actual.');
+    }
+
+    await _deleteFuturePriceHistoryRows(productId: productId, from: now);
+    await _closeActivePriceHistoryRow(productId: productId, at: now);
+
+    await _client.from('price_history').insert({
+      'product_id': productId,
+      'sale_price': activePricing.salePrice,
+      'promotional_price': promotionalPrice,
+      'promotion_note': _normalizeOptionalText(promotionNote),
+      'cold_price_increment': activePricing.coldPriceIncrement,
+      'effective_from': _toSupabaseDateTime(now),
+      'effective_to':
+          normalizedEndAt == null ? null : _toSupabaseDateTime(normalizedEndAt),
+      'created_by': currentUserId,
+    });
+
+    if (normalizedEndAt == null) {
+      return;
+    }
+
+    await _client.from('price_history').insert({
+      'product_id': productId,
+      'sale_price': activePricing.salePrice,
+      'promotional_price': null,
+      'promotion_note': null,
+      'cold_price_increment': activePricing.coldPriceIncrement,
+      'effective_from': _toSupabaseDateTime(normalizedEndAt),
+      'effective_to': null,
+      'created_by': currentUserId,
+    });
+  }
+
+  Future<void> clearGeneralPromotion({required String productId}) async {
+    final now = DateTime.now();
+    final activeRow = await _loadActivePriceHistoryRow(productId, at: now);
+    if (activeRow == null) {
+      return;
+    }
+
+    final activePricing = _pricingSnapshotFromRow(activeRow);
+    if (activePricing.promotionalPrice == null &&
+        (activePricing.promotionNote ?? '').trim().isEmpty) {
+      await _deleteFuturePriceHistoryRows(productId: productId, from: now);
+      return;
+    }
+
+    await _deleteFuturePriceHistoryRows(productId: productId, from: now);
+    await _closeActivePriceHistoryRow(productId: productId, at: now);
+    await _client.from('price_history').insert({
+      'product_id': productId,
+      'sale_price': activePricing.salePrice,
+      'promotional_price': null,
+      'promotion_note': null,
+      'cold_price_increment': activePricing.coldPriceIncrement,
+      'effective_from': _toSupabaseDateTime(now),
+      'effective_to': null,
+      'created_by': _currentUserId(),
+    });
+  }
+
   Future<void> updateProductColdState({
     required String productId,
     required int coldStockUnits,
     required double coldPriceIncrement,
   }) async {
+    if (!await _isBeverageProductId(productId)) {
+      throw StateError(
+        'Solo los productos de la categoria Bebidas-BEBI pueden manejar estado ambientado o helado.',
+      );
+    }
     await _syncStoreColdStock(
       productId: productId,
       desiredColdStoreUnits: coldStockUnits,
@@ -1010,7 +1066,9 @@ class CatalogRemoteDataSource {
   Future<void> registerInventoryLoss({
     required String purchaseItemId,
     required int quantity,
+    required String reason,
     String? notes,
+    String? storageCondition,
   }) async {
     final currentUserId = _currentUserId();
     if (quantity <= 0) {
@@ -1025,13 +1083,63 @@ class CatalogRemoteDataSource {
       throw StateError('La perdida supera el stock disponible del lote.');
     }
 
+    final normalizedStorageCondition = _normalizeOptionalText(storageCondition);
+    if (normalizedStorageCondition != null &&
+        normalizedStorageCondition != 'ambiente' &&
+        normalizedStorageCondition != 'frio') {
+      throw StateError('La condicion seleccionada no es valida.');
+    }
+    if (normalizedStorageCondition != null &&
+        !await _isBeverageProductId(lot.productId)) {
+      throw StateError(
+        'Solo los productos de la categoria Bebidas-BEBI pueden registrar condicion ambientada o helada.',
+      );
+    }
+
     final rows = await _loadStockRows(batchId: purchaseItemId);
-    rows.sort(_stockRowLossPriority);
+    final eligibleRows =
+        normalizedStorageCondition == null
+            ? rows
+            : rows
+                .where(
+                  (row) => row.storageCondition == normalizedStorageCondition,
+                )
+                .toList();
+    eligibleRows.sort(_stockRowLossPriority);
+    final eligibleUnits = eligibleRows.fold<int>(
+      0,
+      (sum, row) => sum + row.quantity,
+    );
+    if (eligibleUnits <= 0) {
+      throw StateError(
+        normalizedStorageCondition == null
+            ? 'El lote ya no tiene stock disponible.'
+            : 'No hay stock disponible en la condicion seleccionada.',
+      );
+    }
+    if (quantity > eligibleUnits) {
+      throw StateError(
+        normalizedStorageCondition == null
+            ? 'La perdida supera el stock disponible del lote.'
+            : 'La perdida supera el stock disponible en la condicion seleccionada.',
+      );
+    }
+
     var remaining = quantity;
     final now = _toSupabaseDateTime(DateTime.now());
     final normalizedNotes = _normalizeOptionalText(notes);
+    const validReasons = {
+      'expired',
+      'damaged',
+      'theft',
+      'quality_issue',
+      'other',
+    };
+    if (!validReasons.contains(reason)) {
+      throw StateError('El motivo de perdida no es valido.');
+    }
 
-    for (final row in rows) {
+    for (final row in eligibleRows) {
       if (remaining <= 0) {
         break;
       }
@@ -1046,7 +1154,7 @@ class CatalogRemoteDataSource {
         'batch_id': purchaseItemId,
         'location_id': row.locationId,
         'quantity': removedUnits,
-        'reason': 'other',
+        'reason': reason,
         'financial_impact': lot.unitCost * removedUnits,
         'storage_condition': row.storageCondition,
         'notes': normalizedNotes,
@@ -1065,7 +1173,11 @@ class CatalogRemoteDataSource {
         'created_by': currentUserId,
         'supplier_id': lot.supplierId,
         'happened_at': now,
-        'notes': normalizedNotes,
+        'notes': _inventoryLossMovementNote(
+          reason: reason,
+          notes: normalizedNotes,
+          storageCondition: row.storageCondition,
+        ),
         'from_storage_condition': row.storageCondition,
       });
       remaining -= removedUnits;
@@ -1086,29 +1198,24 @@ class CatalogRemoteDataSource {
         await _loadActivePromotionByPurchaseItemId();
 
     final result =
-        lots
-            .where((lot) => lot.warehouseAvailableUnits > 0)
-            .map(
-              (lot) {
-                final promotion =
-                    activePromotionByPurchaseItemId[lot.purchaseItemId];
-                return WarehouseSupplierLot(
-                  purchaseItemId: lot.purchaseItemId,
-                  productId: lot.productId,
-                  supplierId: lot.supplierId,
-                  supplierName: lot.supplierName,
-                  receivedAt: lot.receivedAt,
-                  availableUnits: lot.warehouseAvailableUnits,
-                  expiryDate: lot.expiryDate,
-                  isPromotionPriority: promotion != null,
-                  promotionId: promotion?.promotionId,
-                  promotionStatus: promotion?.status,
-                  promotionalPrice: promotion?.promotionalPrice,
-                  promotionNote: promotion?.note,
-                );
-              },
-            )
-            .toList()
+        lots.where((lot) => lot.warehouseAvailableUnits > 0).map((lot) {
+            final promotion =
+                activePromotionByPurchaseItemId[lot.purchaseItemId];
+            return WarehouseSupplierLot(
+              purchaseItemId: lot.purchaseItemId,
+              productId: lot.productId,
+              supplierId: lot.supplierId,
+              supplierName: lot.supplierName,
+              receivedAt: lot.receivedAt,
+              availableUnits: lot.warehouseAvailableUnits,
+              expiryDate: lot.expiryDate,
+              isPromotionPriority: promotion != null,
+              promotionId: promotion?.promotionId,
+              promotionStatus: promotion?.status,
+              promotionalPrice: promotion?.promotionalPrice,
+              promotionNote: promotion?.note,
+            );
+          }).toList()
           ..sort((left, right) {
             final leftRank = _warehouseLotPromotionRank(left);
             final rightRank = _warehouseLotPromotionRank(right);
@@ -1344,37 +1451,37 @@ class CatalogRemoteDataSource {
   // ignore: unused_element
   Future<Map<String, _ProductPricingSnapshot>> _loadActivePricingByProduct({
     required List<String> productIds,
+    DateTime? at,
   }) async {
     if (productIds.isEmpty) {
       return const {};
     }
 
+    final referenceTime = at ?? DateTime.now();
     final activeRows = await _client
         .from('price_history')
         .select(
           'id, product_id, sale_price, promotional_price, promotion_note, cold_price_increment, effective_from, effective_to',
         )
         .inFilter('product_id', productIds)
-        .isFilter('effective_to', null)
+        .lte('effective_from', _toSupabaseDateTime(referenceTime))
         .order('effective_from', ascending: false);
 
     final pricingByProduct = <String, _ProductPricingSnapshot>{};
+    final rowsByProduct = <String, List<Map<String, dynamic>>>{};
     for (final row in _mapRows(activeRows)) {
       final productId = row['product_id'] as String;
-      if (pricingByProduct.containsKey(productId)) {
-        continue;
-      }
+      rowsByProduct.putIfAbsent(productId, () => []).add(row);
+    }
 
-      pricingByProduct[productId] = _ProductPricingSnapshot(
-        id: row['id'] as String,
-        salePrice: _toDoubleValue(row['sale_price']),
-        promotionalPrice: _toNullableDoubleValue(row['promotional_price']),
-        promotionNote: row['promotion_note']?.toString(),
-        coldPriceIncrement: _toDoubleValue(
-          row['cold_price_increment'],
-          fallback: 0.50,
-        ),
+    for (final productId in productIds) {
+      final snapshot = _resolvePricingSnapshotFromRows(
+        rowsByProduct[productId] ?? const [],
+        at: referenceTime,
       );
+      if (snapshot != null) {
+        pricingByProduct[productId] = snapshot;
+      }
     }
 
     if (pricingByProduct.length == productIds.length) {
@@ -1395,22 +1502,19 @@ class CatalogRemoteDataSource {
         .inFilter('product_id', missingIds)
         .order('effective_from', ascending: false);
 
+    final fallbackGrouped = <String, List<Map<String, dynamic>>>{};
     for (final row in _mapRows(fallbackRows)) {
       final productId = row['product_id'] as String;
-      if (pricingByProduct.containsKey(productId)) {
-        continue;
-      }
-
-      pricingByProduct[productId] = _ProductPricingSnapshot(
-        id: row['id'] as String,
-        salePrice: _toDoubleValue(row['sale_price']),
-        promotionalPrice: _toNullableDoubleValue(row['promotional_price']),
-        promotionNote: row['promotion_note']?.toString(),
-        coldPriceIncrement: _toDoubleValue(
-          row['cold_price_increment'],
-          fallback: 0.50,
-        ),
+      fallbackGrouped.putIfAbsent(productId, () => []).add(row);
+    }
+    for (final productId in missingIds) {
+      final snapshot = _resolvePricingSnapshotFromRows(
+        fallbackGrouped[productId] ?? const [],
+        at: referenceTime,
       );
+      if (snapshot != null) {
+        pricingByProduct[productId] = snapshot;
+      }
     }
 
     return pricingByProduct;
@@ -1422,17 +1526,118 @@ class CatalogRemoteDataSource {
     final rows = await _client
         .from('price_history')
         .select(
-          'id, sale_price, promotional_price, promotion_note, cold_price_increment',
+          'id, product_id, sale_price, promotional_price, promotion_note, cold_price_increment, effective_from, effective_to',
         )
         .eq('product_id', productId)
         .order('effective_from', ascending: false)
+        .limit(20);
+    return _resolvePricingSnapshotFromRows(_mapRows(rows), at: DateTime.now());
+  }
+
+  Future<bool> _isBeverageProductId(String productId) async {
+    final rows = await _client
+        .from('products')
+        .select(
+          'category:categories!products_category_id_fkey(prefix)',
+        )
+        .eq('id', productId)
         .limit(1);
     final data = _mapRows(rows);
     if (data.isEmpty) {
-      return null;
+      return false;
     }
 
-    final row = data.first;
+    final category = _mapNullable(data.first['category']);
+    return category['prefix']?.toString().trim().toUpperCase() == 'BEBI';
+  }
+
+  Future<Map<String, dynamic>?> _loadActivePriceHistoryRow(
+    String productId, {
+    DateTime? at,
+  }) async {
+    final referenceTime = at ?? DateTime.now();
+    final rows = await _client
+        .from('price_history')
+        .select(
+          'id, product_id, sale_price, promotional_price, promotion_note, cold_price_increment, effective_from, effective_to',
+        )
+        .eq('product_id', productId)
+        .lte('effective_from', _toSupabaseDateTime(referenceTime))
+        .order('effective_from', ascending: false)
+        .limit(20);
+    final data = _mapRows(rows);
+    Map<String, dynamic>? fallback;
+    for (final row in data) {
+      final effectiveFrom = _parseRowDateTime(row['effective_from']);
+      if (effectiveFrom != null && effectiveFrom.isAfter(referenceTime)) {
+        continue;
+      }
+      fallback ??= row;
+      if (_isPriceHistoryRowActiveAt(row, referenceTime)) {
+        return row;
+      }
+    }
+    return fallback;
+  }
+
+  Future<void> _closeActivePriceHistoryRow({
+    required String productId,
+    required DateTime at,
+  }) async {
+    final activeRow = await _loadActivePriceHistoryRow(productId, at: at);
+    if (activeRow == null || !_isPriceHistoryRowActiveAt(activeRow, at)) {
+      return;
+    }
+
+    await _client
+        .from('price_history')
+        .update({'effective_to': _toSupabaseDateTime(at)})
+        .eq('id', activeRow['id'] as String);
+  }
+
+  Future<void> _deleteFuturePriceHistoryRows({
+    required String productId,
+    required DateTime from,
+  }) async {
+    await _client
+        .from('price_history')
+        .delete()
+        .eq('product_id', productId)
+        .gt('effective_from', _toSupabaseDateTime(from));
+  }
+
+  _ProductPricingSnapshot? _resolvePricingSnapshotFromRows(
+    List<Map<String, dynamic>> rows, {
+    required DateTime at,
+  }) {
+    Map<String, dynamic>? fallback;
+    for (final row in rows) {
+      final effectiveFrom = _parseRowDateTime(row['effective_from']);
+      if (effectiveFrom != null && effectiveFrom.isAfter(at)) {
+        continue;
+      }
+      fallback ??= row;
+      if (_isPriceHistoryRowActiveAt(row, at)) {
+        return _pricingSnapshotFromRow(row);
+      }
+    }
+
+    if (fallback == null) {
+      return null;
+    }
+    return _ProductPricingSnapshot(
+      id: fallback['id'] as String,
+      salePrice: _toDoubleValue(fallback['sale_price']),
+      promotionalPrice: null,
+      promotionNote: null,
+      coldPriceIncrement: _toDoubleValue(
+        fallback['cold_price_increment'],
+        fallback: 0.50,
+      ),
+    );
+  }
+
+  _ProductPricingSnapshot _pricingSnapshotFromRow(Map<String, dynamic> row) {
     return _ProductPricingSnapshot(
       id: row['id'] as String,
       salePrice: _toDoubleValue(row['sale_price']),
@@ -1443,6 +1648,23 @@ class CatalogRemoteDataSource {
         fallback: 0.50,
       ),
     );
+  }
+
+  bool _isPriceHistoryRowActiveAt(Map<String, dynamic> row, DateTime at) {
+    final effectiveFrom = _parseRowDateTime(row['effective_from']);
+    final effectiveTo = _parseRowDateTime(row['effective_to']);
+    if (effectiveFrom != null && effectiveFrom.isAfter(at)) {
+      return false;
+    }
+    return effectiveTo == null || effectiveTo.isAfter(at);
+  }
+
+  DateTime? _parseRowDateTime(dynamic rawValue) {
+    final normalized = rawValue?.toString();
+    if (normalized == null || normalized.isEmpty) {
+      return null;
+    }
+    return _parseSupabaseDateTime(normalized);
   }
 
   Future<Map<String, double>> _loadLastPurchaseCostByProduct() async {
@@ -1586,8 +1808,8 @@ class CatalogRemoteDataSource {
     return lots;
   }
 
-  Future<Map<String, LotPromotion>> _loadActivePromotionByPurchaseItemId()
-      async {
+  Future<Map<String, LotPromotion>>
+  _loadActivePromotionByPurchaseItemId() async {
     final promotions = await getActiveLotPromotions();
     final map = <String, LotPromotion>{};
     for (final promotion in promotions) {
@@ -1621,8 +1843,7 @@ class CatalogRemoteDataSource {
             : stock.storeUnits > 0
             ? 'active_store'
             : 'pending_transfer';
-    final currentStatus =
-        promotion['status']?.toString() ?? 'pending_transfer';
+    final currentStatus = promotion['status']?.toString() ?? 'pending_transfer';
     if (currentStatus == nextStatus) {
       return;
     }
@@ -1881,39 +2102,20 @@ class CatalogRemoteDataSource {
     String? promotionNote,
   }) async {
     final currentUserId = _currentUserId();
-    final rows = await _client
-        .from('price_history')
-        .select(
-          'id, sale_price, promotional_price, promotion_note, cold_price_increment, effective_to',
-        )
-        .eq('product_id', productId)
-        .order('effective_from', ascending: false)
-        .limit(1);
-    final data = _mapRows(rows);
+    final now = DateTime.now();
+    final current = await _loadActivePriceHistoryRow(productId, at: now);
 
-    if (data.isNotEmpty) {
-      final current = data.first;
-      final currentSalePrice = (current['sale_price'] as num?)?.toDouble() ?? 0;
-      final currentPromotionalPrice =
-          (current['promotional_price'] as num?)?.toDouble();
-      final currentPromotionNote = current['promotion_note']?.toString();
-      final currentColdIncrement =
-          (current['cold_price_increment'] as num?)?.toDouble() ?? 0.50;
-
-      if (currentSalePrice == salePrice &&
-          currentPromotionalPrice == promotionalPrice &&
-          currentPromotionNote == promotionNote &&
-          currentColdIncrement == coldPriceIncrement &&
-          current['effective_to'] == null) {
+    if (current != null) {
+      final currentPricing = _pricingSnapshotFromRow(current);
+      if (currentPricing.salePrice == salePrice &&
+          currentPricing.promotionalPrice == promotionalPrice &&
+          currentPricing.promotionNote == promotionNote &&
+          currentPricing.coldPriceIncrement == coldPriceIncrement &&
+          _isPriceHistoryRowActiveAt(current, now)) {
         return;
       }
 
-      if (current['effective_to'] == null) {
-        await _client
-            .from('price_history')
-            .update({'effective_to': _toSupabaseDateTime(DateTime.now())})
-            .eq('id', current['id'] as String);
-      }
+      await _closeActivePriceHistoryRow(productId: productId, at: now);
     }
 
     await _client.from('price_history').insert({
@@ -1922,7 +2124,7 @@ class CatalogRemoteDataSource {
       'promotional_price': promotionalPrice,
       'promotion_note': promotionNote,
       'cold_price_increment': coldPriceIncrement,
-      'effective_from': _toSupabaseDateTime(DateTime.now()),
+      'effective_from': _toSupabaseDateTime(now),
       'created_by': currentUserId,
     });
   }
@@ -2170,6 +2372,18 @@ String? _normalizedText(dynamic value) {
 String? _normalizeOptionalText(String? value) {
   final normalized = value?.trim() ?? '';
   return normalized.isEmpty ? null : normalized;
+}
+
+String _inventoryLossMovementNote({
+  required String reason,
+  required String? notes,
+  required String storageCondition,
+}) {
+  final parts = <String>['Motivo: $reason', 'Condicion: $storageCondition'];
+  if (notes != null && notes.isNotEmpty) {
+    parts.add(notes);
+  }
+  return parts.join(' | ');
 }
 
 DateTime _parseSupabaseDateTime(String rawValue) {

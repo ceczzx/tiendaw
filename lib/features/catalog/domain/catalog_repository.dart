@@ -63,6 +63,10 @@ abstract class CatalogRepository {
     required double lastPurchaseCost,
     required int unitsPerPackage,
     required Map<String, dynamic> costDetails,
+    double? promotionalPrice,
+    String? promotionNote,
+    bool clearPromotionalPrice = false,
+    bool clearPromotionNote = false,
   });
   Future<void> activateLotPromotion({
     required String purchaseItemId,
@@ -76,10 +80,19 @@ abstract class CatalogRepository {
     required double coldPriceIncrement,
   });
   Future<void> cancelLotPromotion({required String promotionId});
+  Future<void> upsertGeneralPromotion({
+    required String productId,
+    required double promotionalPrice,
+    String? promotionNote,
+    DateTime? scheduledEndAt,
+  });
+  Future<void> clearGeneralPromotion({required String productId});
   Future<void> registerInventoryLoss({
     required String purchaseItemId,
     required int quantity,
+    required String reason,
     String? notes,
+    String? storageCondition,
   });
   Future<void> transferWarehouseToStore({
     required String productId,

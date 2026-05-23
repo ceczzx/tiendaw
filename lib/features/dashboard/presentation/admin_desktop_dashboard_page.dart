@@ -222,15 +222,9 @@ class _SalesSectionState extends State<_SalesSection> {
                         ),
                         Text(SystemWFormatters.currency.format(shift.total)),
                         StatusPill(
-                          label: shift.closedAt == null ? 'Abierto' : 'Cerrado',
-                          background:
-                              shift.closedAt == null
-                                  ? const Color(0xFFECFDF5)
-                                  : const Color(0xFFF1F5F9),
-                          foreground:
-                              shift.closedAt == null
-                                  ? const Color(0xFF047857)
-                                  : const Color(0xFF334155),
+                          label: _cashShiftStatusLabel(shift),
+                          background: _cashShiftStatusBackground(shift),
+                          foreground: _cashShiftStatusForeground(shift),
                         ),
                       ],
                     );
@@ -265,6 +259,7 @@ class _SalesSectionState extends State<_SalesSection> {
                 'Pago',
                 'Items',
                 'Detalle',
+                'Promocion',
                 'Total',
                 'Sync',
               ],
@@ -285,6 +280,21 @@ class _SalesSectionState extends State<_SalesSection> {
                           items: groupedItems,
                           productById: productById,
                           categoryById: categoryById,
+                        ),
+                        SizedBox(
+                          width: 240,
+                          child: Text(
+                            groupedItems
+                                .map((item) {
+                                  if (!item.hasPromotion) {
+                                    return '${item.productName}: No';
+                                  }
+                                  return '${item.productName}: Si | Promo ${SystemWFormatters.currency.format(item.baseUnitPrice)}';
+                                })
+                                .join('\n'),
+                            maxLines: 4,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                         Text(SystemWFormatters.currency.format(sale.total)),
                         Text(sale.syncStatus.name),
@@ -523,6 +533,7 @@ class _MovementsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final supplierMovementSummaries = _buildMovementSupplierSummaries(state);
+    final operationalAlertRows = _buildOperationalAlertRows(state);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -548,14 +559,14 @@ class _MovementsSection extends StatelessWidget {
                 label: 'Movimientos del periodo | TIPO',
                 value: '${state.filteredMovements.length}',
                 detail:
-                    'Compra ${state.purchaseMovementCount} | Venta ${state.saleMovementCount} | Transfer ${state.transferMovementCount} | Perdida ${state.lossMovementCount}',
+                    'Compras ${state.purchaseMovementCount} | Ventas ${state.saleMovementCount} | Traslados ${state.transferMovementCount} | Perdidas ${state.lossMovementCount}',
                 accent: const Color(0xFF0F766E),
               ),
               MetricCard(
                 label: 'Unidades movidas | CANTIDAD',
                 value: '${state.movementUnitsTotal}',
                 detail:
-                    'Compra ${state.purchaseMovementUnits} u. | Venta ${state.saleMovementUnits} u. | Transfer ${state.transferMovementUnits} u. | Perdida ${state.lossMovementUnits} u.',
+                    'Compras ${state.purchaseMovementUnits} u. | Ventas ${state.saleMovementUnits} u. | Traslados ${state.transferMovementUnits} u. | Perdidas ${state.lossMovementUnits} u.',
                 accent: const Color(0xFFEA580C),
               ),
               MetricCard(
@@ -604,43 +615,36 @@ class _MovementsSection extends StatelessWidget {
           ),
           const SizedBox(height: 20),
           SectionCard(
-            title: 'Alertas - NO APARECE PRODUCTOS YA VENCIDOS',
+            title: 'Alertas activas',
             subtitle:
-                'Lotes vigentes por proveedor con cantidad real disponible y vencimiento proximo.',
+                'Incluye stock bajo, lotes por vencer y lotes ya vencidos para que el contador coincida con la tabla.',
             child: _DesktopTable(
               columns: const [
                 'Producto',
                 'Proveedor',
                 'Alerta',
-                'Cant. alerta',
+                'Cantidad',
                 'Ubicacion',
-                'Vence',
+                'Fecha / referencia',
               ],
               rows:
-                  state.expiringLotAlerts
+                  operationalAlertRows
                       .map(
                         (alert) => _DesktopTableRow(
                           cells: [
                             Text(alert.productName),
                             Text(alert.supplierName),
-                            Text(
-                              alert.remainingDaysFrom(DateTime.now()) < 0
-                                  ? 'Vencido'
-                                  : 'Vence pronto',
-                            ),
-                            Text('${alert.availableUnits} u.'),
-                            Text(_lotAlertLocationLabel(alert)),
-                            Text(
-                              SystemWFormatters.shortDate.format(
-                                alert.expiryDate,
-                              ),
-                            ),
+                            Text(alert.alertLabel),
+                            Text(alert.quantityLabel),
+                            Text(alert.locationLabel),
+                            Text(alert.referenceLabel),
                           ],
                         ),
                       )
                       .toList(),
-              emptyTitle: 'Sin alertas de lotes',
-              emptyCaption: 'No hay lotes disponibles con vencimiento cercano.',
+              emptyTitle: 'Sin alertas operativas',
+              emptyCaption:
+                  'Cuando exista stock bajo o lotes por vencer apareceran aqui.',
             ),
           ),
           const SizedBox(height: 20),
@@ -1647,18 +1651,44 @@ class _MovementSupplierSummary {
   final DateTime lastMovementAt;
 }
 
+class _OperationalAlertRow {
+  const _OperationalAlertRow({
+    required this.productName,
+    required this.supplierName,
+    required this.alertLabel,
+    required this.quantityLabel,
+    required this.locationLabel,
+    required this.referenceLabel,
+    required this.sortWeight,
+    required this.sortDate,
+  });
+
+  final String productName;
+  final String supplierName;
+  final String alertLabel;
+  final String quantityLabel;
+  final String locationLabel;
+  final String referenceLabel;
+  final int sortWeight;
+  final DateTime? sortDate;
+}
+
 class _SaleItemSummary {
   const _SaleItemSummary({
     required this.productId,
     required this.productName,
     required this.quantity,
     required this.isIced,
+    required this.baseUnitPrice,
+    required this.hasPromotion,
   });
 
   final String productId;
   final String productName;
   final num quantity;
   final bool isIced;
+  final double baseUnitPrice;
+  final bool hasPromotion;
 }
 
 class _SaleItemsCell extends StatelessWidget {
@@ -1736,6 +1766,11 @@ List<_SaleItemSummary> _groupSaleItems(Sale sale) {
             item.isIced ? '${item.productName} (helada)' : item.productName,
         quantity: item.quantity,
         isIced: item.isIced,
+        baseUnitPrice: item.baseUnitPrice ?? item.unitPrice,
+        hasPromotion:
+            item.usedPromotionalPrice ||
+            (item.originalUnitPrice ?? item.baseUnitPrice ?? item.unitPrice) >
+                (item.baseUnitPrice ?? item.unitPrice),
       );
       continue;
     }
@@ -1744,6 +1779,8 @@ List<_SaleItemSummary> _groupSaleItems(Sale sale) {
       productName: existing.productName,
       quantity: existing.quantity + item.quantity,
       isIced: existing.isIced,
+      baseUnitPrice: existing.baseUnitPrice,
+      hasPromotion: existing.hasPromotion,
     );
   }
 
@@ -2026,7 +2063,7 @@ class _ProductPricingCell extends StatelessWidget {
           if (hasActivePromotion(snapshot.product)) ...[
             const SizedBox(height: 4),
             Text(
-              'Promo ${SystemWFormatters.currency.format(snapshot.product.promotionalPrice ?? snapshot.product.salePrice)}',
+              'Promo ${SystemWFormatters.currency.format(bestPromotionalPrice(snapshot.product) ?? snapshot.product.salePrice)}',
               style: Theme.of(
                 context,
               ).textTheme.bodySmall?.copyWith(color: const Color(0xFFEA580C)),
@@ -2325,6 +2362,108 @@ List<_MovementSupplierSummary> _buildMovementSupplierSummaries(
   return summaries;
 }
 
+List<_OperationalAlertRow> _buildOperationalAlertRows(
+  AdminDesktopDashboardState state,
+) {
+  final rows = <_OperationalAlertRow>[];
+  // build purchases index to lookup suppliers for low-stock products
+  final purchasesByProduct = <String, List<Purchase>>{};
+  for (final purchase in state.purchases) {
+    final touchedProducts = <String>{};
+    for (final item in purchase.items) {
+      if (touchedProducts.add(item.productId)) {
+        purchasesByProduct.putIfAbsent(item.productId, () => []).add(purchase);
+      }
+    }
+  }
+
+  for (final product in state.lowStockProducts) {
+    final productPurchases = purchasesByProduct[product.id] ?? const [];
+    final suppliers =
+        productPurchases
+            .map((p) => p.supplier.trim())
+            .where(_hasOperationalSupplier)
+            .toSet()
+            .toList()
+          ..sort();
+    final supplierLabel =
+        suppliers.isEmpty
+            ? (_isArtisanalProduct(product)
+                ? 'Artesanal / sin proveedor'
+                : 'Sin proveedor registrado')
+            : suppliers.join(', ');
+
+    rows.add(
+      _OperationalAlertRow(
+        productName: product.name,
+        supplierName: supplierLabel,
+        alertLabel: 'Stock bajo',
+        quantityLabel: '${product.stockStore} u.',
+        locationLabel: 'Tienda',
+        referenceLabel: 'Minimo ${product.lowStockThreshold} u.',
+        sortWeight: 2,
+        sortDate: null,
+      ),
+    );
+  }
+
+  for (final alert in state.expiredLotAlerts) {
+    rows.add(
+      _OperationalAlertRow(
+        productName: alert.productName,
+        supplierName: alert.supplierName,
+        alertLabel: 'Vencido',
+        quantityLabel: '${alert.availableUnits} u.',
+        locationLabel: 'Almacen',
+        referenceLabel: SystemWFormatters.shortDate.format(alert.expiryDate),
+        sortWeight: 0,
+        sortDate: alert.expiryDate,
+      ),
+    );
+  }
+
+  for (final alert in state.expiringLotAlerts) {
+    rows.add(
+      _OperationalAlertRow(
+        productName: alert.productName,
+        supplierName: alert.supplierName,
+        alertLabel: 'Vence pronto',
+        quantityLabel: '${alert.availableUnits} u.',
+        locationLabel: 'Almacen',
+        referenceLabel: SystemWFormatters.shortDate.format(alert.expiryDate),
+        sortWeight: 1,
+        sortDate: alert.expiryDate,
+      ),
+    );
+  }
+
+  rows.sort((left, right) {
+    final weightCompare = left.sortWeight.compareTo(right.sortWeight);
+    if (weightCompare != 0) {
+      return weightCompare;
+    }
+
+    final leftDate = left.sortDate;
+    final rightDate = right.sortDate;
+    if (leftDate != null && rightDate != null) {
+      final dateCompare = leftDate.compareTo(rightDate);
+      if (dateCompare != 0) {
+        return dateCompare;
+      }
+    } else if (leftDate != null) {
+      return -1;
+    } else if (rightDate != null) {
+      return 1;
+    }
+
+    return left.productName.toLowerCase().compareTo(
+      right.productName.toLowerCase(),
+    );
+  });
+
+  return rows;
+}
+
 List<_ProductSnapshot> _buildProductSnapshots(
   AdminDesktopDashboardState state,
 ) {
@@ -2475,6 +2614,36 @@ String _packageQuantityLabel(Product product, int stockUnits) {
   }
 
   return parts.join(' + ');
+}
+
+String _cashShiftStatusLabel(CashShift shift) {
+  return switch (shift.status) {
+    CashShiftStatus.pendingApproval => 'Pendiente',
+    CashShiftStatus.approved => 'Aprobado',
+    CashShiftStatus.rejected => 'Rechazado',
+    CashShiftStatus.closed => 'Cerrado',
+    CashShiftStatus.open => 'Abierto',
+  };
+}
+
+Color _cashShiftStatusBackground(CashShift shift) {
+  return switch (shift.status) {
+    CashShiftStatus.pendingApproval => const Color(0xFFFFF7ED),
+    CashShiftStatus.approved => const Color(0xFFE0F2FE),
+    CashShiftStatus.rejected => const Color(0xFFFEF2F2),
+    CashShiftStatus.closed => const Color(0xFFF1F5F9),
+    CashShiftStatus.open => const Color(0xFFECFDF5),
+  };
+}
+
+Color _cashShiftStatusForeground(CashShift shift) {
+  return switch (shift.status) {
+    CashShiftStatus.pendingApproval => const Color(0xFF9A3412),
+    CashShiftStatus.approved => const Color(0xFF075985),
+    CashShiftStatus.rejected => const Color(0xFFB91C1C),
+    CashShiftStatus.closed => const Color(0xFF334155),
+    CashShiftStatus.open => const Color(0xFF047857),
+  };
 }
 
 String _movementTypeLabel(InventoryMovement movement) {

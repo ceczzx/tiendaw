@@ -2,6 +2,8 @@ import 'package:tiendaw/core/sync/sync_status.dart';
 
 enum PaymentMethod { cash, yape, transfer }
 
+enum CashShiftStatus { pendingApproval, approved, rejected, open, closed }
+
 class SaleLine {
   const SaleLine({
     required this.productId,
@@ -9,6 +11,7 @@ class SaleLine {
     required this.quantity,
     required this.unitPrice,
     this.baseUnitPrice,
+    this.originalUnitPrice,
     this.priceAdjustment = 0,
     this.isIced = false,
     this.usedPromotionalPrice = false,
@@ -19,6 +22,7 @@ class SaleLine {
   final int quantity;
   final double unitPrice;
   final double? baseUnitPrice;
+  final double? originalUnitPrice;
   final double priceAdjustment;
   final bool isIced;
   final bool usedPromotionalPrice;
@@ -32,6 +36,8 @@ class SaleLine {
     return <String, dynamic>{
       'is_iced': isIced,
       'base_unit_price': baseUnitPrice ?? unitPrice,
+      'original_unit_price':
+          originalUnitPrice ?? baseUnitPrice ?? unitPrice,
       'price_adjustment': priceAdjustment,
       'used_promotional_price': usedPromotionalPrice,
     };
@@ -94,21 +100,46 @@ class CashShift {
     required this.id,
     required this.sellerId,
     required this.openedAt,
+    required this.openingAmount,
     required this.cashSales,
     required this.yapeSales,
+    required this.status,
     this.sellerName,
     this.closedAt,
+    this.locationId,
+    this.openingLatitude,
+    this.openingLongitude,
+    this.closingLatitude,
+    this.closingLongitude,
+    this.approvedBy,
+    this.approvedAt,
+    this.rejectionReason,
   });
 
   final String id;
   final String sellerId;
   final String? sellerName;
   final DateTime openedAt;
+  final double openingAmount;
   final DateTime? closedAt;
   final double cashSales;
   final double yapeSales;
+  final String? locationId;
+  final double? openingLatitude;
+  final double? openingLongitude;
+  final double? closingLatitude;
+  final double? closingLongitude;
+  final CashShiftStatus status;
+  final String? approvedBy;
+  final DateTime? approvedAt;
+  final String? rejectionReason;
 
-  bool get isOpen => closedAt == null;
+  bool get isOpen =>
+      status == CashShiftStatus.open || status == CashShiftStatus.approved;
+  bool get isPendingApproval => status == CashShiftStatus.pendingApproval;
+  bool get isClosed => status == CashShiftStatus.closed || closedAt != null;
+  bool get isRejected => status == CashShiftStatus.rejected;
+  bool get canSell => isOpen && !isClosed;
   double get total => cashSales + yapeSales;
 
   CashShift copyWith({
@@ -116,18 +147,38 @@ class CashShift {
     String? sellerId,
     String? sellerName,
     DateTime? openedAt,
+    double? openingAmount,
     DateTime? closedAt,
     double? cashSales,
     double? yapeSales,
+    String? locationId,
+    double? openingLatitude,
+    double? openingLongitude,
+    double? closingLatitude,
+    double? closingLongitude,
+    CashShiftStatus? status,
+    String? approvedBy,
+    DateTime? approvedAt,
+    String? rejectionReason,
   }) {
     return CashShift(
       id: id ?? this.id,
       sellerId: sellerId ?? this.sellerId,
       sellerName: sellerName ?? this.sellerName,
       openedAt: openedAt ?? this.openedAt,
+      openingAmount: openingAmount ?? this.openingAmount,
       closedAt: closedAt ?? this.closedAt,
       cashSales: cashSales ?? this.cashSales,
       yapeSales: yapeSales ?? this.yapeSales,
+      locationId: locationId ?? this.locationId,
+      openingLatitude: openingLatitude ?? this.openingLatitude,
+      openingLongitude: openingLongitude ?? this.openingLongitude,
+      closingLatitude: closingLatitude ?? this.closingLatitude,
+      closingLongitude: closingLongitude ?? this.closingLongitude,
+      status: status ?? this.status,
+      approvedBy: approvedBy ?? this.approvedBy,
+      approvedAt: approvedAt ?? this.approvedAt,
+      rejectionReason: rejectionReason ?? this.rejectionReason,
     );
   }
 }

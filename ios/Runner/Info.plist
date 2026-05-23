@@ -45,5 +45,7 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Necesitamos tu ubicacion para abrir y cerrar caja con validacion de turno.</string>
 </dict>
 </plist>

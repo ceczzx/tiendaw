@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:tiendaw/core/utils/formatters.dart';
 import 'package:tiendaw/features/auth/domain/app_user.dart';
 import 'package:tiendaw/features/auth/presentation/session_view_model.dart';
@@ -67,6 +69,19 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                       (product) => product.name.toLowerCase().contains(query),
                     )
                     .toList();
+
+        if (state.hasPendingShiftApproval) {
+          return _PendingShiftApprovalView(
+            currentUser: currentUser,
+            currentShift: state.currentShift,
+            onSignOut:
+                _isActionInProgress
+                    ? null
+                    : () {
+                      _signOut();
+                    },
+          );
+        }
 
         return Stack(
           children: [
@@ -368,42 +383,38 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                                                         ),
                                               ),
                                             ),
-                                            if (hasActivePromotion(product)) ...[
+                                            if (_hasActivePromotion(
+                                              state,
+                                              product,
+                                            )) ...[
                                               const SizedBox(height: 6),
                                               Text(
-                                                'Promo: $remainingPromotionStock u. | Regular: $remainingRegularStoreStock u.',
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .bodySmall
-                                                    ?.copyWith(
-                                                      color:
-                                                          selected
-                                                              ? Colors.white
-                                                              : const Color(
-                                                                0xFFEA580C,
-                                                              ),
-                                                    ),
+                                                availablePromotionUnits(
+                                                          product,
+                                                        ) >
+                                                        0
+                                                    ? 'Promo por lote: $remainingPromotionStock u. | Regular: $remainingRegularStoreStock u.'
+                                                    : 'Descuento general activo desde ${SystemWFormatters.currency.format(_activeGeneralPromotionalPrice(state, product) ?? product.salePrice)}',
+                                                style: Theme.of(
+                                                  context,
+                                                ).textTheme.bodySmall?.copyWith(
+                                                  color:
+                                                      selected
+                                                          ? Colors.white
+                                                          : const Color(
+                                                            0xFFEA580C,
+                                                          ),
+                                                ),
                                               ),
                                               const SizedBox(height: 4),
-                                              Text(
-                                                'Precio promo desde ${SystemWFormatters.currency.format(bestPromotionalPrice(product) ?? product.salePrice)}',
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .bodySmall
-                                                    ?.copyWith(
-                                                      color:
-                                                          selected
-                                                              ? Colors.white
-                                                              : const Color(
-                                                                0xFFEA580C,
-                                                              ),
-                                                    ),
-                                              ),
                                             ],
                                             const Spacer(),
                                             Text(
                                               SystemWFormatters.currency.format(
-                                                effectiveBaseSalePrice(product),
+                                                _effectiveBaseSalePrice(
+                                                  state,
+                                                  product,
+                                                ),
                                               ),
                                               style: Theme.of(
                                                 context,
@@ -602,6 +613,10 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
       _initialShiftPromptHandled = false;
       return;
     }
+    if (nextState.hasPendingShiftApproval || nextState.hasShiftRequest) {
+      _initialShiftPromptHandled = true;
+      return;
+    }
 
     final hadOpenShift = previousState?.hasOpenShift ?? false;
     if (hadOpenShift) {
@@ -633,10 +648,37 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
       return;
     }
 
+    final openingAmount = await _promptAmount(
+      title: 'Iniciar caja',
+      message:
+          'Ingresa el monto inicial y luego activaremos GPS para registrar la apertura del turno.',
+      fieldLabel: 'Monto inicial',
+      confirmLabel: 'Continuar',
+      initialValue: '0',
+    );
+    if (openingAmount == null || !mounted) {
+      return;
+    }
+
+    final position = await _resolveShiftPosition(
+      locationDisabledMessage:
+          'Activa el GPS del dispositivo para poder iniciar caja.',
+      permissionDeniedMessage:
+          'Debes permitir la ubicacion para iniciar caja.',
+    );
+    if (position == null || !mounted) {
+      return;
+    }
+
     setState(() => _isActionInProgress = true);
     final success = await ref
         .read(sellerDashboardViewModelProvider.notifier)
-        .openShift(user);
+        .openShift(
+          user,
+          openingAmount: openingAmount,
+          openingLatitude: position.latitude,
+          openingLongitude: position.longitude,
+        );
     if (!success) {
       _releaseActionLockIfNoFeedback();
     }
@@ -682,13 +724,42 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
       return;
     }
 
+    final currentState = ref.read(sellerDashboardViewModelProvider).valueOrNull;
+    final currentShift = currentState?.currentShift;
+    if (currentShift == null) {
+      return;
+    }
+
+    final cashTotal = await _promptAmount(
+      title: 'Cerrar caja',
+      message:
+          'Confirma el total final en efectivo antes de registrar el cierre.',
+      fieldLabel: 'Total efectivo',
+      confirmLabel: 'Continuar',
+      initialValue: currentShift.cashSales.toStringAsFixed(2),
+    );
+    if (cashTotal == null || !mounted) {
+      return;
+    }
+    final yapeTotal = await _promptAmount(
+      title: 'Cerrar caja',
+      message:
+          'Confirma el total final por Yape o transferencia para cerrar el turno.',
+      fieldLabel: 'Total Yape / Transfer',
+      confirmLabel: 'Revisar cierre',
+      initialValue: currentShift.yapeSales.toStringAsFixed(2),
+    );
+    if (yapeTotal == null || !mounted) {
+      return;
+    }
+
     final shouldClose = await showDialog<bool>(
       context: context,
       builder:
           (context) => AlertDialog(
             title: const Text('Cerrar caja'),
-            content: const Text(
-              'Se cerrara la caja actual y ya no podras registrar ventas hasta abrir una nueva.',
+            content: Text(
+              'Se registrara el cierre con Efectivo ${SystemWFormatters.currency.format(cashTotal)} y Yape/Transfer ${SystemWFormatters.currency.format(yapeTotal)}.',
             ),
             actions: [
               TextButton(
@@ -707,12 +778,150 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
       return;
     }
 
+    final position = await _resolveShiftPosition(
+      locationDisabledMessage:
+          'Activa el GPS del dispositivo para poder cerrar caja.',
+      permissionDeniedMessage:
+          'Debes permitir la ubicacion para cerrar caja.',
+    );
+    if (position == null || !mounted) {
+      return;
+    }
+
     setState(() => _isActionInProgress = true);
     final success = await ref
         .read(sellerDashboardViewModelProvider.notifier)
-        .closeShift(user);
+        .closeShift(
+          user,
+          cashTotal: cashTotal,
+          yapeTotal: yapeTotal,
+          closingLatitude: position.latitude,
+          closingLongitude: position.longitude,
+        );
     if (!success) {
       _releaseActionLockIfNoFeedback();
+    }
+  }
+
+  Future<double?> _promptAmount({
+    required String title,
+    required String message,
+    required String fieldLabel,
+    required String confirmLabel,
+    required String initialValue,
+  }) async {
+    final controller = TextEditingController(text: initialValue);
+
+    return showDialog<double>(
+      context: context,
+      builder: (context) {
+        String? errorMessage;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text(title),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(message),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: controller,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(
+                        RegExp(r'^\d*\.?\d{0,2}'),
+                      ),
+                    ],
+                    decoration: InputDecoration(labelText: fieldLabel),
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      errorMessage!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFFB91C1C),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final value = double.tryParse(controller.text.trim());
+                    if (value == null || value < 0) {
+                      setState(() {
+                        errorMessage = 'Ingresa un monto valido.';
+                      });
+                      return;
+                    }
+                    Navigator.of(context).pop(value);
+                  },
+                  child: Text(confirmLabel),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<Position?> _resolveShiftPosition({
+    required String locationDisabledMessage,
+    required String permissionDeniedMessage,
+  }) async {
+    final isLocationEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!isLocationEnabled) {
+      if (mounted) {
+        await showSystemWActionDialog(
+          context,
+          message: locationDisabledMessage,
+          isError: true,
+        );
+      }
+      return null;
+    }
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      if (mounted) {
+        await showSystemWActionDialog(
+          context,
+          message: permissionDeniedMessage,
+          isError: true,
+        );
+      }
+      return null;
+    }
+
+    try {
+      return await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+    } catch (error) {
+      if (mounted) {
+        await showSystemWActionDialog(
+          context,
+          message: 'No pudimos obtener tu ubicacion actual: $error',
+          isError: true,
+        );
+      }
+      return null;
     }
   }
 
@@ -839,10 +1048,12 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                     'Normal: $availableNormalUnits u. | Helada: $availableIcedUnits u.',
                     style: Theme.of(context).textTheme.bodyMedium,
                   ),
-                  if (hasActivePromotion(product)) ...[
+                  if (_hasActivePromotion(state, product)) ...[
                     const SizedBox(height: 8),
                     Text(
-                      'Promo disponible: ${availablePromotionUnits(product)} u. desde ${SystemWFormatters.currency.format(bestPromotionalPrice(product) ?? product.salePrice)}.',
+                      availablePromotionUnits(product) > 0
+                          ? 'Promo por lote: ${availablePromotionUnits(product)} u. desde ${SystemWFormatters.currency.format(bestPromotionalPrice(product) ?? product.salePrice)}.'
+                          : 'Descuento general activo desde ${SystemWFormatters.currency.format(_activeGeneralPromotionalPrice(state, product) ?? product.salePrice)}.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: const Color(0xFFEA580C),
                       ),
@@ -928,9 +1139,7 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                         style: Theme.of(context).textTheme.bodyLarge,
                       ),
                       Text(
-                        SystemWFormatters.currency.format(
-                          previewSubtotal,
-                        ),
+                        SystemWFormatters.currency.format(previewSubtotal),
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ],
@@ -1050,11 +1259,14 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                         ),
                       ],
                       selected: {selectedMethod},
-                      onSelectionChanged: isSubmitting
-                          ? null
-                          : (selection) {
-                        setState(() => selectedMethod = selection.first);
-                      },
+                      onSelectionChanged:
+                          isSubmitting
+                              ? null
+                              : (selection) {
+                                setState(
+                                  () => selectedMethod = selection.first,
+                                );
+                              },
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -1132,6 +1344,76 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
       }
     }
     return 0;
+  }
+}
+
+class _PendingShiftApprovalView extends StatelessWidget {
+  const _PendingShiftApprovalView({
+    required this.currentUser,
+    required this.currentShift,
+    required this.onSignOut,
+  });
+
+  final AppUser? currentUser;
+  final CashShift? currentShift;
+  final VoidCallback? onSignOut;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: SectionCard(
+              title: 'Esperando aprobacion',
+              subtitle:
+                  'Solicitud enviada, esperando que el administrador apruebe el turno',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Vendedora: ${currentUser?.name ?? 'Usuario'}',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  _SummaryRow(
+                    label: 'Hora de solicitud',
+                    value:
+                        currentShift == null
+                            ? 'Pendiente'
+                            : SystemWFormatters.shortDateTime.format(
+                              currentShift!.openedAt,
+                            ),
+                  ),
+                  _SummaryRow(
+                    label: 'Monto inicial',
+                    value: SystemWFormatters.currency.format(
+                      currentShift?.openingAmount ?? 0,
+                    ),
+                  ),
+                  if ((currentShift?.rejectionReason ?? '').trim().isNotEmpty)
+                    _SummaryRow(
+                      label: 'Observacion',
+                      value: currentShift!.rejectionReason!.trim(),
+                    ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: onSignOut,
+                      icon: const Icon(Icons.logout_rounded),
+                      label: const Text('Cerrar sesion'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -1327,9 +1609,16 @@ bool _isErrorFeedback(String message) {
 String _saleLineDescriptor(SaleLine item) {
   final details = <String>[];
   details.add(item.isIced ? 'estado: helada' : 'estado: normal');
-  details.add(
-    item.usedPromotionalPrice ? 'precio promo por lote' : 'precio normal',
-  );
+  final originalUnitPrice =
+      item.originalUnitPrice ?? item.baseUnitPrice ?? item.unitPrice;
+  final baseUnitPrice = item.baseUnitPrice ?? item.unitPrice;
+  if (item.usedPromotionalPrice) {
+    details.add('precio promo por lote');
+  } else if (originalUnitPrice > baseUnitPrice) {
+    details.add('descuento general');
+  } else {
+    details.add('precio normal');
+  }
   if (item.isIced && item.priceAdjustment > 0) {
     details.add(
       'helada +${SystemWFormatters.currency.format(item.priceAdjustment)}',
@@ -1348,6 +1637,57 @@ double? _startingSelectionPrice(
     return null;
   }
   return lines.first.unitPrice;
+}
+
+PriceHistoryEntry? _activePriceHistoryEntryForProduct(
+  SellerDashboardState state,
+  Product product,
+) {
+  PriceHistoryEntry? activeEntry;
+  for (final entry in state.priceHistory) {
+    if (entry.productId != product.id || !entry.isActive) {
+      continue;
+    }
+    if (activeEntry == null ||
+        entry.effectiveFrom.isAfter(activeEntry.effectiveFrom)) {
+      activeEntry = entry;
+    }
+  }
+  return activeEntry;
+}
+
+double? _activeGeneralPromotionalPrice(
+  SellerDashboardState state,
+  Product product,
+) {
+  final activeEntry = _activePriceHistoryEntryForProduct(state, product);
+  final promotionalPrice = activeEntry?.promotionalPrice;
+  if (promotionalPrice == null ||
+      promotionalPrice <= 0 ||
+      promotionalPrice >= product.salePrice) {
+    return null;
+  }
+  return promotionalPrice;
+}
+
+bool _hasActivePromotion(SellerDashboardState state, Product product) {
+  return _activeGeneralPromotionalPrice(state, product) != null ||
+      availablePromotionUnits(product) > 0;
+}
+
+double _effectiveBaseSalePrice(SellerDashboardState state, Product product) {
+  final generalPrice = _activeGeneralPromotionalPrice(state, product);
+  final lotPrice = bestPromotionalPrice(product);
+
+  var effectivePrice = product.salePrice;
+  if (generalPrice != null && generalPrice < effectivePrice) {
+    effectivePrice = generalPrice;
+  }
+  if (lotPrice != null && lotPrice < effectivePrice) {
+    effectivePrice = lotPrice;
+  }
+
+  return effectivePrice;
 }
 
 double _previewSelectionSubtotal(
@@ -1378,6 +1718,10 @@ List<SaleLine> _previewSelectionLines(
   final lines = <SaleLine>[];
   var remainingQuantity = quantity;
   var reservedPromotionUnits = state.promotionalQuantityInCart(product.id);
+  final generalPromotionalPrice = _activeGeneralPromotionalPrice(
+    state,
+    product,
+  );
 
   for (final offer in activePromotionOffers(product)) {
     if (remainingQuantity <= 0) {
@@ -1409,6 +1753,7 @@ List<SaleLine> _previewSelectionLines(
         quantity: promotionalQuantity,
         unitPrice: promotionalUnitPrice + priceAdjustment,
         baseUnitPrice: promotionalUnitPrice,
+        originalUnitPrice: product.salePrice,
         priceAdjustment: priceAdjustment,
         isIced: isIced,
         usedPromotionalPrice: true,
@@ -1418,7 +1763,7 @@ List<SaleLine> _previewSelectionLines(
   }
 
   if (remainingQuantity > 0) {
-    final fallbackUnitPrice = generalPromotionalPrice(product) ?? product.salePrice;
+    final fallbackUnitPrice = generalPromotionalPrice ?? product.salePrice;
     lines.add(
       SaleLine(
         productId: product.id,
@@ -1426,6 +1771,7 @@ List<SaleLine> _previewSelectionLines(
         quantity: remainingQuantity,
         unitPrice: fallbackUnitPrice + priceAdjustment,
         baseUnitPrice: fallbackUnitPrice,
+        originalUnitPrice: product.salePrice,
         priceAdjustment: priceAdjustment,
         isIced: isIced,
       ),

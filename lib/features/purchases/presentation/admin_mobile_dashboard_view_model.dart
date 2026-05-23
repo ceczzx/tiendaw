@@ -462,10 +462,76 @@ class AdminMobileDashboardViewModel
     }
   }
 
+  Future<bool> upsertGeneralPromotion({
+    required String productId,
+    required double promotionalPrice,
+    String? promotionNote,
+    DateTime? scheduledEndAt,
+  }) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    try {
+      await ref
+          .read(catalogRepositoryProvider)
+          .upsertGeneralPromotion(
+            productId: productId,
+            promotionalPrice: promotionalPrice,
+            promotionNote: promotionNote,
+            scheduledEndAt: scheduledEndAt,
+          );
+      await _refreshAll(selectedProductId: current.selectedProductId);
+      state = AsyncData(
+        state.requireValue.copyWith(
+          feedbackMessage: 'Descuento general guardado.',
+        ),
+      );
+      return true;
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'No se pudo guardar el descuento general: $error',
+        ),
+      );
+      return false;
+    }
+  }
+
+  Future<bool> clearGeneralPromotion({required String productId}) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    try {
+      await ref
+          .read(catalogRepositoryProvider)
+          .clearGeneralPromotion(productId: productId);
+      await _refreshAll(selectedProductId: current.selectedProductId);
+      state = AsyncData(
+        state.requireValue.copyWith(
+          feedbackMessage: 'Descuento general retirado.',
+        ),
+      );
+      return true;
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'No se pudo retirar el descuento general: $error',
+        ),
+      );
+      return false;
+    }
+  }
+
   Future<bool> registerInventoryLoss({
     required String purchaseItemId,
     required int quantity,
+    required String reason,
     String? notes,
+    String? storageCondition,
   }) async {
     final current = state.valueOrNull;
     if (current == null) {
@@ -478,7 +544,9 @@ class AdminMobileDashboardViewModel
           .registerInventoryLoss(
             purchaseItemId: purchaseItemId,
             quantity: quantity,
+            reason: reason,
             notes: notes,
+            storageCondition: storageCondition,
           );
       await _refreshAll(selectedProductId: current.selectedProductId);
       state = AsyncData(

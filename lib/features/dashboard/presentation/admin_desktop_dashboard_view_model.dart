@@ -19,6 +19,7 @@ class AdminDesktopDashboardState {
     required this.purchases,
     required this.movements,
     required this.expiringLotAlerts,
+    required this.expiredLotAlerts,
     required this.lowStockProducts,
     required this.expiringProducts,
     required this.pendingSyncCount,
@@ -34,6 +35,7 @@ class AdminDesktopDashboardState {
   final List<Purchase> purchases;
   final List<InventoryMovement> movements;
   final List<InventoryLotAlert> expiringLotAlerts;
+  final List<InventoryLotAlert> expiredLotAlerts;
   final List<Product> lowStockProducts;
   final List<Product> expiringProducts;
   final int pendingSyncCount;
@@ -205,7 +207,10 @@ class AdminDesktopDashboardState {
       .where((movement) => _movementBucket(movement) == 'loss')
       .fold(0, (sum, movement) => sum + movement.quantity);
 
-  int get activeAlertCount => lowStockProducts.length + expiringLotAlerts.length;
+  int get activeAlertCount =>
+      lowStockProducts.length +
+      expiringLotAlerts.length +
+      expiredLotAlerts.length;
 
   List<Map<String, String>> get sellerOptions {
     final sellers = <String, String>{};
@@ -234,6 +239,7 @@ class AdminDesktopDashboardState {
     List<Purchase>? purchases,
     List<InventoryMovement>? movements,
     List<InventoryLotAlert>? expiringLotAlerts,
+    List<InventoryLotAlert>? expiredLotAlerts,
     List<Product>? lowStockProducts,
     List<Product>? expiringProducts,
     int? pendingSyncCount,
@@ -249,6 +255,7 @@ class AdminDesktopDashboardState {
       purchases: purchases ?? this.purchases,
       movements: movements ?? this.movements,
       expiringLotAlerts: expiringLotAlerts ?? this.expiringLotAlerts,
+      expiredLotAlerts: expiredLotAlerts ?? this.expiredLotAlerts,
       lowStockProducts: lowStockProducts ?? this.lowStockProducts,
       expiringProducts: expiringProducts ?? this.expiringProducts,
       pendingSyncCount: pendingSyncCount ?? this.pendingSyncCount,
@@ -259,6 +266,9 @@ class AdminDesktopDashboardState {
   }
 
   String _movementBucket(InventoryMovement movement) {
+    if (movement.type.toLowerCase() == 'loss') {
+      return 'loss';
+    }
     final fromLocation = movement.fromLocation.toLowerCase();
     final toLocation = movement.toLocation.toLowerCase();
     if (fromLocation.contains('sin origen')) {
@@ -284,6 +294,7 @@ class AdminDesktopDashboardViewModel
   StreamSubscription<List<Purchase>>? _purchasesSubscription;
   StreamSubscription<List<InventoryMovement>>? _movementsSubscription;
   StreamSubscription<List<InventoryLotAlert>>? _expiringLotAlertsSubscription;
+  StreamSubscription<List<InventoryLotAlert>>? _expiredLotAlertsSubscription;
 
   @override
   Future<AdminDesktopDashboardState> build() async {
@@ -327,6 +338,9 @@ class AdminDesktopDashboardViewModel
         await ref.read(catalogRepositoryProvider).getInventoryMovements();
     final expiringLotAlerts =
         await ref.read(catalogRepositoryProvider).getInventoryLotAlerts();
+    final expiredLotAlerts = await ref
+        .read(catalogRepositoryProvider)
+        .getInventoryLotAlerts(expiredOnly: true);
 
     final lowStockProducts =
         catalog.products
@@ -345,6 +359,7 @@ class AdminDesktopDashboardViewModel
       purchases: purchases,
       movements: movements,
       expiringLotAlerts: expiringLotAlerts,
+      expiredLotAlerts: expiredLotAlerts,
       lowStockProducts: lowStockProducts,
       expiringProducts: expiringProducts,
       pendingSyncCount: 0,
@@ -381,6 +396,10 @@ class AdminDesktopDashboardViewModel
         .read(catalogRepositoryProvider)
         .watchInventoryLotAlerts()
         .listen(_handleExpiringLotAlertsUpdate, onError: (_, __) {});
+    _expiredLotAlertsSubscription = ref
+        .read(catalogRepositoryProvider)
+        .watchInventoryLotAlerts(expiredOnly: true)
+        .listen(_handleExpiredLotAlertsUpdate, onError: (_, __) {});
   }
 
   void _disposeRealtimeSubscriptions() {
@@ -390,12 +409,14 @@ class AdminDesktopDashboardViewModel
     _purchasesSubscription?.cancel();
     _movementsSubscription?.cancel();
     _expiringLotAlertsSubscription?.cancel();
+    _expiredLotAlertsSubscription?.cancel();
     _catalogSubscription = null;
     _salesSubscription = null;
     _cashShiftsSubscription = null;
     _purchasesSubscription = null;
     _movementsSubscription = null;
     _expiringLotAlertsSubscription = null;
+    _expiredLotAlertsSubscription = null;
   }
 
   void _handleCatalogUpdate(CatalogOverview catalog) {
@@ -470,6 +491,15 @@ class AdminDesktopDashboardViewModel
         expiringProducts: productAlerts.expiringProducts,
       ),
     );
+  }
+
+  void _handleExpiredLotAlertsUpdate(List<InventoryLotAlert> alerts) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(expiredLotAlerts: alerts));
   }
 }
 

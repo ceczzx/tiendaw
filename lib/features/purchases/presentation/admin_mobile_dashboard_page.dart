@@ -34,11 +34,22 @@ typedef _PromotionSubmit =
       String? promotionNote,
     });
 typedef _PromotionClearSubmit = Future<bool> Function(String promotionId);
+typedef _GeneralPromotionSubmit =
+    Future<bool> Function({
+      required String productId,
+      required double promotionalPrice,
+      String? promotionNote,
+      DateTime? scheduledEndAt,
+    });
+typedef _GeneralPromotionClearSubmit =
+    Future<bool> Function({required String productId});
 typedef _LossSubmit =
     Future<bool> Function({
       required String purchaseItemId,
       required int quantity,
+      required String reason,
       String? notes,
+      String? storageCondition,
     });
 typedef _ColdStateSubmit =
     Future<bool> Function({
@@ -178,6 +189,8 @@ class _AdminMobileDashboardPageState
         isBusy: _isActionInProgress,
         onUpdatePromotion: _handlePromotionUpdate,
         onClearPromotion: _handlePromotionClear,
+        onSaveGeneralPromotion: _handleSaveGeneralPromotion,
+        onClearGeneralPromotion: _handleClearGeneralPromotion,
       ),
       _AdminMobileSection.losses => _LossesSection(
         state: state,
@@ -267,10 +280,50 @@ class _AdminMobileDashboardPageState
         .cancelLotPromotion(promotionId);
   }
 
+  Future<bool> _handleSaveGeneralPromotion({
+    required String productId,
+    required double promotionalPrice,
+    String? promotionNote,
+    DateTime? scheduledEndAt,
+  }) async {
+    if (_isActionInProgress) {
+      return false;
+    }
+
+    setState(() {
+      _isActionInProgress = true;
+    });
+    return ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .upsertGeneralPromotion(
+          productId: productId,
+          promotionalPrice: promotionalPrice,
+          promotionNote: promotionNote,
+          scheduledEndAt: scheduledEndAt,
+        );
+  }
+
+  Future<bool> _handleClearGeneralPromotion({
+    required String productId,
+  }) async {
+    if (_isActionInProgress) {
+      return false;
+    }
+
+    setState(() {
+      _isActionInProgress = true;
+    });
+    return ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .clearGeneralPromotion(productId: productId);
+  }
+
   Future<bool> _handleRegisterLoss({
     required String purchaseItemId,
     required int quantity,
+    required String reason,
     String? notes,
+    String? storageCondition,
   }) async {
     if (_isActionInProgress) {
       return false;
@@ -284,7 +337,9 @@ class _AdminMobileDashboardPageState
         .registerInventoryLoss(
           purchaseItemId: purchaseItemId,
           quantity: quantity,
+          reason: reason,
           notes: notes,
+          storageCondition: storageCondition,
         );
   }
 
@@ -380,7 +435,7 @@ class _AdminSectionStrip extends StatelessWidget {
           ),
           (
             icon: Icons.local_offer_rounded,
-            label: 'Promocion',
+            label: 'Promociones',
             section: _AdminMobileSection.promotions,
           ),
           (
@@ -1033,40 +1088,344 @@ class _SuppliersSectionState extends State<_SuppliersSection> {
   }
 }
 
-class _PromotionsSection extends StatefulWidget {
+class _PromotionsSection extends ConsumerStatefulWidget {
   const _PromotionsSection({
     required this.state,
     required this.isBusy,
     required this.onUpdatePromotion,
     required this.onClearPromotion,
+    required this.onSaveGeneralPromotion,
+    required this.onClearGeneralPromotion,
   });
 
   final AdminMobileDashboardState state;
   final bool isBusy;
   final _PromotionSubmit onUpdatePromotion;
   final _PromotionClearSubmit onClearPromotion;
+  final _GeneralPromotionSubmit onSaveGeneralPromotion;
+  final _GeneralPromotionClearSubmit onClearGeneralPromotion;
 
   @override
-  State<_PromotionsSection> createState() => _PromotionsSectionState();
+  ConsumerState<_PromotionsSection> createState() => _PromotionsSectionState();
 }
 
-class _PromotionsSectionState extends State<_PromotionsSection> {
+class _PromotionsSectionState extends ConsumerState<_PromotionsSection> {
+  late final TextEditingController _generalPromoPriceController;
+  late final TextEditingController _generalPromoNoteController;
+  String? _selectedGeneralProductId;
+  DateTime? _generalPromotionEndAt;
+  String? _generalPromotionFormSeed;
+
+  @override
+  void initState() {
+    super.initState();
+    _generalPromoPriceController = TextEditingController();
+    _generalPromoNoteController = TextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _generalPromoPriceController.dispose();
+    _generalPromoNoteController.dispose();
+    super.dispose();
+  }
+
+  Product? _resolveSelectedGeneralProduct(List<Product> products) {
+    if (products.isEmpty) {
+      _selectedGeneralProductId = null;
+      return null;
+    }
+    if (_selectedGeneralProductId == null ||
+        !products.any((product) => product.id == _selectedGeneralProductId)) {
+      _selectedGeneralProductId = products.first.id;
+    }
+    return products.firstWhere((product) => product.id == _selectedGeneralProductId);
+  }
+
+  void _syncGeneralPromotionForm(Product product, PriceHistoryEntry? activeEntry) {
+    final seed =
+        '${product.id}|${activeEntry?.effectiveFrom.toIso8601String() ?? 'sin-inicio'}|'
+        '${activeEntry?.effectiveTo?.toIso8601String() ?? 'sin-fin'}|'
+        '${activeEntry?.promotionalPrice?.toString() ?? 'sin-precio'}|'
+        '${activeEntry?.promotionNote ?? ''}';
+    if (_generalPromotionFormSeed == seed) {
+      return;
+    }
+
+    _generalPromotionFormSeed = seed;
+    _generalPromoPriceController.text =
+        (activeEntry?.promotionalPrice ?? product.salePrice).toStringAsFixed(2);
+    _generalPromoNoteController.text =
+        activeEntry?.promotionNote ?? product.promotionNote ?? '';
+    _generalPromotionEndAt =
+        activeEntry?.effectiveTo?.toLocal() ??
+        DateTime.now().add(const Duration(days: 7));
+  }
+
+  Future<void> _pickGeneralPromotionDate(BuildContext context) async {
+    final currentValue = _generalPromotionEndAt ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: currentValue,
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 365)),
+    );
+    if (picked == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      final currentTime = _generalPromotionEndAt ?? DateTime.now();
+      _generalPromotionEndAt = DateTime(
+        picked.year,
+        picked.month,
+        picked.day,
+        currentTime.hour,
+        currentTime.minute,
+      );
+    });
+  }
+
+  Future<void> _pickGeneralPromotionTime(BuildContext context) async {
+    final currentValue = _generalPromotionEndAt ?? DateTime.now();
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(currentValue),
+    );
+    if (picked == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      final currentDate = _generalPromotionEndAt ?? DateTime.now();
+      _generalPromotionEndAt = DateTime(
+        currentDate.year,
+        currentDate.month,
+        currentDate.day,
+        picked.hour,
+        picked.minute,
+      );
+    });
+  }
+
+  Future<void> _openActiveGeneralPromotionDialog(
+    Product product,
+    PriceHistoryEntry entry,
+  ) async {
+    final promoController = TextEditingController(
+      text: (entry.promotionalPrice ?? product.salePrice).toStringAsFixed(2),
+    );
+    final noteController = TextEditingController(
+      text: entry.promotionNote ?? '',
+    );
+    DateTime selectedEndAt =
+        entry.effectiveTo?.toLocal() ??
+        DateTime.now().add(const Duration(days: 7));
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        String? errorMessage;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text(product.name),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _InfoLine(
+                    label: 'Precio base',
+                    value: SystemWFormatters.currency.format(product.salePrice),
+                  ),
+                  _InfoLine(
+                    label: 'Promocion actual',
+                    value: SystemWFormatters.currency.format(
+                      entry.promotionalPrice ?? product.salePrice,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: promoController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Precio promocional',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: selectedEndAt,
+                            firstDate: DateTime.now(),
+                            lastDate: DateTime.now().add(
+                              const Duration(days: 365),
+                            ),
+                          );
+                          if (picked == null) {
+                            return;
+                          }
+                          setState(() {
+                            selectedEndAt = DateTime(
+                              picked.year,
+                              picked.month,
+                              picked.day,
+                              selectedEndAt.hour,
+                              selectedEndAt.minute,
+                            );
+                          });
+                        },
+                        icon: const Icon(Icons.event_rounded),
+                        label: Text(
+                          SystemWFormatters.shortDate.format(selectedEndAt),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final picked = await showTimePicker(
+                            context: context,
+                            initialTime: TimeOfDay.fromDateTime(selectedEndAt),
+                          );
+                          if (picked == null) {
+                            return;
+                          }
+                          setState(() {
+                            selectedEndAt = DateTime(
+                              selectedEndAt.year,
+                              selectedEndAt.month,
+                              selectedEndAt.day,
+                              picked.hour,
+                              picked.minute,
+                            );
+                          });
+                        },
+                        icon: const Icon(Icons.schedule_rounded),
+                        label: Text(
+                          TimeOfDay.fromDateTime(selectedEndAt).format(context),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: noteController,
+                    decoration: const InputDecoration(
+                      labelText: 'Nota interna',
+                    ),
+                    maxLines: 2,
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      errorMessage!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFFB91C1C),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    final value = double.tryParse(promoController.text);
+                    if (value == null || value <= 0) {
+                      setState(() {
+                        errorMessage =
+                            'Ingresa un precio promocional valido.';
+                      });
+                      return;
+                    }
+                    if (value >= product.salePrice) {
+                      setState(() {
+                        errorMessage =
+                            'El descuento general debe ser menor al precio base.';
+                      });
+                      return;
+                    }
+                    if (!selectedEndAt.isAfter(DateTime.now())) {
+                      setState(() {
+                        errorMessage =
+                            'Programa una fecha y hora de fin validas.';
+                      });
+                      return;
+                    }
+                    final success = await widget.onSaveGeneralPromotion(
+                      productId: product.id,
+                      promotionalPrice: value,
+                      promotionNote: noteController.text.trim(),
+                      scheduledEndAt: selectedEndAt,
+                    );
+                    if (success && mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  },
+                  child: const Text('Guardar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final generalPromotionHistory =
+        widget.state.priceHistory
+            .where((entry) => entry.promotionalPrice != null)
+            .toList();
+    final activeGeneralPromotionsByProductId = <String, PriceHistoryEntry>{};
+    for (final entry in generalPromotionHistory) {
+      if (!entry.isActiveAt(now) ||
+          activeGeneralPromotionsByProductId.containsKey(entry.productId)) {
+        continue;
+      }
+      activeGeneralPromotionsByProductId[entry.productId] = entry;
+    }
+    final generalDiscountProducts = [...widget.state.products]..sort(
+      (left, right) =>
+          left.name.toLowerCase().compareTo(right.name.toLowerCase()),
+    );
     final items = _buildPromotionLotRows(widget.state);
     final openNotices =
         widget.state.promotionNotices.where((notice) => notice.isOpen).toList()
           ..sort((left, right) => right.createdAt.compareTo(left.createdAt));
-    final activePromotionCount =
-        widget.state.activeLotPromotions
-            .where(
-              (promotion) =>
-                  promotion.status == 'active_store' ||
-                  promotion.status == 'pending_transfer',
-            )
-            .length;
-    final candidateCount =
-        items.where((item) => item.activePromotion == null).length;
+    final activeGeneralPromotionCount =
+        activeGeneralPromotionsByProductId.length;
+    final activeGeneralEntries =
+        activeGeneralPromotionsByProductId.values.toList()
+          ..sort(
+            (left, right) =>
+                left.productName.toLowerCase().compareTo(
+                  right.productName.toLowerCase(),
+                ),
+          );
+    final activeLotPromotionCount = widget.state.activeLotPromotions.length;
+    final selectedGeneralProduct = _resolveSelectedGeneralProduct(
+      generalDiscountProducts,
+    );
+    final selectedGeneralEntry =
+        selectedGeneralProduct == null
+            ? null
+            : activeGeneralPromotionsByProductId[selectedGeneralProduct.id];
+    if (selectedGeneralProduct != null) {
+      _syncGeneralPromotionForm(selectedGeneralProduct, selectedGeneralEntry);
+    }
+    final today = now;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -1074,216 +1433,720 @@ class _PromotionsSectionState extends State<_PromotionsSection> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const _MobileSectionHeading(
-            title: 'Promocion',
+            title: 'Promociones',
             subtitle:
-                'Activa promociones por lote respetando proveedor, vencimiento, ubicacion y cantidad comprometida.',
+                'Separa descuentos generales, liquidaciones por lote e historial.',
           ),
           const SizedBox(height: 16),
           _MetricWrap(
             children: [
               MetricCard(
-                label: 'Lotes por activar',
-                value: '$candidateCount',
-                detail: 'Listos para promocionarse por lote',
+                label: 'Descuento general',
+                value: '$activeGeneralPromotionCount',
+                detail: 'Activos ahora',
                 accent: const Color(0xFFEA580C),
               ),
               MetricCard(
-                label: 'Promos activas',
-                value: '$activePromotionCount',
-                detail: 'Con cantidad y precio ya definidos',
+                label: 'Liquidaciones',
+                value: '$activeLotPromotionCount',
+                detail: 'Activas por lote',
                 accent: const Color(0xFF0F766E),
               ),
               MetricCard(
-                label: 'Avisos',
-                value: '${openNotices.length}',
-                detail: 'Pendientes por revisar en admin',
+                label: 'Historial',
+                value: '${generalPromotionHistory.length}',
+                detail: 'Registros generales con promo',
                 accent: const Color(0xFF2563EB),
               ),
             ],
           ),
-          if (openNotices.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            SectionCard(
-              title: 'Avisos de promo',
-              subtitle:
-                  'Aqui se muestran promociones agotadas o que siguen pendientes de mover a tienda.',
-              child: Column(
-                children:
-                    openNotices.map((notice) {
-                      return Container(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        decoration: const BoxDecoration(
-                          border: Border(
-                            bottom: BorderSide(color: Color(0xFFE5E7EB)),
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _promotionNoticeLabel(notice),
-                              style: Theme.of(context).textTheme.titleSmall,
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              notice.message,
-                              style: Theme.of(context).textTheme.bodyMedium,
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              SystemWFormatters.shortDateTime.format(
-                                notice.createdAt,
-                              ),
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(color: const Color(0xFF6B7280)),
-                            ),
-                          ],
-                        ),
-                      );
-                    }).toList(),
-              ),
-            ),
-          ],
           const SizedBox(height: 16),
           SectionCard(
-            title: 'Lista promocionable',
+            title: '1. Descuentos generales',
             subtitle:
-                'Cada fila mantiene trazabilidad por lote antes de cambiar el precio y separa lo que esta activo de lo que aun debes preparar.',
+                'Selecciona un producto, revisa su informacion y programa cuando termina el descuento general.',
+            child:
+                generalDiscountProducts.isEmpty
+                    ? const EmptyStateCard(
+                      title: 'Sin productos disponibles',
+                      caption:
+                          'Cuando existan productos activos, apareceran aqui.',
+                    )
+                    : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        DropdownButtonFormField<String>(
+                          value: selectedGeneralProduct?.id,
+                          decoration: const InputDecoration(
+                            labelText: 'Producto',
+                          ),
+                          items:
+                              generalDiscountProducts.map((product) {
+                                return DropdownMenuItem(
+                                  value: product.id,
+                                  child: Text(product.name),
+                                );
+                              }).toList(),
+                          onChanged:
+                              widget.isBusy
+                                  ? null
+                                  : (value) {
+                                    if (value == null) {
+                                      return;
+                                    }
+                                    setState(() {
+                                      _selectedGeneralProductId = value;
+                                      _generalPromotionFormSeed = null;
+                                    });
+                                  },
+                        ),
+                        if (selectedGeneralProduct != null) ...[
+                          const SizedBox(height: 14),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF8FAFC),
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: const Color(0xFFE2E8F0)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  selectedGeneralProduct.name,
+                                  style:
+                                      Theme.of(context).textTheme.titleSmall,
+                                ),
+                                const SizedBox(height: 8),
+                                _InfoLine(
+                                  label: 'Precio base',
+                                  value: SystemWFormatters.currency.format(
+                                    selectedGeneralProduct.salePrice,
+                                  ),
+                                ),
+                                _InfoLine(
+                                  label: 'Stock tienda',
+                                  value:
+                                      '${selectedGeneralProduct.stockStore} u.',
+                                ),
+                                _InfoLine(
+                                  label: 'Stock almacen',
+                                  value:
+                                      '${selectedGeneralProduct.stockWarehouse} u.',
+                                ),
+                                _InfoLine(
+                                  label: 'Descuento actual',
+                                  value:
+                                      selectedGeneralEntry == null
+                                          ? 'Sin descuento general'
+                                          : SystemWFormatters.currency.format(
+                                            selectedGeneralEntry
+                                                .promotionalPrice!,
+                                          ),
+                                ),
+                                _InfoLine(
+                                  label: 'Inicio actual',
+                                  value:
+                                      selectedGeneralEntry == null
+                                          ? 'Se definira al guardar'
+                                          : SystemWFormatters.shortDateTime
+                                              .format(
+                                                selectedGeneralEntry
+                                                    .effectiveFrom,
+                                              ),
+                                ),
+                                _InfoLine(
+                                  label: 'Fin programado',
+                                  value:
+                                      selectedGeneralEntry?.effectiveTo == null
+                                          ? 'Aun no programado'
+                                          : SystemWFormatters.shortDateTime
+                                              .format(
+                                                selectedGeneralEntry!
+                                                    .effectiveTo!,
+                                              ),
+                                ),
+                                if ((selectedGeneralEntry?.promotionNote ?? '')
+                                    .trim()
+                                    .isNotEmpty)
+                                  _InfoLine(
+                                    label: 'Nota actual',
+                                    value:
+                                        selectedGeneralEntry!.promotionNote!
+                                            .trim(),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          Text(
+                            'Al guardar, la promo empieza en ese momento y termina en la fecha programada.',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: _generalPromoPriceController,
+                            keyboardType:
+                                const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                            decoration: const InputDecoration(
+                              labelText: 'Precio promocional',
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 12,
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed:
+                                    widget.isBusy
+                                        ? null
+                                        : () => _pickGeneralPromotionDate(
+                                          context,
+                                        ),
+                                icon: const Icon(Icons.event_rounded),
+                                label: Text(
+                                  _generalPromotionEndAt == null
+                                      ? 'Elegir fecha fin'
+                                      : 'Fecha fin: ${SystemWFormatters.shortDate.format(_generalPromotionEndAt!)}',
+                                ),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed:
+                                    widget.isBusy
+                                        ? null
+                                        : () => _pickGeneralPromotionTime(
+                                          context,
+                                        ),
+                                icon: const Icon(Icons.schedule_rounded),
+                                label: Text(
+                                  _generalPromotionEndAt == null
+                                      ? 'Elegir hora fin'
+                                      : 'Hora fin: ${TimeOfDay.fromDateTime(_generalPromotionEndAt!).format(context)}',
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          TextFormField(
+                            controller: _generalPromoNoteController,
+                            decoration: const InputDecoration(
+                              labelText: 'Nota interna',
+                            ),
+                            maxLines: 2,
+                          ),
+                          const SizedBox(height: 14),
+                          Wrap(
+                            spacing: 12,
+                            runSpacing: 12,
+                            children: [
+                              FilledButton.icon(
+                                onPressed:
+                                    widget.isBusy
+                                        ? null
+                                        : () async {
+                                          final value = double.tryParse(
+                                            _generalPromoPriceController.text,
+                                          );
+                                          if (value == null || value <= 0) {
+                                            await showSystemWActionDialog(
+                                              context,
+                                              message:
+                                                  'Ingresa un precio promocional valido.',
+                                              isError: true,
+                                            );
+                                            return;
+                                          }
+                                          if (value >=
+                                              selectedGeneralProduct
+                                                  .salePrice) {
+                                            await showSystemWActionDialog(
+                                              context,
+                                              message:
+                                                  'El descuento general debe ser menor al precio base.',
+                                              isError: true,
+                                            );
+                                            return;
+                                          }
+                                          final scheduledEndAt =
+                                              _generalPromotionEndAt;
+                                          if (scheduledEndAt == null ||
+                                              !scheduledEndAt.isAfter(
+                                                DateTime.now(),
+                                              )) {
+                                            await showSystemWActionDialog(
+                                              context,
+                                              message:
+                                                  'Programa una fecha y hora de fin validas para la promocion.',
+                                              isError: true,
+                                            );
+                                            return;
+                                          }
+                                          await widget.onSaveGeneralPromotion(
+                                            productId:
+                                                selectedGeneralProduct.id,
+                                            promotionalPrice: value,
+                                            promotionNote:
+                                                _generalPromoNoteController.text
+                                                    .trim(),
+                                            scheduledEndAt: scheduledEndAt,
+                                          );
+                                        },
+                                icon: const Icon(Icons.local_offer_rounded),
+                                label: Text(
+                                  selectedGeneralEntry == null
+                                      ? 'Registrar descuento'
+                                      : 'Actualizar descuento',
+                                ),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed:
+                                    widget.isBusy || selectedGeneralEntry == null
+                                        ? null
+                                        : () => widget.onClearGeneralPromotion(
+                                          productId:
+                                              selectedGeneralProduct.id,
+                                        ),
+                                icon: const Icon(
+                                  Icons.remove_circle_outline_rounded,
+                                ),
+                                label: const Text('Quitar descuento'),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 18),
+                          Text(
+                            'Descuentos activos',
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          const SizedBox(height: 10),
+                          activeGeneralEntries.isEmpty
+                              ? const EmptyStateCard(
+                                title: 'Sin descuentos activos',
+                                caption:
+                                    'Cuando registres descuentos generales apareceran aqui por separado.',
+                              )
+                              : Column(
+                                children:
+                                    activeGeneralEntries.map((entry) {
+                                      final product = _findProductById(
+                                        widget.state.products,
+                                        entry.productId,
+                                      );
+                                      if (product == null) {
+                                        return const SizedBox.shrink();
+                                      }
+                                      return Container(
+                                        width: double.infinity,
+                                        margin: const EdgeInsets.only(
+                                          bottom: 12,
+                                        ),
+                                        padding: const EdgeInsets.all(14),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(
+                                            16,
+                                          ),
+                                          border: Border.all(
+                                            color: const Color(0xFFE2E8F0),
+                                          ),
+                                        ),
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              entry.productName,
+                                              style:
+                                                  Theme.of(
+                                                    context,
+                                                  ).textTheme.titleSmall,
+                                            ),
+                                            const SizedBox(height: 8),
+                                            _InfoLine(
+                                              label: 'Precio base',
+                                              value: SystemWFormatters.currency
+                                                  .format(product.salePrice),
+                                            ),
+                                            _InfoLine(
+                                              label: 'Promocion aplicada',
+                                              value: SystemWFormatters.currency
+                                                  .format(
+                                                    entry.promotionalPrice!,
+                                                  ),
+                                            ),
+                                            _InfoLine(
+                                              label: 'Inicio',
+                                              value: SystemWFormatters
+                                                  .shortDateTime
+                                                  .format(entry.effectiveFrom),
+                                            ),
+                                            _InfoLine(
+                                              label: 'Fin',
+                                              value:
+                                                  entry.effectiveTo == null
+                                                      ? 'Sin programar'
+                                                      : SystemWFormatters
+                                                          .shortDateTime
+                                                          .format(
+                                                            entry.effectiveTo!,
+                                                          ),
+                                            ),
+                                            if ((entry.promotionNote ?? '')
+                                                .trim()
+                                                .isNotEmpty)
+                                              _InfoLine(
+                                                label: 'Nota',
+                                                value:
+                                                    entry.promotionNote!.trim(),
+                                              ),
+                                            const SizedBox(height: 12),
+                                            Wrap(
+                                              spacing: 12,
+                                              runSpacing: 12,
+                                              children: [
+                                                FilledButton.icon(
+                                                  onPressed:
+                                                      widget.isBusy
+                                                          ? null
+                                                          : () => _openActiveGeneralPromotionDialog(
+                                                            product,
+                                                            entry,
+                                                          ),
+                                                  icon: const Icon(
+                                                    Icons.edit_rounded,
+                                                  ),
+                                                  label: const Text(
+                                                    'Actualizar',
+                                                  ),
+                                                ),
+                                                OutlinedButton.icon(
+                                                  onPressed:
+                                                      widget.isBusy
+                                                          ? null
+                                                          : () => widget
+                                                              .onClearGeneralPromotion(
+                                                                productId:
+                                                                    product.id,
+                                                              ),
+                                                  icon: const Icon(
+                                                    Icons
+                                                        .remove_circle_outline_rounded,
+                                                  ),
+                                                  label: const Text('Quitar'),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    }).toList(),
+                              ),
+                        ],
+                      ],
+                    ),
+          ),
+          const SizedBox(height: 16),
+          SectionCard(
+            title: '2. Liquidacion por lote',
+            subtitle:
+                'Usa esta parte para lotes por vencer o mercaderia puntual que quieres liquidar.',
             child:
                 items.isEmpty
                     ? const EmptyStateCard(
-                      title: 'Sin lotes por promocionar',
+                      title: 'Sin lotes por liquidar',
                       caption:
-                          'Cuando existan lotes proximos a vencer o promos activas apareceran aqui.',
+                          'Cuando existan lotes proximos a vencer o liquidaciones activas apareceran aqui.',
                     )
                     : Column(
-                      children:
-                          items.map((item) {
-                            final product = item.product;
-                            final activePromotion = item.activePromotion;
-                            final isActive = activePromotion != null;
-                            final currentPromoPrice =
-                                activePromotion?.promotionalPrice;
-                            final currentPromoQuantity =
-                                activePromotion?.promoQuantityRemaining;
-                            return Container(
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              decoration: const BoxDecoration(
-                                border: Border(
-                                  bottom: BorderSide(color: Color(0xFFE5E7EB)),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (openNotices.isNotEmpty)
+                          Container(
+                            width: double.infinity,
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF7ED),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: const Color(0xFFF59E0B),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children:
+                                  openNotices.map((notice) {
+                                    return Padding(
+                                      padding: const EdgeInsets.only(bottom: 8),
+                                      child: Text(
+                                        '${_promotionNoticeLabel(notice)}: ${notice.message}',
+                                        style:
+                                            Theme.of(
+                                              context,
+                                            ).textTheme.bodySmall,
+                                      ),
+                                    );
+                                  }).toList(),
+                            ),
+                          ),
+                        ...items.map((item) {
+                          final product = item.product;
+                          final activePromotion = item.activePromotion;
+                          final isActive = activePromotion != null;
+                          final isExpired = item.expiryDate.isBefore(
+                            DateTime(today.year, today.month, today.day),
+                          );
+                          final currentPromoPrice =
+                              activePromotion?.promotionalPrice;
+                          final currentPromoQuantity =
+                              activePromotion?.promoQuantityRemaining;
+                          return Container(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            decoration: const BoxDecoration(
+                              border: Border(
+                                bottom: BorderSide(color: Color(0xFFE5E7EB)),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.productName,
+                                  style: Theme.of(context).textTheme.titleSmall,
                                 ),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    item.productName,
-                                    style:
-                                        Theme.of(context).textTheme.titleSmall,
+                                const SizedBox(height: 6),
+                                _InfoLine(
+                                  label: 'Proveedor',
+                                  value: item.supplierName,
+                                ),
+                                _InfoLine(
+                                  label: 'Vence',
+                                  value: SystemWFormatters.shortDate.format(
+                                    item.expiryDate,
                                   ),
-                                  const SizedBox(height: 6),
-                                  _InfoLine(
-                                    label: 'Proveedor',
-                                    value: item.supplierName,
+                                ),
+                                _InfoLine(
+                                  label: 'Disponible total',
+                                  value: '${item.totalAvailableUnits} u.',
+                                ),
+                                _InfoLine(
+                                  label: 'Ubicacion',
+                                  value: item.locationLabel,
+                                ),
+                                _InfoLine(
+                                  label: 'En tienda',
+                                  value: '${item.storeAvailableUnits} u.',
+                                ),
+                                _InfoLine(
+                                  label: 'En almacen',
+                                  value: '${item.warehouseAvailableUnits} u.',
+                                ),
+                                _InfoLine(
+                                  label: 'Accion sugerida',
+                                  value:
+                                      isExpired && isActive
+                                          ? 'La promo sigue activa pero el lote ya vencio: decide si mantenerla o registrarlo como perdida.'
+                                          : item.recommendationLabel,
+                                ),
+                                _InfoLine(
+                                  label: 'Precio base',
+                                  value: SystemWFormatters.currency.format(
+                                    product?.salePrice ?? 0,
                                   ),
+                                ),
+                                if (currentPromoPrice != null)
                                   _InfoLine(
-                                    label: 'Vence',
-                                    value: SystemWFormatters.shortDate.format(
-                                      item.expiryDate,
-                                    ),
-                                  ),
-                                  _InfoLine(
-                                    label: 'Disponible total',
-                                    value: '${item.totalAvailableUnits} u.',
-                                  ),
-                                  _InfoLine(
-                                    label: 'Ubicacion',
-                                    value: item.locationLabel,
-                                  ),
-                                  _InfoLine(
-                                    label: 'En tienda',
-                                    value: '${item.storeAvailableUnits} u.',
-                                  ),
-                                  _InfoLine(
-                                    label: 'En almacen',
-                                    value: '${item.warehouseAvailableUnits} u.',
-                                  ),
-                                  _InfoLine(
-                                    label: 'Accion sugerida',
-                                    value: item.recommendationLabel,
-                                  ),
-                                  _InfoLine(
-                                    label: 'Precio base',
+                                    label: 'Precio promo',
                                     value: SystemWFormatters.currency.format(
-                                      product?.salePrice ?? 0,
+                                      currentPromoPrice,
                                     ),
                                   ),
-                                  if (currentPromoPrice != null)
-                                    _InfoLine(
-                                      label: 'Precio promo',
-                                      value: SystemWFormatters.currency.format(
-                                        currentPromoPrice,
-                                      ),
-                                    ),
-                                  if (currentPromoQuantity != null)
-                                    _InfoLine(
-                                      label: 'Cantidad promo',
-                                      value: '$currentPromoQuantity u.',
-                                    ),
-                                  if (activePromotion != null)
-                                    _InfoLine(
-                                      label: 'Estado',
-                                      value: _promotionStatusLabel(
-                                        activePromotion,
-                                      ),
-                                    ),
-                                  if ((activePromotion?.note ?? '')
-                                      .trim()
-                                      .isNotEmpty)
-                                    _InfoLine(
-                                      label: 'Nota promo',
-                                      value: activePromotion!.note!,
-                                    ),
-                                  const SizedBox(height: 12),
-                                  Wrap(
-                                    spacing: 12,
-                                    runSpacing: 12,
-                                    children: [
-                                      FilledButton.icon(
-                                        onPressed:
-                                            widget.isBusy
-                                                ? null
-                                                : () =>
-                                                    _openPromotionDialog(item),
-                                        icon: const Icon(
-                                          Icons.local_offer_rounded,
-                                        ),
-                                        label: Text(
-                                          isActive
-                                              ? 'Editar promo'
-                                              : 'Activar promo',
-                                        ),
-                                      ),
-                                      OutlinedButton.icon(
-                                        onPressed:
-                                            widget.isBusy ||
-                                                    activePromotion == null
-                                                ? null
-                                                : () => widget.onClearPromotion(
-                                                  activePromotion.promotionId,
-                                                ),
-                                        icon: const Icon(
-                                          Icons.remove_circle_outline_rounded,
-                                        ),
-                                        label: const Text('Quitar promo'),
-                                      ),
-                                    ],
+                                if (currentPromoQuantity != null)
+                                  _InfoLine(
+                                    label: 'Cantidad promo',
+                                    value: '$currentPromoQuantity u.',
                                   ),
-                                ],
-                              ),
-                            );
-                          }).toList(),
+                                if (activePromotion != null)
+                                  _InfoLine(
+                                    label: 'Estado',
+                                    value: _promotionStatusLabel(
+                                      activePromotion,
+                                    ),
+                                  ),
+                                if ((activePromotion?.note ?? '')
+                                    .trim()
+                                    .isNotEmpty)
+                                  _InfoLine(
+                                    label: 'Nota promo',
+                                    value: activePromotion!.note!,
+                                  ),
+                                const SizedBox(height: 12),
+                                Wrap(
+                                  spacing: 12,
+                                  runSpacing: 12,
+                                  children: [
+                                    FilledButton.icon(
+                                      onPressed:
+                                          widget.isBusy
+                                              ? null
+                                              : () =>
+                                                  _openPromotionDialog(item),
+                                      icon: const Icon(
+                                        Icons.local_offer_rounded,
+                                      ),
+                                      label: Text(
+                                        isActive
+                                            ? 'Editar liquidacion'
+                                            : 'Activar liquidacion',
+                                      ),
+                                    ),
+                                    OutlinedButton.icon(
+                                      onPressed:
+                                          widget.isBusy ||
+                                                  activePromotion == null
+                                              ? null
+                                              : () => widget.onClearPromotion(
+                                                activePromotion.promotionId,
+                                              ),
+                                      icon: const Icon(
+                                        Icons.remove_circle_outline_rounded,
+                                      ),
+                                      label: const Text('Quitar liquidacion'),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+                      ],
                     ),
+          ),
+          const SizedBox(height: 16),
+          SectionCard(
+            title: '3. Historial de promociones',
+            subtitle:
+                'Se muestra el historial de descuentos generales y liquidaciones por lote ya registradas.',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Descuentos generales',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 10),
+                generalPromotionHistory.isEmpty
+                    ? const EmptyStateCard(
+                      title: 'Sin descuentos generales',
+                      caption: 'Cuando registres descuentos apareceran aqui.',
+                    )
+                    : _PaginatedList<PriceHistoryEntry>(
+                      items: generalPromotionHistory,
+                      itemBuilder: (context, entry) {
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(entry.productName),
+                          subtitle: Text(
+                            'Venta ${SystemWFormatters.currency.format(entry.salePrice)} | Promo ${SystemWFormatters.currency.format(entry.promotionalPrice!)}',
+                          ),
+                          trailing: SizedBox(
+                            width: 170,
+                            child: Text(
+                              '${SystemWFormatters.shortDateTime.format(entry.effectiveFrom)}\n${entry.effectiveTo == null ? 'Vigente' : SystemWFormatters.shortDateTime.format(entry.effectiveTo!)}',
+                              textAlign: TextAlign.right,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                const SizedBox(height: 18),
+                Text(
+                  'Liquidaciones por lote',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 10),
+                FutureBuilder<dynamic>(
+                  future: ref
+                      .read(supabaseClientProvider)
+                      .from('lot_promotions')
+                      .select(
+                        'id, promotional_price, promo_quantity_total, promo_quantity_remaining, note, status, created_at, '
+                        'product:products!lot_promotions_product_id_fkey(name), '
+                        'supplier:suppliers!lot_promotions_supplier_id_fkey(name), '
+                        'purchase_item:purchase_items!lot_promotions_purchase_item_id_fkey(expiry_date)',
+                      )
+                      .order('created_at', ascending: false),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Center(child: CircularProgressIndicator()),
+                      );
+                    }
+                    final rows =
+                        ((snapshot.data as List?) ?? const [])
+                            .map((row) => Map<String, dynamic>.from(row as Map))
+                            .toList();
+                    if (rows.isEmpty) {
+                      return const EmptyStateCard(
+                        title: 'Sin liquidaciones registradas',
+                        caption:
+                            'Cuando actives promociones por lote apareceran aqui.',
+                      );
+                    }
+                    return _PaginatedList<Map<String, dynamic>>(
+                      items: rows,
+                      itemBuilder: (context, row) {
+                        final product =
+                            row['product'] is Map
+                                ? Map<String, dynamic>.from(
+                                  row['product'] as Map,
+                                )
+                                : const <String, dynamic>{};
+                        final supplier =
+                            row['supplier'] is Map
+                                ? Map<String, dynamic>.from(
+                                  row['supplier'] as Map,
+                                )
+                                : const <String, dynamic>{};
+                        final purchaseItem =
+                            row['purchase_item'] is Map
+                                ? Map<String, dynamic>.from(
+                                  row['purchase_item'] as Map,
+                                )
+                                : const <String, dynamic>{};
+                        final expiryDateRaw =
+                            purchaseItem['expiry_date']?.toString();
+                        final expiryDate =
+                            expiryDateRaw == null || expiryDateRaw.isEmpty
+                                ? null
+                                : DateTime.parse(expiryDateRaw);
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(
+                            product['name']?.toString() ?? 'Producto',
+                          ),
+                          subtitle: Text(
+                            '${supplier['name']?.toString() ?? 'Proveedor'} | ${_promotionStatusText(row['status']?.toString())} | ${row['promo_quantity_remaining']} / ${row['promo_quantity_total']} u.',
+                          ),
+                          trailing: SizedBox(
+                            width: 170,
+                            child: Text(
+                              '${SystemWFormatters.currency.format((row['promotional_price'] as num).toDouble())}\n${expiryDate == null ? 'Sin vencimiento' : SystemWFormatters.shortDate.format(expiryDate)}',
+                              textAlign: TextAlign.right,
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1378,7 +2241,8 @@ class _PromotionsSectionState extends State<_PromotionsSection> {
                     final value = double.tryParse(priceController.text);
                     if (quantity == null || quantity <= 0) {
                       setState(() {
-                        errorMessage = 'Ingresa una cantidad promocional valida.';
+                        errorMessage =
+                            'Ingresa una cantidad promocional valida.';
                       });
                       return;
                     }
@@ -1431,7 +2295,7 @@ class _PromotionsSectionState extends State<_PromotionsSection> {
   }
 }
 
-class _LossesSection extends StatefulWidget {
+class _LossesSection extends ConsumerStatefulWidget {
   const _LossesSection({
     required this.state,
     required this.isBusy,
@@ -1443,14 +2307,33 @@ class _LossesSection extends StatefulWidget {
   final _LossSubmit onRegisterLoss;
 
   @override
-  State<_LossesSection> createState() => _LossesSectionState();
+  ConsumerState<_LossesSection> createState() => _LossesSectionState();
 }
 
-class _LossesSectionState extends State<_LossesSection> {
+class _LossesSectionState extends ConsumerState<_LossesSection> {
+  String? _selectedLotLookupPurchaseItemId;
+
+  InventoryLotAlert? _resolveSelectedLot(List<InventoryLotAlert> alerts) {
+    if (alerts.isEmpty) {
+      _selectedLotLookupPurchaseItemId = null;
+      return null;
+    }
+    if (_selectedLotLookupPurchaseItemId == null ||
+        !alerts.any(
+          (alert) => alert.purchaseItemId == _selectedLotLookupPurchaseItemId,
+        )) {
+      _selectedLotLookupPurchaseItemId = alerts.first.purchaseItemId;
+    }
+    return alerts.firstWhere(
+      (alert) => alert.purchaseItemId == _selectedLotLookupPurchaseItemId,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final alerts = [...widget.state.expiredLotAlerts]
       ..sort((a, b) => a.expiryDate.compareTo(b.expiryDate));
+    final selectedLotAlert = _resolveSelectedLot(alerts);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -1463,10 +2346,53 @@ class _LossesSectionState extends State<_LossesSection> {
                 'Gestiona lotes vencidos del almacen y registra la salida por perdida con proveedor y cantidad trazable.',
           ),
           const SizedBox(height: 16),
+          FutureBuilder<dynamic>(
+            future: ref
+                .read(supabaseClientProvider)
+                .from('losses')
+                .select('quantity, financial_impact'),
+            builder: (context, snapshot) {
+              final rows =
+                  ((snapshot.data as List?) ?? const [])
+                      .map((row) => Map<String, dynamic>.from(row as Map))
+                      .toList();
+              final totalUnits = rows.fold<int>(
+                0,
+                (sum, row) => sum + ((row['quantity'] as num?)?.toInt() ?? 0),
+              );
+              final totalImpact = rows.fold<double>(
+                0,
+                (sum, row) =>
+                    sum +
+                    ((row['financial_impact'] as num?)?.toDouble() ?? 0),
+              );
+              return _MetricWrap(
+                children: [
+                  MetricCard(
+                    label: 'Total perdidas',
+                    value: '$totalUnits u.',
+                    detail:
+                        '${rows.length} registros | ${SystemWFormatters.currency.format(totalImpact)}',
+                    accent: const Color(0xFFB91C1C),
+                  ),
+                  _LossLotLookupCard(
+                    alerts: alerts,
+                    selectedAlert: selectedLotAlert,
+                    onChanged: (purchaseItemId) {
+                      setState(() {
+                        _selectedLotLookupPurchaseItemId = purchaseItemId;
+                      });
+                    },
+                  ),
+                ],
+              );
+            },
+          ),
+          const SizedBox(height: 16),
           SectionCard(
             title: 'Lotes vencidos',
             subtitle:
-                'La salida se registra desde el lote exacto para no romper la trazabilidad por proveedor.',
+                'El formulario usa motivo, cantidad y notas, y completa el resto con la informacion real del lote.',
             child:
                 alerts.isEmpty
                     ? const EmptyStateCard(
@@ -1518,7 +2444,9 @@ class _LossesSectionState extends State<_LossesSection> {
                                     onPressed:
                                         widget.isBusy
                                             ? null
-                                            : () => _openLossDialog(alert),
+                                            : () => _openLossRegistrationDialog(
+                                              alert,
+                                            ),
                                     icon: const Icon(
                                       Icons.delete_sweep_rounded,
                                     ),
@@ -1529,6 +2457,124 @@ class _LossesSectionState extends State<_LossesSection> {
                             );
                           }).toList(),
                     ),
+          ),
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Historial de perdidas',
+            subtitle:
+                'Lectura directa de losses con motivo, impacto, ubicacion, condicion y responsable.',
+            child: FutureBuilder<dynamic>(
+              future: ref
+                  .read(supabaseClientProvider)
+                  .from('losses')
+                  .select(
+                    'id, batch_id, quantity, reason, financial_impact, storage_condition, notes, created_at, '
+                    'product:products!losses_product_id_fkey(name), '
+                    'location:locations!losses_location_id_fkey(name), '
+                    'reporter:profiles!losses_reported_by_fkey(full_name)',
+                  )
+                  .order('created_at', ascending: false),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                final rows =
+                    ((snapshot.data as List?) ?? const [])
+                        .map((row) => Map<String, dynamic>.from(row as Map))
+                        .toList();
+                if (rows.isEmpty) {
+                  return const EmptyStateCard(
+                    title: 'Sin perdidas registradas',
+                    caption:
+                        'Cuando registres perdidas en losses apareceran aqui.',
+                  );
+                }
+                return _PaginatedList<Map<String, dynamic>>(
+                  items: rows,
+                  itemBuilder: (context, row) {
+                    final product =
+                        row['product'] is Map
+                            ? Map<String, dynamic>.from(row['product'] as Map)
+                            : const <String, dynamic>{};
+                    final location =
+                        row['location'] is Map
+                            ? Map<String, dynamic>.from(row['location'] as Map)
+                            : const <String, dynamic>{};
+                    final reporter =
+                        row['reporter'] is Map
+                            ? Map<String, dynamic>.from(row['reporter'] as Map)
+                            : const <String, dynamic>{};
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            product['name']?.toString() ?? 'Producto',
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          const SizedBox(height: 6),
+                          _InfoLine(
+                            label: 'Motivo',
+                            value: _lossReasonLabel(row['reason']?.toString()),
+                          ),
+                          _InfoLine(
+                            label: 'Cantidad',
+                            value: '${row['quantity']} u.',
+                          ),
+                          _InfoLine(
+                            label: 'Impacto',
+                            value: SystemWFormatters.currency.format(
+                              (row['financial_impact'] as num).toDouble(),
+                            ),
+                          ),
+                          _InfoLine(
+                            label: 'Ubicacion',
+                            value:
+                                location['name']?.toString() ?? 'Sin ubicacion',
+                          ),
+                          _InfoLine(
+                            label: 'Condicion',
+                            value: _storageConditionLabel(
+                              row['storage_condition']?.toString(),
+                            ),
+                          ),
+                          _InfoLine(
+                            label: 'Reportado por',
+                            value:
+                                reporter['full_name']?.toString() ?? 'Usuario',
+                          ),
+                          _InfoLine(
+                            label: 'Fecha',
+                            value: SystemWFormatters.shortDateTime.format(
+                              DateTime.parse(
+                                row['created_at'] as String,
+                              ).toLocal(),
+                            ),
+                          ),
+                          if ((row['notes']?.toString() ?? '')
+                              .trim()
+                              .isNotEmpty)
+                            _InfoLine(
+                              label: 'Notas',
+                              value: row['notes'].toString().trim(),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
           ),
         ],
       ),
@@ -1542,11 +2588,28 @@ class _LossesSectionState extends State<_LossesSection> {
     final notesController = TextEditingController(
       text: 'Perdida por vencimiento',
     );
+    final auditFuture = Future.wait<dynamic>([
+      ref
+          .read(supabaseClientProvider)
+          .from('purchase_items')
+          .select('unit_cost')
+          .eq('id', alert.purchaseItemId)
+          .limit(1),
+      ref
+          .read(supabaseClientProvider)
+          .from('inventory_stock')
+          .select(
+            'quantity, storage_condition, location:locations!inventory_stock_location_id_fkey(name)',
+          )
+          .eq('batch_id', alert.purchaseItemId)
+          .gt('quantity', 0),
+    ]);
 
     await showDialog<void>(
       context: context,
       builder: (context) {
         String? errorMessage;
+        var selectedReason = 'expired';
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
@@ -1559,19 +2622,110 @@ class _LossesSectionState extends State<_LossesSection> {
                     '${alert.supplierName} | Vencio ${SystemWFormatters.shortDate.format(alert.expiryDate)}',
                   ),
                   const SizedBox(height: 12),
+                  FutureBuilder<List<dynamic>>(
+                    future: auditFuture,
+                    builder: (context, snapshot) {
+                      final quantityValue =
+                          int.tryParse(quantityController.text) ?? 0;
+                      if (!snapshot.hasData) {
+                        return const Padding(
+                          padding: EdgeInsets.only(bottom: 12),
+                          child: LinearProgressIndicator(),
+                        );
+                      }
+                      final purchaseRows =
+                          ((snapshot.data![0] as List?) ?? const [])
+                              .map(
+                                (row) => Map<String, dynamic>.from(row as Map),
+                              )
+                              .toList();
+                      final stockRows =
+                          ((snapshot.data![1] as List?) ?? const [])
+                              .map(
+                                (row) => Map<String, dynamic>.from(row as Map),
+                              )
+                              .toList();
+                      final unitCost =
+                          purchaseRows.isEmpty
+                              ? 0.0
+                              : (purchaseRows.first['unit_cost'] as num)
+                                  .toDouble();
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _InfoLine(
+                            label: 'Impacto Final',
+                            value: SystemWFormatters.currency.format(
+                              unitCost * quantityValue,
+                            ),
+                          ),
+                          _InfoLine(
+                            label: 'Reportado por',
+                            value:
+                                ref
+                                    .read(sessionViewModelProvider)
+                                    .valueOrNull
+                                    ?.currentUser
+                                    ?.name ??
+                                'Usuario actual',
+                          ),
+                          _InfoLine(
+                            label: 'Cuando se registro',
+                            value: SystemWFormatters.shortDateTime.format(
+                              DateTime.now(),
+                            ),
+                          ),
+                          ...stockRows.map((row) {
+                            final location =
+                                row['location'] is Map
+                                    ? Map<String, dynamic>.from(
+                                      row['location'] as Map,
+                                    )
+                                    : const <String, dynamic>{};
+                            return _InfoLine(
+                              label: 'Lugar - Condicion',
+                              value:
+                                  '${location['name']?.toString() ?? 'Sin ubicacion'} | ${row['storage_condition']?.toString() ?? 'Sin condicion'} | ${row['quantity']} u.',
+                            );
+                          }),
+                          const SizedBox(height: 12),
+                        ],
+                      );
+                    },
+                  ),
+                  DropdownButtonFormField<String>(
+                    value: selectedReason,
+                    decoration: const InputDecoration(labelText: 'reason'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'expired',
+                        child: Text('Expirado'),
+                      ),
+                      DropdownMenuItem(value: 'damaged', child: Text('Dañado')),
+                      DropdownMenuItem(value: 'theft', child: Text('Robo')),
+                      DropdownMenuItem(
+                        value: 'quality_issue',
+                        child: Text('Problema de calidad'),
+                      ),
+                      DropdownMenuItem(value: 'other', child: Text('Otro')),
+                    ],
+                    onChanged: (value) {
+                      setState(() {
+                        selectedReason = value ?? 'expired';
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 12),
                   TextFormField(
                     controller: quantityController,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Cantidad perdida',
-                    ),
+                    decoration: const InputDecoration(labelText: 'quantity'),
+                    onChanged: (_) => setState(() {}),
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: notesController,
-                    decoration: const InputDecoration(
-                      labelText: 'Decision / nota',
-                    ),
+                    decoration: const InputDecoration(labelText: 'notes'),
                     maxLines: 2,
                   ),
                   if (errorMessage != null) ...[
@@ -1609,6 +2763,7 @@ class _LossesSectionState extends State<_LossesSection> {
                     final success = await widget.onRegisterLoss(
                       purchaseItemId: alert.purchaseItemId,
                       quantity: value,
+                      reason: selectedReason,
                       notes: notesController.text.trim(),
                     );
                     if (success && mounted) {
@@ -1622,6 +2777,421 @@ class _LossesSectionState extends State<_LossesSection> {
           },
         );
       },
+    );
+  }
+
+  Future<void> _openLossRegistrationDialog(InventoryLotAlert alert) async {
+    final quantityController = TextEditingController(
+      text: '${alert.availableUnits}',
+    );
+    final notesController = TextEditingController(
+      text: 'Perdida por vencimiento',
+    );
+    final matchingProducts =
+        widget.state.products
+            .where((item) => item.id == alert.productId)
+            .toList(growable: false);
+    final product = matchingProducts.isEmpty ? null : matchingProducts.first;
+    final isBeverage =
+        product != null &&
+        isBeverageProduct(product, widget.state.categories);
+    final auditFuture = Future.wait<dynamic>([
+      ref
+          .read(supabaseClientProvider)
+          .from('purchase_items')
+          .select('unit_cost')
+          .eq('id', alert.purchaseItemId)
+          .limit(1),
+      ref
+          .read(supabaseClientProvider)
+          .from('inventory_stock')
+          .select(
+            'quantity, storage_condition, location:locations!inventory_stock_location_id_fkey(name)',
+          )
+          .eq('batch_id', alert.purchaseItemId)
+          .gt('quantity', 0),
+    ]);
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        String? errorMessage;
+        var selectedReason = 'expired';
+        String? selectedStorageCondition;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text(alert.productName),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${alert.supplierName} | Vencio ${SystemWFormatters.shortDate.format(alert.expiryDate)}',
+                  ),
+                  const SizedBox(height: 12),
+                  FutureBuilder<List<dynamic>>(
+                    future: auditFuture,
+                    builder: (context, snapshot) {
+                      final quantityValue =
+                          int.tryParse(quantityController.text) ?? 0;
+                      if (!snapshot.hasData) {
+                        return const Padding(
+                          padding: EdgeInsets.only(bottom: 12),
+                          child: LinearProgressIndicator(),
+                        );
+                      }
+
+                      final purchaseRows =
+                          ((snapshot.data![0] as List?) ?? const [])
+                              .map(
+                                (row) => Map<String, dynamic>.from(row as Map),
+                              )
+                              .toList();
+                      final stockRows =
+                          ((snapshot.data![1] as List?) ?? const [])
+                              .map(
+                                (row) => Map<String, dynamic>.from(row as Map),
+                              )
+                              .toList();
+                      final unitCost =
+                          purchaseRows.isEmpty
+                              ? 0.0
+                              : (purchaseRows.first['unit_cost'] as num)
+                                  .toDouble();
+                      final quantityByCondition = <String, int>{
+                        'ambiente': 0,
+                        'frio': 0,
+                      };
+                      for (final row in stockRows) {
+                        final condition =
+                            row['storage_condition']?.toString() ?? 'ambiente';
+                        quantityByCondition.update(
+                          condition,
+                          (value) =>
+                              value + ((row['quantity'] as num?)?.toInt() ?? 0),
+                          ifAbsent:
+                              () => ((row['quantity'] as num?)?.toInt() ?? 0),
+                        );
+                      }
+                      if (isBeverage &&
+                          (selectedStorageCondition == null ||
+                              (quantityByCondition[selectedStorageCondition] ??
+                                      0) <=
+                                  0)) {
+                        selectedStorageCondition =
+                            (quantityByCondition['ambiente'] ?? 0) > 0
+                                ? 'ambiente'
+                                : (quantityByCondition['frio'] ?? 0) > 0
+                                ? 'frio'
+                                : null;
+                      }
+                      final availableForCondition =
+                          selectedStorageCondition == null
+                              ? alert.availableUnits
+                              : (quantityByCondition[selectedStorageCondition] ??
+                                  0);
+
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _InfoLine(
+                            label: 'Impacto final',
+                            value: SystemWFormatters.currency.format(
+                              unitCost * quantityValue,
+                            ),
+                          ),
+                          _InfoLine(
+                            label: 'Reportado por',
+                            value:
+                                ref
+                                    .read(sessionViewModelProvider)
+                                    .valueOrNull
+                                    ?.currentUser
+                                    ?.name ??
+                                'Usuario actual',
+                          ),
+                          _InfoLine(
+                            label: 'Cuando se registra',
+                            value: SystemWFormatters.shortDateTime.format(
+                              DateTime.now(),
+                            ),
+                          ),
+                          if (isBeverage) ...[
+                            _InfoLine(
+                              label: 'Ambientado',
+                              value:
+                                  '${quantityByCondition['ambiente'] ?? 0} u.',
+                            ),
+                            _InfoLine(
+                              label: 'Helado',
+                              value: '${quantityByCondition['frio'] ?? 0} u.',
+                            ),
+                            _InfoLine(
+                              label: 'Disponible en condicion',
+                              value: '$availableForCondition u.',
+                            ),
+                          ],
+                          ...stockRows.map((row) {
+                            final location =
+                                row['location'] is Map
+                                    ? Map<String, dynamic>.from(
+                                      row['location'] as Map,
+                                    )
+                                    : const <String, dynamic>{};
+                            return _InfoLine(
+                              label: 'Lugar - Condicion',
+                              value:
+                                  '${location['name']?.toString() ?? 'Sin ubicacion'} | ${_storageConditionLabel(row['storage_condition']?.toString())} | ${row['quantity']} u.',
+                            );
+                          }),
+                          const SizedBox(height: 12),
+                        ],
+                      );
+                    },
+                  ),
+                  DropdownButtonFormField<String>(
+                    value: selectedReason,
+                    decoration: const InputDecoration(labelText: 'Motivo'),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'expired',
+                        child: Text('Expirado'),
+                      ),
+                      DropdownMenuItem(value: 'damaged', child: Text('Danado')),
+                      DropdownMenuItem(value: 'theft', child: Text('Robo')),
+                      DropdownMenuItem(
+                        value: 'quality_issue',
+                        child: Text('Problema de calidad'),
+                      ),
+                      DropdownMenuItem(value: 'other', child: Text('Otro')),
+                    ],
+                    onChanged: (value) {
+                      setState(() {
+                        selectedReason = value ?? 'expired';
+                      });
+                    },
+                  ),
+                  if (isBeverage) ...[
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: selectedStorageCondition,
+                      decoration: const InputDecoration(
+                        labelText: 'Condicion',
+                      ),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'ambiente',
+                          child: Text('Ambientado'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'frio',
+                          child: Text('Helado'),
+                        ),
+                      ],
+                      onChanged: (value) {
+                        setState(() {
+                          selectedStorageCondition = value;
+                        });
+                      },
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: quantityController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Cantidad'),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: notesController,
+                    decoration: const InputDecoration(labelText: 'Notas'),
+                    maxLines: 2,
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      errorMessage!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFFB91C1C),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    final value = int.tryParse(quantityController.text);
+                    if (value == null || value <= 0) {
+                      setState(() {
+                        errorMessage = 'Ingresa una cantidad valida.';
+                      });
+                      return;
+                    }
+
+                    final maxAllowed = await (() async {
+                      if (!isBeverage || selectedStorageCondition == null) {
+                        return alert.availableUnits;
+                      }
+                      final rows =
+                          await ref
+                              .read(supabaseClientProvider)
+                              .from('inventory_stock')
+                              .select('quantity')
+                              .eq('batch_id', alert.purchaseItemId)
+                              .eq(
+                                'storage_condition',
+                                selectedStorageCondition!,
+                              )
+                              .gt('quantity', 0);
+                      return ((rows as List?) ?? const [])
+                          .map((row) => Map<String, dynamic>.from(row as Map))
+                          .fold<int>(
+                            0,
+                            (sum, row) =>
+                                sum + ((row['quantity'] as num?)?.toInt() ?? 0),
+                          );
+                    })();
+                    if (value > maxAllowed) {
+                      setState(() {
+                        errorMessage =
+                            isBeverage && selectedStorageCondition != null
+                                ? 'Solo tienes $maxAllowed u. en ${_storageConditionLabel(selectedStorageCondition)} para este lote.'
+                                : 'Solo tienes ${alert.availableUnits} u. disponibles en este lote.';
+                      });
+                      return;
+                    }
+
+                    final success = await widget.onRegisterLoss(
+                      purchaseItemId: alert.purchaseItemId,
+                      quantity: value,
+                      reason: selectedReason,
+                      notes: notesController.text.trim(),
+                      storageCondition: selectedStorageCondition,
+                    );
+                    if (success && mounted) {
+                      Navigator.of(context).pop();
+                    }
+                  },
+                  child: const Text('Registrar'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _LossLotLookupCard extends ConsumerWidget {
+  const _LossLotLookupCard({
+    required this.alerts,
+    required this.selectedAlert,
+    required this.onChanged,
+  });
+
+  final List<InventoryLotAlert> alerts;
+  final InventoryLotAlert? selectedAlert;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 132),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child:
+          alerts.isEmpty || selectedAlert == null
+              ? const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Stock por lote'),
+                  SizedBox(height: 8),
+                  Text('Cuando exista un lote vencido podras consultarlo aqui.'),
+                ],
+              )
+              : FutureBuilder<dynamic>(
+                future: ref
+                    .read(supabaseClientProvider)
+                    .from('inventory_stock')
+                    .select('quantity, storage_condition')
+                    .eq('batch_id', selectedAlert!.purchaseItemId)
+                    .gt('quantity', 0),
+                builder: (context, snapshot) {
+                  final rows =
+                      ((snapshot.data as List?) ?? const [])
+                          .map((row) => Map<String, dynamic>.from(row as Map))
+                          .toList();
+                  final ambientUnits = rows
+                      .where(
+                        (row) =>
+                            row['storage_condition']?.toString() == 'ambiente',
+                      )
+                      .fold<int>(
+                        0,
+                        (sum, row) =>
+                            sum + ((row['quantity'] as num?)?.toInt() ?? 0),
+                      );
+                  final coldUnits = rows
+                      .where((row) => row['storage_condition']?.toString() == 'frio')
+                      .fold<int>(
+                        0,
+                        (sum, row) =>
+                            sum + ((row['quantity'] as num?)?.toInt() ?? 0),
+                      );
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      DropdownButtonFormField<String>(
+                        value: selectedAlert!.purchaseItemId,
+                        decoration: const InputDecoration(
+                          labelText: 'Consultar lote',
+                        ),
+                        items:
+                            alerts.map((alert) {
+                              return DropdownMenuItem(
+                                value: alert.purchaseItemId,
+                                child: Text(
+                                  '${alert.productName} | ${alert.supplierName}',
+                                ),
+                              );
+                            }).toList(),
+                        onChanged: (value) {
+                          if (value != null) {
+                            onChanged(value);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Stock del lote',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: 8),
+                      _InfoLine(
+                        label: 'Total disponible',
+                        value: '${selectedAlert!.availableUnits} u.',
+                      ),
+                      _InfoLine(
+                        label: 'Ambientado',
+                        value: '$ambientUnits u.',
+                      ),
+                      _InfoLine(label: 'Helado', value: '$coldUnits u.'),
+                    ],
+                  );
+                },
+              ),
     );
   }
 }
@@ -1732,11 +3302,13 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
         selectedProduct == null
             ? const AsyncData<List<WarehouseSupplierLot>>([])
             : ref.watch(_warehouseSupplierLotsProvider(selectedProduct.id));
-    final warehouseLots =
-        [...(warehouseLotsAsync.valueOrNull ?? const <WarehouseSupplierLot>[])]
-          ..sort(_compareWarehouseLots);
+    final warehouseLots = [
+      ...(warehouseLotsAsync.valueOrNull ?? const <WarehouseSupplierLot>[]),
+    ]..sort(_compareWarehouseLots);
     final selectedWarehouseLot =
-        warehouseLots.any((lot) => lot.purchaseItemId == _selectedWarehouseLotId)
+        warehouseLots.any(
+              (lot) => lot.purchaseItemId == _selectedWarehouseLotId,
+            )
             ? warehouseLots.firstWhere(
               (lot) => lot.purchaseItemId == _selectedWarehouseLotId,
             )
@@ -1745,14 +3317,14 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
             : warehouseLots.first;
     final hiddenExpiredLots =
         selectedProduct == null
-            ? <InventoryLotAlert>[]
-            : state.expiredLotAlerts
-                .where(
-                  (alert) =>
-                      alert.productId == selectedProduct.id &&
-                      alert.availableUnits > 0,
-                )
-                .toList()
+              ? <InventoryLotAlert>[]
+              : state.expiredLotAlerts
+                  .where(
+                    (alert) =>
+                        alert.productId == selectedProduct.id &&
+                        alert.availableUnits > 0,
+                  )
+                  .toList()
           ..sort((left, right) => left.expiryDate.compareTo(right.expiryDate));
     final promotionPriorityLots = warehouseLots.where(
       (lot) => lot.isPromotionPriority,
@@ -1962,7 +3534,9 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
                       ),
                       const SizedBox(height: 12),
                       if (hiddenExpiredLots.isNotEmpty) ...[
-                        _ExpiredMovementLotsNoticeCard(alerts: hiddenExpiredLots),
+                        _ExpiredMovementLotsNoticeCard(
+                          alerts: hiddenExpiredLots,
+                        ),
                         const SizedBox(height: 12),
                       ],
                       if (selectedProduct == null)
@@ -2015,77 +3589,61 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
                           ),
                       ],
                       if (warehouseLots.isNotEmpty) ...[
-                      TextFormField(
-                        key: ValueKey(
-                          'movement-quantity-${state.selectedProductId ?? 'none'}-${selectedWarehouseLot?.purchaseItemId ?? 'none'}-${state.quantity}',
+                        TextFormField(
+                          key: ValueKey(
+                            'movement-quantity-${state.selectedProductId ?? 'none'}-${selectedWarehouseLot?.purchaseItemId ?? 'none'}-${state.quantity}',
+                          ),
+                          initialValue: '${state.quantity}',
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Cantidad a mover',
+                          ),
+                          onChanged: (value) {
+                            ref
+                                .read(
+                                  adminMobileDashboardViewModelProvider
+                                      .notifier,
+                                )
+                                .changeQuantity(
+                                  int.tryParse(value) ?? state.quantity,
+                                );
+                          },
                         ),
-                        initialValue: '${state.quantity}',
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Cantidad a mover',
+                        const SizedBox(height: 16),
+                        _MovementPreviewCard(
+                          productName: selectedProduct?.name,
+                          supplierName: selectedWarehouseLot?.supplierName,
+                          receivedAt: selectedWarehouseLot?.receivedAt,
+                          expiryDate: selectedWarehouseLot?.expiryDate,
+                          isPromotionPriority:
+                              selectedWarehouseLot?.isPromotionPriority ??
+                              false,
+                          promotionStatus:
+                              selectedWarehouseLot?.promotionStatus,
+                          promotionalPrice:
+                              selectedWarehouseLot?.promotionalPrice,
+                          promotionNote: selectedWarehouseLot?.promotionNote,
+                          quantity: quantity,
+                          warehouseBefore: warehouseStock,
+                          warehouseAfter: remainingWarehouse,
+                          storeBefore: storeStock,
+                          storeAfter: nextStoreStock,
+                          hasEnoughStock: hasEnoughStock,
                         ),
-                        onChanged: (value) {
-                          ref
-                              .read(
-                                adminMobileDashboardViewModelProvider.notifier,
-                              )
-                              .changeQuantity(
-                                int.tryParse(value) ?? state.quantity,
-                              );
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      _MovementPreviewCard(
-                        productName: selectedProduct?.name,
-                        supplierName: selectedWarehouseLot?.supplierName,
-                        receivedAt: selectedWarehouseLot?.receivedAt,
-                        expiryDate: selectedWarehouseLot?.expiryDate,
-                        isPromotionPriority:
-                            selectedWarehouseLot?.isPromotionPriority ?? false,
-                        promotionStatus: selectedWarehouseLot?.promotionStatus,
-                        promotionalPrice: selectedWarehouseLot?.promotionalPrice,
-                        promotionNote: selectedWarehouseLot?.promotionNote,
-                        quantity: quantity,
-                        warehouseBefore: warehouseStock,
-                        warehouseAfter: remainingWarehouse,
-                        storeBefore: storeStock,
-                        storeAfter: nextStoreStock,
-                        hasEnoughStock: hasEnoughStock,
-                      ),
-                      const SizedBox(height: 16),
-                      _MovementDraftCard(
-                        items: state.movementDraftItems,
-                        totalUnits: state.movementDraftUnits,
-                        onRemoveItem: (index) {
-                          ref
-                              .read(
-                                adminMobileDashboardViewModelProvider.notifier,
-                              )
-                              .removeMovementDraftLine(index);
-                        },
-                        onClear:
-                            state.movementDraftItems.isEmpty
-                                ? null
-                                : () {
-                                  ref
-                                      .read(
-                                        adminMobileDashboardViewModelProvider
-                                            .notifier,
-                                      )
-                                      .clearMovementDraft();
-                                },
-                      ),
-                      const SizedBox(height: 16),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          onPressed:
-                              widget.currentUser == null ||
-                                      widget.isBusy ||
-                                      selectedProduct == null ||
-                                      selectedWarehouseLot == null ||
-                                      !hasEnoughStock ||
-                                      warehouseLotsAsync.isLoading
+                        const SizedBox(height: 16),
+                        _MovementDraftCard(
+                          items: state.movementDraftItems,
+                          totalUnits: state.movementDraftUnits,
+                          onRemoveItem: (index) {
+                            ref
+                                .read(
+                                  adminMobileDashboardViewModelProvider
+                                      .notifier,
+                                )
+                                .removeMovementDraftLine(index);
+                          },
+                          onClear:
+                              state.movementDraftItems.isEmpty
                                   ? null
                                   : () {
                                     ref
@@ -2093,69 +3651,93 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
                                           adminMobileDashboardViewModelProvider
                                               .notifier,
                                         )
-                                        .addMovementDraftLine(
-                                          MovementDraftLine(
-                                            purchaseItemId:
-                                                selectedWarehouseLot
-                                                    .purchaseItemId,
-                                            productId: selectedProduct.id,
-                                            productName: selectedProduct.name,
-                                            supplierId:
-                                                selectedWarehouseLot.supplierId,
-                                            supplierName:
-                                                selectedWarehouseLot
-                                                    .supplierName,
-                                            quantity: quantity,
-                                            availableUnits:
-                                                selectedWarehouseLot
-                                                    .availableUnits,
-                                            receivedAt:
-                                                selectedWarehouseLot.receivedAt,
-                                            expiryDate:
-                                                selectedWarehouseLot.expiryDate,
-                                            isPromotionPriority:
-                                                selectedWarehouseLot
-                                                    .isPromotionPriority,
-                                            promotionId:
-                                                selectedWarehouseLot
-                                                    .promotionId,
-                                            promotionStatus:
-                                                selectedWarehouseLot
-                                                    .promotionStatus,
-                                            promotionalPrice:
-                                                selectedWarehouseLot
-                                                    .promotionalPrice,
-                                            promotionNote:
-                                                selectedWarehouseLot
-                                                    .promotionNote,
-                                          ),
-                                        );
+                                        .clearMovementDraft();
                                   },
-                          icon: const Icon(Icons.playlist_add_rounded),
-                          label: const Text('Agregar a lista'),
                         ),
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed:
-                              widget.currentUser == null ||
-                                      widget.isBusy ||
-                                      widget.onSubmitMovementCart == null ||
-                                      state.movementDraftItems.isEmpty
-                                  ? null
-                                  : () async {
-                                    await widget.onSubmitMovementCart!();
-                                  },
-                          icon: const Icon(Icons.swap_horiz_rounded),
-                          label: Text(
-                            state.movementDraftItems.isEmpty
-                                ? 'Agrega movimientos para registrar'
-                                : 'Registrar movimientos',
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed:
+                                widget.currentUser == null ||
+                                        widget.isBusy ||
+                                        selectedProduct == null ||
+                                        selectedWarehouseLot == null ||
+                                        !hasEnoughStock ||
+                                        warehouseLotsAsync.isLoading
+                                    ? null
+                                    : () {
+                                      ref
+                                          .read(
+                                            adminMobileDashboardViewModelProvider
+                                                .notifier,
+                                          )
+                                          .addMovementDraftLine(
+                                            MovementDraftLine(
+                                              purchaseItemId:
+                                                  selectedWarehouseLot
+                                                      .purchaseItemId,
+                                              productId: selectedProduct.id,
+                                              productName: selectedProduct.name,
+                                              supplierId:
+                                                  selectedWarehouseLot
+                                                      .supplierId,
+                                              supplierName:
+                                                  selectedWarehouseLot
+                                                      .supplierName,
+                                              quantity: quantity,
+                                              availableUnits:
+                                                  selectedWarehouseLot
+                                                      .availableUnits,
+                                              receivedAt:
+                                                  selectedWarehouseLot
+                                                      .receivedAt,
+                                              expiryDate:
+                                                  selectedWarehouseLot
+                                                      .expiryDate,
+                                              isPromotionPriority:
+                                                  selectedWarehouseLot
+                                                      .isPromotionPriority,
+                                              promotionId:
+                                                  selectedWarehouseLot
+                                                      .promotionId,
+                                              promotionStatus:
+                                                  selectedWarehouseLot
+                                                      .promotionStatus,
+                                              promotionalPrice:
+                                                  selectedWarehouseLot
+                                                      .promotionalPrice,
+                                              promotionNote:
+                                                  selectedWarehouseLot
+                                                      .promotionNote,
+                                            ),
+                                          );
+                                    },
+                            icon: const Icon(Icons.playlist_add_rounded),
+                            label: const Text('Agregar a lista'),
                           ),
                         ),
-                      ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed:
+                                widget.currentUser == null ||
+                                        widget.isBusy ||
+                                        widget.onSubmitMovementCart == null ||
+                                        state.movementDraftItems.isEmpty
+                                    ? null
+                                    : () async {
+                                      await widget.onSubmitMovementCart!();
+                                    },
+                            icon: const Icon(Icons.swap_horiz_rounded),
+                            label: Text(
+                              state.movementDraftItems.isEmpty
+                                  ? 'Agrega movimientos para registrar'
+                                  : 'Registrar movimientos',
+                            ),
+                          ),
+                        ),
                       ],
                     ],
                   ],
@@ -2434,16 +4016,18 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
                                       children: [
                                         Text(
                                           movement.productName,
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.titleSmall,
+                                          style:
+                                              Theme.of(
+                                                context,
+                                              ).textTheme.titleSmall,
                                         ),
                                         const SizedBox(height: 4),
                                         Text(
                                           _movementTypeLabel(movement),
-                                          style: Theme.of(
-                                            context,
-                                          ).textTheme.bodyMedium,
+                                          style:
+                                              Theme.of(
+                                                context,
+                                              ).textTheme.bodyMedium,
                                         ),
                                       ],
                                     ),
@@ -2466,7 +4050,9 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
                                 label: 'Responsable',
                                 value: movement.actorName,
                               ),
-                              if ((movement.supplierName ?? '').trim().isNotEmpty)
+                              if ((movement.supplierName ?? '')
+                                  .trim()
+                                  .isNotEmpty)
                                 _InfoLine(
                                   label: 'Proveedor',
                                   value: movement.supplierName!.trim(),
@@ -2681,8 +4267,14 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
       return;
     }
 
-    final previousProduct = _findProductById(oldWidget.state.products, currentProductId);
-    final nextProduct = _findProductById(widget.state.products, currentProductId);
+    final previousProduct = _findProductById(
+      oldWidget.state.products,
+      currentProductId,
+    );
+    final nextProduct = _findProductById(
+      widget.state.products,
+      currentProductId,
+    );
     final priceHistoryChanged =
         oldWidget.state.priceHistory.length != widget.state.priceHistory.length;
     final productPricingChanged =
@@ -4091,10 +5683,7 @@ class _MovementPreviewCard extends StatelessWidget {
               isStrong: true,
             ),
           if (!isPromotionPriority)
-            const _InfoLine(
-              label: 'Tipo de lote',
-              value: 'Stock normal',
-            ),
+            const _InfoLine(label: 'Tipo de lote', value: 'Stock normal'),
           if ((promotionNote ?? '').trim().isNotEmpty)
             _InfoLine(label: 'Nota promo', value: promotionNote!.trim()),
           _InfoLine(label: 'Cantidad a mover', value: '$quantity u.'),
@@ -4393,14 +5982,8 @@ class _MovementDraftCard extends StatelessWidget {
           else ...[
             _InfoLine(label: 'Lineas', value: '${items.length}'),
             _InfoLine(label: 'Unidades acumuladas', value: '$totalUnits u.'),
-            _InfoLine(
-              label: 'Lotes en promo',
-              value: '$promoPriorityCount',
-            ),
-            _InfoLine(
-              label: 'Lotes normales',
-              value: '$regularCount',
-            ),
+            _InfoLine(label: 'Lotes en promo', value: '$promoPriorityCount'),
+            _InfoLine(label: 'Lotes normales', value: '$regularCount'),
             const SizedBox(height: 8),
             ...items.asMap().entries.map((entry) {
               final index = entry.key;
@@ -4451,9 +6034,7 @@ class _MovementDraftCard extends StatelessWidget {
                                   ? 'Promo por lote: ${_movementPromotionStatusLabel(item.promotionStatus)}'
                                   : 'Promo por lote: ${_movementPromotionStatusLabel(item.promotionStatus)} | ${SystemWFormatters.currency.format(item.promotionalPrice!)}',
                               style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: const Color(0xFFB45309),
-                                  ),
+                                  ?.copyWith(color: const Color(0xFFB45309)),
                             ),
                           ],
                         ],
@@ -4633,10 +6214,7 @@ double _unitMargin(Product product) {
   return (_unitProfit(product) / product.salePrice) * 100;
 }
 
-double _latestKnownSalePrice(
-  AdminMobileDashboardState state,
-  Product product,
-) {
+double _latestKnownSalePrice(AdminMobileDashboardState state, Product product) {
   for (final entry in state.priceHistory) {
     if (entry.productId != product.id) {
       continue;
@@ -5224,6 +6802,21 @@ String _promotionStatusLabel(LotPromotion promotion) {
   return 'Cancelada';
 }
 
+String _promotionStatusText(String? status) {
+  switch (status) {
+    case 'active_store':
+      return 'Activa en tienda';
+    case 'pending_transfer':
+      return 'Pendiente de mover a tienda';
+    case 'exhausted':
+      return 'Agotada';
+    case 'cancelled':
+      return 'Cancelada';
+    default:
+      return 'Promo registrada';
+  }
+}
+
 String _promotionNoticeLabel(PromotionNotice notice) {
   if (notice.noticeType == 'promo_pending_transfer') {
     return 'Promo pendiente de traslado';
@@ -5242,6 +6835,34 @@ String _movementPromotionStatusLabel(String? status) {
     return 'Activa en tienda';
   }
   return 'Promo por lote';
+}
+
+String _lossReasonLabel(String? reason) {
+  switch (reason) {
+    case 'expired':
+      return 'Expirado';
+    case 'damaged':
+      return 'Danado';
+    case 'theft':
+      return 'Robo';
+    case 'quality_issue':
+      return 'Problema de calidad';
+    case 'other':
+      return 'Otro';
+    default:
+      return 'Sin motivo';
+  }
+}
+
+String _storageConditionLabel(String? storageCondition) {
+  switch (storageCondition) {
+    case 'ambiente':
+      return 'Ambientado';
+    case 'frio':
+      return 'Helado';
+    default:
+      return 'Sin condicion';
+  }
 }
 
 int _compareWarehouseLots(

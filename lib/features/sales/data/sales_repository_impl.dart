@@ -14,8 +14,20 @@ class SalesRepositoryImpl implements SalesRepository {
   final SalesRemoteDataSource _remote;
 
   @override
-  Future<void> closeShift(String sellerId) async {
-    await _remote.closeShift(sellerId);
+  Future<void> closeShift({
+    required String sellerId,
+    required double cashTotal,
+    required double yapeTotal,
+    required double closingLatitude,
+    required double closingLongitude,
+  }) async {
+    await _remote.closeShift(
+      sellerId: sellerId,
+      cashTotal: cashTotal,
+      yapeTotal: yapeTotal,
+      closingLatitude: closingLatitude,
+      closingLongitude: closingLongitude,
+    );
     await _local.clearOpenShift(sellerId);
   }
 
@@ -97,8 +109,18 @@ class SalesRepositoryImpl implements SalesRepository {
   }
 
   @override
-  Future<CashShift> openShift(String sellerId) async {
-    final shift = await _remote.openShift(sellerId);
+  Future<CashShift> openShift({
+    required String sellerId,
+    required double openingAmount,
+    required double openingLatitude,
+    required double openingLongitude,
+  }) async {
+    final shift = await _remote.openShift(
+      sellerId: sellerId,
+      openingAmount: openingAmount,
+      openingLatitude: openingLatitude,
+      openingLongitude: openingLongitude,
+    );
     await _local.saveOpenShift(sellerId, shift);
     return shift;
   }

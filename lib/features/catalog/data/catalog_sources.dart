@@ -59,9 +59,7 @@ class ProductModel extends Product {
     final packageName = map['package_name']?.toString() ?? 'caja';
     final unitName = map['unit_name']?.toString() ?? 'unid';
     final packageCost =
-        lastPurchaseCost > 0
-            ? lastPurchaseCost * unitsPerPackage
-            : 0;
+        lastPurchaseCost > 0 ? lastPurchaseCost * unitsPerPackage : 0;
     final normalizedCostDetails = <String, dynamic>{
       'tipo': productType,
       'cantidad_caja': unitsPerPackage,
@@ -74,7 +72,8 @@ class ProductModel extends Product {
         'presentacion': _normalizedText(map['presentation']),
       if (latestPurchaseSnapshot.costNotes != null)
         'observaciones': latestPurchaseSnapshot.costNotes,
-      if (productType == 'artesanal' && latestPurchaseSnapshot.costNotes != null)
+      if (productType == 'artesanal' &&
+          latestPurchaseSnapshot.costNotes != null)
         'observaciones_producto': latestPurchaseSnapshot.costNotes,
     };
 
@@ -96,8 +95,16 @@ class ProductModel extends Product {
       nextExpiryDate: nextExpiryDate,
       coldStockUnits: inventory.coldStoreUnits,
       coldPriceIncrement: pricing.coldPriceIncrement,
-      promotionalPrice: pricing.promotionalPrice,
-      promotionNote: pricing.promotionNote,
+      promotionalPrice:
+          promotionOffers.isNotEmpty
+              ? promotionOffers
+                  .map((offer) => offer.promotionalPrice)
+                  .reduce((left, right) => left < right ? left : right)
+              : pricing.promotionalPrice,
+      promotionNote:
+          promotionOffers.isNotEmpty
+              ? promotionOffers.first.note
+              : pricing.promotionNote,
       promotionOffers: List<ProductPromotionOffer>.unmodifiable(
         promotionOffers,
       ),
@@ -301,21 +308,59 @@ class CatalogRemoteDataSource {
   Future<List<Product>> getProducts() async {
     final productRows = await _client
         .from('products')
-        .select(_productSelectClause)
+        .select(
+          '$_productSelectClause, '
+          'price_history('
+          'id, sale_price, promotional_price, promotion_note, '
+          'cold_price_increment, effective_from, effective_to'
+          ')',
+        )
         .eq('is_active', true)
+        .isFilter('price_history.effective_to', null)
         .order('name');
     final mappedProductRows = _mapRows(productRows);
-    final productIds =
-        mappedProductRows.map((row) => row['id'] as String).toList();
     final inventoryByProduct = await _loadStockByProduct();
     final nextExpiryByProduct = await _loadNextExpiryByProduct();
     final promotionOffersByProduct = await _loadPromotionOffersByProduct();
-    final pricingByProduct = await _loadActivePricingByProduct(
-      productIds: productIds,
-    );
+    final pricingByProduct = <String, _ProductPricingSnapshot>{};
+    final missingPriceIds = <String>[];
     final lastPurchaseCostByProduct = await _loadLastPurchaseCostByProduct();
     final latestPurchaseSnapshotsByProduct =
         await _loadLatestPurchaseSnapshotsByProduct();
+
+    for (final row in mappedProductRows) {
+      final productId = row['id'] as String;
+      final priceRows = row['price_history'];
+      if (priceRows is List && priceRows.isNotEmpty) {
+        final priceRow = Map<String, dynamic>.from(priceRows.first as Map);
+        pricingByProduct[productId] = _ProductPricingSnapshot(
+          id: priceRow['id']?.toString() ?? '',
+          salePrice: _toDoubleValue(priceRow['sale_price']),
+          promotionalPrice: _toNullableDoubleValue(
+            priceRow['promotional_price'],
+          ),
+          promotionNote: priceRow['promotion_note']?.toString(),
+          coldPriceIncrement: _toDoubleValue(
+            priceRow['cold_price_increment'],
+            fallback: 0.50,
+          ),
+        );
+      } else {
+        missingPriceIds.add(productId);
+      }
+    }
+
+    if (missingPriceIds.isNotEmpty) {
+      final fallbackSnapshots = await Future.wait(
+        missingPriceIds.map(_loadLatestPricingForProduct),
+      );
+      for (var index = 0; index < missingPriceIds.length; index += 1) {
+        final snapshot = fallbackSnapshots[index];
+        if (snapshot != null) {
+          pricingByProduct[missingPriceIds[index]] = snapshot;
+        }
+      }
+    }
 
     return mappedProductRows.map((row) {
       final productId = row['id'] as String;
@@ -798,9 +843,7 @@ class CatalogRemoteDataSource {
     }
 
     final rows = await query.order('effective_from', ascending: false);
-    final mappedRows = _mapRows(rows);
-
-    return mappedRows.map((row) {
+    return _mapRows(rows).map((row) {
       final product = _mapNullable(row['product']);
       final creator = _mapNullable(row['creator']);
       return PriceHistoryEntry(
@@ -1018,56 +1061,27 @@ class CatalogRemoteDataSource {
     required String productId,
     String? supplierId,
   }) async {
-    final today = _dateOnly(DateTime.now());
     final lots = await _loadLotContexts(
       productId: productId,
       supplierId: supplierId,
     );
-    final promotionsByPurchaseItemId = {
-      for (final promotion in await getActiveLotPromotions())
-        promotion.purchaseItemId: promotion,
-    };
 
     final result =
         lots
-            .where(
-              (lot) =>
-                  lot.warehouseAvailableUnits > 0 &&
-                  !_isExpiredLot(lot.expiryDate, today),
-            )
+            .where((lot) => lot.warehouseAvailableUnits > 0)
             .map(
-              (lot) {
-                final promotion = promotionsByPurchaseItemId[lot.purchaseItemId];
-                final isPromotionPriority =
-                    promotion != null &&
-                    (promotion.status == 'pending_transfer' ||
-                        promotion.status == 'active_store');
-
-                return WarehouseSupplierLot(
-                  purchaseItemId: lot.purchaseItemId,
-                  productId: lot.productId,
-                  supplierId: lot.supplierId,
-                  supplierName: lot.supplierName,
-                  receivedAt: lot.receivedAt,
-                  availableUnits: lot.warehouseAvailableUnits,
-                  expiryDate: lot.expiryDate,
-                  isPromotionPriority: isPromotionPriority,
-                  promotionId: promotion?.promotionId,
-                  promotionStatus: promotion?.status,
-                  promotionalPrice: promotion?.promotionalPrice,
-                  promotionNote: promotion?.note,
-                );
-              },
+              (lot) => WarehouseSupplierLot(
+                purchaseItemId: lot.purchaseItemId,
+                productId: lot.productId,
+                supplierId: lot.supplierId,
+                supplierName: lot.supplierName,
+                receivedAt: lot.receivedAt,
+                availableUnits: lot.warehouseAvailableUnits,
+                expiryDate: lot.expiryDate,
+              ),
             )
             .toList()
           ..sort((left, right) {
-            final promotionCompare = _warehouseLotPromotionRank(
-              left,
-            ).compareTo(_warehouseLotPromotionRank(right));
-            if (promotionCompare != 0) {
-              return promotionCompare;
-            }
-
             final leftExpiry = left.expiryDate;
             final rightExpiry = right.expiryDate;
             if (leftExpiry != null && rightExpiry != null) {
@@ -1101,25 +1115,10 @@ class CatalogRemoteDataSource {
 
     final warehouseId = await _resolveLocationId('warehouse');
     final storeId = await _resolveLocationId('store');
-    final normalizedNotes = _normalizeOptionalText(notes);
-    final lots =
-        (await getWarehouseSupplierLots(
-          productId: productId,
-          supplierId: supplierId,
-        )).where((lot) {
-          if (purchaseItemId == null || purchaseItemId.trim().isEmpty) {
-            return true;
-          }
-          return lot.purchaseItemId == purchaseItemId;
-        }).toList();
-    if (lots.isEmpty) {
-      throw StateError(
-        purchaseItemId == null || purchaseItemId.trim().isEmpty
-            ? 'No hay lotes disponibles en almacen para este producto.'
-            : 'El lote seleccionado ya no esta disponible para mover.',
-      );
-    }
-
+    final lots = await getWarehouseSupplierLots(
+      productId: productId,
+      supplierId: supplierId,
+    );
     final totalWarehouseUnits = lots.fold<int>(
       0,
       (sum, lot) => sum + lot.availableUnits,
@@ -1171,7 +1170,6 @@ class CatalogRemoteDataSource {
           'created_by': currentUserId,
           'supplier_id': lot.supplierId,
           'happened_at': now,
-          'notes': normalizedNotes,
         });
         lotRemaining -= movedUnits;
         remaining -= movedUnits;
@@ -1291,19 +1289,17 @@ class CatalogRemoteDataSource {
       return const {};
     }
 
-    final activeRows = _mapRows(
-      await _client
+    final activeRows = await _client
         .from('price_history')
         .select(
           'id, product_id, sale_price, promotional_price, promotion_note, cold_price_increment, effective_from, effective_to',
         )
         .inFilter('product_id', productIds)
         .isFilter('effective_to', null)
-        .order('effective_from', ascending: false),
-    );
+        .order('effective_from', ascending: false);
 
     final pricingByProduct = <String, _ProductPricingSnapshot>{};
-    for (final row in activeRows) {
+    for (final row in _mapRows(activeRows)) {
       final productId = row['product_id'] as String;
       if (pricingByProduct.containsKey(productId)) {
         continue;
@@ -1331,17 +1327,15 @@ class CatalogRemoteDataSource {
       return pricingByProduct;
     }
 
-    final fallbackRows = _mapRows(
-      await _client
+    final fallbackRows = await _client
         .from('price_history')
         .select(
           'id, product_id, sale_price, promotional_price, promotion_note, cold_price_increment, effective_from, effective_to',
         )
         .inFilter('product_id', missingIds)
-        .order('effective_from', ascending: false),
-    );
+        .order('effective_from', ascending: false);
 
-    for (final row in fallbackRows) {
+    for (final row in _mapRows(fallbackRows)) {
       final productId = row['product_id'] as String;
       if (pricingByProduct.containsKey(productId)) {
         continue;
@@ -2006,26 +2000,6 @@ int _stockRowLossPriority(_InventoryStockRow left, _InventoryStockRow right) {
   }
 
   return left.batchId.compareTo(right.batchId);
-}
-
-bool _isExpiredLot(DateTime? expiryDate, DateTime today) {
-  if (expiryDate == null) {
-    return false;
-  }
-  return _dateOnly(expiryDate).isBefore(today);
-}
-
-int _warehouseLotPromotionRank(WarehouseSupplierLot lot) {
-  if (!lot.isPromotionPriority) {
-    return 2;
-  }
-  if (lot.promotionStatus == 'pending_transfer') {
-    return 0;
-  }
-  if (lot.promotionStatus == 'active_store') {
-    return 1;
-  }
-  return 2;
 }
 
 String _warehouseSupplierLotsKey({

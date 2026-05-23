@@ -55,6 +55,40 @@ class PurchaseDraftLine {
       _normalizeProductType(productType) == 'proveedor';
 }
 
+class MovementDraftLine {
+  const MovementDraftLine({
+    required this.purchaseItemId,
+    required this.productId,
+    required this.productName,
+    this.supplierId,
+    required this.supplierName,
+    required this.quantity,
+    required this.availableUnits,
+    required this.receivedAt,
+    this.expiryDate,
+    this.isPromotionPriority = false,
+    this.promotionId,
+    this.promotionStatus,
+    this.promotionalPrice,
+    this.promotionNote,
+  });
+
+  final String purchaseItemId;
+  final String productId;
+  final String productName;
+  final String? supplierId;
+  final String supplierName;
+  final int quantity;
+  final int availableUnits;
+  final DateTime receivedAt;
+  final DateTime? expiryDate;
+  final bool isPromotionPriority;
+  final String? promotionId;
+  final String? promotionStatus;
+  final double? promotionalPrice;
+  final String? promotionNote;
+}
+
 class AdminMobileDashboardState {
   const AdminMobileDashboardState({
     required this.categories,
@@ -75,6 +109,7 @@ class AdminMobileDashboardState {
     required this.supplier,
     required this.expiryDate,
     required this.purchaseDraftItems,
+    required this.movementDraftItems,
     this.feedbackMessage,
   });
 
@@ -96,6 +131,7 @@ class AdminMobileDashboardState {
   final String supplier;
   final DateTime expiryDate;
   final List<PurchaseDraftLine> purchaseDraftItems;
+  final List<MovementDraftLine> movementDraftItems;
   final String? feedbackMessage;
 
   Product? get selectedProduct {
@@ -135,6 +171,10 @@ class AdminMobileDashboardState {
     return purchaseDraftItems.fold(0, (sum, item) => sum + item.subtotal);
   }
 
+  int get movementDraftUnits {
+    return movementDraftItems.fold(0, (sum, item) => sum + item.quantity);
+  }
+
   AdminMobileDashboardState copyWith({
     List<Category>? categories,
     List<Product>? products,
@@ -155,6 +195,7 @@ class AdminMobileDashboardState {
     String? supplier,
     DateTime? expiryDate,
     List<PurchaseDraftLine>? purchaseDraftItems,
+    List<MovementDraftLine>? movementDraftItems,
     String? feedbackMessage,
   }) {
     return AdminMobileDashboardState(
@@ -179,6 +220,7 @@ class AdminMobileDashboardState {
       supplier: supplier ?? this.supplier,
       expiryDate: expiryDate ?? this.expiryDate,
       purchaseDraftItems: purchaseDraftItems ?? this.purchaseDraftItems,
+      movementDraftItems: movementDraftItems ?? this.movementDraftItems,
       feedbackMessage: feedbackMessage,
     );
   }
@@ -515,6 +557,93 @@ class AdminMobileDashboardViewModel
     state = AsyncData(current.copyWith(purchaseDraftItems: const []));
   }
 
+  Future<bool> addMovementDraftLine(MovementDraftLine line) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    if (line.quantity <= 0) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'La cantidad del movimiento debe ser mayor a cero.',
+        ),
+      );
+      return false;
+    }
+    if (line.quantity > line.availableUnits) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage:
+              'El lote seleccionado solo tiene ${line.availableUnits} unidades disponibles.',
+        ),
+      );
+      return false;
+    }
+
+    final nextItems = [...current.movementDraftItems];
+    final existingIndex = nextItems.indexWhere(
+      (item) => item.purchaseItemId == line.purchaseItemId,
+    );
+    if (existingIndex >= 0) {
+      final existing = nextItems[existingIndex];
+      final mergedQuantity = existing.quantity + line.quantity;
+      if (mergedQuantity > line.availableUnits) {
+        state = AsyncData(
+          current.copyWith(
+            feedbackMessage:
+                'Ese lote ya tiene ${existing.quantity} unidades en la lista y solo permite ${line.availableUnits} en total.',
+          ),
+        );
+        return false;
+      }
+      nextItems[existingIndex] = MovementDraftLine(
+        purchaseItemId: existing.purchaseItemId,
+        productId: existing.productId,
+        productName: existing.productName,
+        supplierId: existing.supplierId,
+        supplierName: existing.supplierName,
+        quantity: mergedQuantity,
+        availableUnits: existing.availableUnits,
+        receivedAt: existing.receivedAt,
+        expiryDate: existing.expiryDate,
+        isPromotionPriority: existing.isPromotionPriority,
+        promotionId: existing.promotionId,
+        promotionStatus: existing.promotionStatus,
+        promotionalPrice: existing.promotionalPrice,
+        promotionNote: existing.promotionNote,
+      );
+    } else {
+      nextItems.add(line);
+    }
+
+    state = AsyncData(
+      current.copyWith(movementDraftItems: nextItems, feedbackMessage: null),
+    );
+    return true;
+  }
+
+  Future<void> removeMovementDraftLine(int index) async {
+    final current = state.valueOrNull;
+    if (current == null ||
+        index < 0 ||
+        index >= current.movementDraftItems.length) {
+      return;
+    }
+
+    final next = [...current.movementDraftItems]..removeAt(index);
+    state = AsyncData(current.copyWith(movementDraftItems: next));
+  }
+
+  Future<void> clearMovementDraft() async {
+    final current = state.valueOrNull;
+    if (current == null || current.movementDraftItems.isEmpty) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(movementDraftItems: const []));
+  }
+
   Future<bool> registerPurchaseCart(AppUser user) async {
     final current = state.valueOrNull;
     if (current == null) {
@@ -540,7 +669,10 @@ class AdminMobileDashboardViewModel
             productName: draft.productName,
             categoryId: draft.categoryId,
             sku: null,
+            productType: draft.productType,
+            lowStockThreshold: draft.lowStockThreshold,
             salePrice: draft.salePrice,
+            productCostDetails: draft.productCostDetails,
             quantity: draft.quantity,
             unitsPerPackage: draft.unitsPerPackage,
             unitCost: draft.unitCost,
@@ -593,36 +725,69 @@ class AdminMobileDashboardViewModel
     }
   }
 
-  Future<bool> transferToStore({String? supplierId}) async {
+  Future<bool> registerMovementCart() async {
     final current = state.valueOrNull;
-    final selectedProduct = current?.selectedProduct;
-
-    if (current == null || selectedProduct == null) {
+    if (current == null) {
       return false;
     }
 
-    try {
-      await ref
-          .read(catalogRepositoryProvider)
-          .transferWarehouseToStore(
-            productId: selectedProduct.id,
-            quantity: current.quantity,
-            supplierId: supplierId,
-          );
+    if (current.movementDraftItems.isEmpty) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage:
+              'Agrega al menos un movimiento antes de registrar el traslado.',
+        ),
+      );
+      return false;
+    }
 
-      await _refreshAll();
+    final pendingDrafts = [...current.movementDraftItems];
+    var completedCount = 0;
+
+    try {
+      for (final draft in current.movementDraftItems) {
+        await ref
+            .read(catalogRepositoryProvider)
+            .transferWarehouseToStore(
+              productId: draft.productId,
+              quantity: draft.quantity,
+              supplierId: draft.supplierId,
+              purchaseItemId: draft.purchaseItemId,
+              notes: _movementDraftNote(draft),
+            );
+        pendingDrafts.removeAt(0);
+        completedCount += 1;
+      }
+
+      await _refreshAll(
+        movementDraftItems: const [],
+        purchaseDraftItems: current.purchaseDraftItems,
+      );
       final refreshed = state.requireValue;
       state = AsyncData(
         refreshed.copyWith(
+          movementDraftItems: const [],
           clearSelectedProduct: true,
           quantity: 1,
-          feedbackMessage: 'Transferencia registrada.',
+          feedbackMessage: 'Movimientos registrados.',
         ),
       );
       return true;
     } catch (error) {
+      await _refreshAll(
+        movementDraftItems: pendingDrafts,
+        purchaseDraftItems: current.purchaseDraftItems,
+      );
+      final refreshed = state.requireValue;
+      final message =
+          completedCount > 0
+              ? 'Se registraron $completedCount movimientos antes del error: $error'
+              : 'No se pudo mover el stock: $error';
       state = AsyncData(
-        current.copyWith(feedbackMessage: 'No se pudo mover el stock: $error'),
+        refreshed.copyWith(
+          movementDraftItems: pendingDrafts,
+          feedbackMessage: message,
+        ),
       );
       return false;
     }
@@ -636,6 +801,8 @@ class AdminMobileDashboardViewModel
     double? unitCost,
     String? supplier,
     DateTime? expiryDate,
+    List<PurchaseDraftLine>? purchaseDraftItems,
+    List<MovementDraftLine>? movementDraftItems,
     String? feedbackMessage,
   }) async {
     final catalog = await ref.read(loadCatalogOverviewUseCaseProvider)();
@@ -687,12 +854,17 @@ class AdminMobileDashboardViewModel
       supplier: supplier ?? '',
       expiryDate:
           expiryDate ?? _defaultExpiryDate(selectedProduct?.nextExpiryDate),
-      purchaseDraftItems: const [],
+      purchaseDraftItems: purchaseDraftItems ?? const [],
+      movementDraftItems: movementDraftItems ?? const [],
       feedbackMessage: feedbackMessage,
     );
   }
 
-  Future<void> _refreshAll({String? selectedProductId}) async {
+  Future<void> _refreshAll({
+    String? selectedProductId,
+    List<PurchaseDraftLine>? purchaseDraftItems,
+    List<MovementDraftLine>? movementDraftItems,
+  }) async {
     final current = state.valueOrNull;
     state = AsyncData(
       await _hydrate(
@@ -703,6 +875,8 @@ class AdminMobileDashboardViewModel
         unitCost: current?.unitCost,
         supplier: current?.supplier,
         expiryDate: current?.expiryDate,
+        purchaseDraftItems: purchaseDraftItems ?? current?.purchaseDraftItems,
+        movementDraftItems: movementDraftItems ?? current?.movementDraftItems,
         feedbackMessage: current?.feedbackMessage,
       ),
     );
@@ -1018,4 +1192,39 @@ Map<String, dynamic> _normalizeCostDetails({
   }
 
   return normalized;
+}
+
+String _movementDraftNote(MovementDraftLine draft) {
+  final parts = <String>[
+    'Traslado por lote ${draft.purchaseItemId}',
+    'Compra ${_movementNoteDateTime(draft.receivedAt)}',
+  ];
+
+  if (draft.expiryDate != null) {
+    parts.add('Vence ${_movementNoteDate(draft.expiryDate!)}');
+  }
+  if (draft.isPromotionPriority) {
+    parts.add(
+      draft.promotionStatus == 'pending_transfer'
+          ? 'Lote priorizado por promo pendiente'
+          : 'Lote con promo activa',
+    );
+  }
+  if ((draft.promotionNote ?? '').trim().isNotEmpty) {
+    parts.add(draft.promotionNote!.trim());
+  }
+
+  return parts.join(' | ');
+}
+
+String _movementNoteDate(DateTime value) {
+  final month = value.month.toString().padLeft(2, '0');
+  final day = value.day.toString().padLeft(2, '0');
+  return '${value.year}-$month-$day';
+}
+
+String _movementNoteDateTime(DateTime value) {
+  final hour = value.hour.toString().padLeft(2, '0');
+  final minute = value.minute.toString().padLeft(2, '0');
+  return '${_movementNoteDate(value)} $hour:$minute';
 }

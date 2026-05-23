@@ -1,11 +1,9 @@
-// ignore_for_file: library_private_types_in_public_api, unused_element
-
 import 'dart:async';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:tiendaw/core/utils/postgrest_compat.dart';
 import 'package:tiendaw/core/sync/realtime_refresh_stream.dart';
 import 'package:tiendaw/core/sync/sync_status.dart';
+import 'package:tiendaw/core/utils/postgrest_compat.dart';
 import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 
 class SalesLocalDataSource {
@@ -68,7 +66,6 @@ class SalesRemoteDataSource {
 
   final SupabaseClient _client;
   bool? _supportsSaleItemMeta;
-  bool? _supportsColdStockColumns;
 
   Future<List<Sale>> getSales() async {
     final rows = await _withSalesSelect(
@@ -92,7 +89,7 @@ class SalesRemoteDataSource {
                 return SaleLine(
                   productId: item['product_id'] as String,
                   productName: product['name']?.toString() ?? 'Producto',
-                  quantity: item['quantity'] as int,
+                  quantity: (item['quantity'] as num).toInt(),
                   unitPrice: (item['unit_price'] as num).toDouble(),
                   baseUnitPrice:
                       (itemMeta['base_unit_price'] as num?)?.toDouble(),
@@ -148,9 +145,7 @@ class SalesRemoteDataSource {
   Stream<List<CashShift>> watchCashShifts() {
     return createRealtimeRefreshStream(
       load: getCashShifts,
-      triggers: [
-        _tableTrigger('cash_shifts', primaryKey: const ['id']),
-      ],
+      triggers: [_tableTrigger('cash_shifts', primaryKey: const ['id'])],
     );
   }
 
@@ -206,9 +201,7 @@ class SalesRemoteDataSource {
 
     final openShift = await _loadOpenShift(currentUser.id);
     if (openShift == null) {
-      throw StateError(
-        'Inicia la caja antes de registrar ventas en la tienda.',
-      );
+      throw StateError('Inicia la caja antes de registrar ventas en la tienda.');
     }
     final storeLocationId = await _resolveLocationId('store');
 
@@ -242,7 +235,6 @@ class SalesRemoteDataSource {
             .toList();
 
     await _insertSaleItems(saleItemsPayload);
-    await _decrementSoldColdStock(sale.items);
 
     final totalField =
         sale.paymentMethod == PaymentMethod.cash ? 'cash_total' : 'yape_total';
@@ -267,39 +259,6 @@ class SalesRemoteDataSource {
           .from('cash_shifts')
           .update({'closed_at': _toSupabaseDateTime(DateTime.now())})
           .eq('id', current.id);
-    }
-  }
-
-  Future<void> _decrementSoldColdStock(List<SaleLine> items) async {
-    final icedUnitsByProduct = <String, int>{};
-
-    for (final item in items) {
-      if (!item.isIced) {
-        continue;
-      }
-      icedUnitsByProduct.update(
-        item.productId,
-        (value) => value + item.quantity,
-        ifAbsent: () => item.quantity,
-      );
-    }
-
-    for (final entry in icedUnitsByProduct.entries) {
-      if (!await _usesColdStockColumns()) {
-        continue;
-      }
-      final row =
-          await _client
-              .from('products')
-              .select('cold_stock_units')
-              .eq('id', entry.key)
-              .single();
-      final currentUnits = (row['cold_stock_units'] as num?)?.toInt() ?? 0;
-      final nextUnits = (currentUnits - entry.value).clamp(0, currentUnits);
-      await _client
-          .from('products')
-          .update({'cold_stock_units': nextUnits})
-          .eq('id', entry.key);
     }
   }
 
@@ -330,29 +289,6 @@ class SalesRemoteDataSource {
           .from('sale_items')
           .insert(saleItemsPayload.map(_withoutItemMeta).toList());
     }
-  }
-
-  Future<bool> _usesColdStockColumns() async {
-    if (_supportsColdStockColumns != null) {
-      return _supportsColdStockColumns!;
-    }
-
-    try {
-      await _client.from('products').select('cold_stock_units').limit(1);
-      _supportsColdStockColumns = true;
-    } on PostgrestException catch (error) {
-      if (!isMissingColumnError(
-        error,
-        column: 'cold_stock_units',
-        table: 'products',
-      )) {
-        rethrow;
-      }
-
-      _supportsColdStockColumns = false;
-    }
-
-    return _supportsColdStockColumns ?? false;
   }
 
   Future<T> _withSalesSelect<T>(
@@ -468,21 +404,17 @@ String _toSupabaseDateTime(DateTime value) {
 }
 
 const String _enhancedSalesSelectClause =
-    'id, seller_id, cash_shift_id, payment_method, created_at, seller:profiles(full_name), sale_items(product_id, quantity, unit_price, item_meta, product:products(name))';
+    'id, seller_id, cash_shift_id, payment_method, created_at, '
+    'seller:profiles(full_name), '
+    'sale_items(product_id, quantity, unit_price, item_meta, product:products(name))';
 
 const String _legacySalesSelectClause =
-    'id, seller_id, cash_shift_id, payment_method, created_at, seller:profiles(full_name), sale_items(product_id, quantity, unit_price, product:products(name))';
+    'id, seller_id, cash_shift_id, payment_method, created_at, '
+    'seller:profiles(full_name), '
+    'sale_items(product_id, quantity, unit_price, product:products(name))';
 
 Map<String, dynamic> _withoutItemMeta(Map<String, dynamic> row) {
   final next = Map<String, dynamic>.from(row);
   next.remove('item_meta');
   return next;
-}
-
-Map<String, dynamic> _parseJsonMap(dynamic value) {
-  if (value is Map) {
-    return Map<String, dynamic>.from(value);
-  }
-
-  return <String, dynamic>{};
 }

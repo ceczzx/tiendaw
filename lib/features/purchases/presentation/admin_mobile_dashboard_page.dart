@@ -46,33 +46,14 @@ typedef _ColdStateSubmit =
       required int coldStockUnits,
       required double coldPriceIncrement,
     });
+typedef _MovementCartSubmit = Future<bool> Function();
 
 final _warehouseSupplierLotsProvider = FutureProvider.autoDispose
-    .family<List<WarehouseSupplierLot>, _SupplierLotQuery>((ref, query) async {
+    .family<List<WarehouseSupplierLot>, String>((ref, productId) async {
       return ref
           .read(catalogRepositoryProvider)
-          .getWarehouseSupplierLots(
-            productId: query.productId,
-            supplierId: query.supplierId,
-          );
+          .getWarehouseSupplierLots(productId: productId);
     });
-
-class _SupplierLotQuery {
-  const _SupplierLotQuery({required this.productId, this.supplierId});
-
-  final String productId;
-  final String? supplierId;
-
-  @override
-  bool operator ==(Object other) {
-    return other is _SupplierLotQuery &&
-        other.productId == productId &&
-        other.supplierId == supplierId;
-  }
-
-  @override
-  int get hashCode => Object.hash(productId, supplierId);
-}
 
 class AdminMobileDashboardPage extends ConsumerStatefulWidget {
   const AdminMobileDashboardPage({super.key});
@@ -207,7 +188,8 @@ class _AdminMobileDashboardPageState
         state: state,
         isBusy: _isActionInProgress,
         currentUser: currentUser,
-        onTransfer: currentUser == null ? null : _handleTransfer,
+        onSubmitMovementCart:
+            currentUser == null ? null : _handleMovementCartSubmit,
         onUpdateColdState: _handleColdStateUpdate,
       ),
     };
@@ -236,17 +218,17 @@ class _AdminMobileDashboardPageState
     return true;
   }
 
-  Future<void> _handleTransfer(String? supplierId) async {
+  Future<bool> _handleMovementCartSubmit() async {
     if (_isActionInProgress) {
-      return;
+      return false;
     }
 
     setState(() {
       _isActionInProgress = true;
     });
-    await ref
+    return ref
         .read(adminMobileDashboardViewModelProvider.notifier)
-        .transferToStore(supplierId: supplierId);
+        .registerMovementCart();
   }
 
   Future<bool> _handlePromotionUpdate({
@@ -555,7 +537,7 @@ class _HomeSectionState extends State<_HomeSection> {
               MetricCard(
                 label: 'Proveedores',
                 value: '$supplierCount',
-                detail: 'Detectados desde compras e historial de costos',
+                detail: 'Detectados desde compras e historial de precios',
                 accent: const Color(0xFFEA580C),
               ),
               MetricCard(
@@ -736,31 +718,30 @@ class _PurchasesSectionState extends State<_PurchasesSection> {
             title: 'Historial de precios',
             subtitle:
                 selectedPriceHistoryProduct == null
-                    ? 'Ultimos costos registrados | Precio unitario por producto.'
+                    ? 'Ultimos precios de venta y ajustes de bebidas por producto.'
                     : 'Solo muestra el historial de ${selectedPriceHistoryProduct.name}.',
             child:
                 priceHistoryItems.isEmpty
                     ? const EmptyStateCard(
                       title: 'Sin historial de precios',
                       caption:
-                          'Las compras nuevas alimentaran este historial automaticamente.',
+                          'Cuando registres o ajustes precios, apareceran aqui.',
                     )
                     : _PaginatedList<PriceHistoryEntry>(
                       items: priceHistoryItems,
                       itemBuilder: (context, entry) {
-                        final product = productById[entry.productId];
-                        final unitLabel =
-                            product == null
-                                ? 'u.'
-                                : '${product.unitsPerPackage} ${product.unitName}';
+                        final priceLabel =
+                            entry.promotionalPrice == null
+                                ? 'Venta ${SystemWFormatters.currency.format(entry.salePrice)}'
+                                : 'Venta ${SystemWFormatters.currency.format(entry.salePrice)} | Promo ${SystemWFormatters.currency.format(entry.promotionalPrice!)}';
                         return ListTile(
                           contentPadding: EdgeInsets.zero,
                           title: Text(entry.productName),
                           subtitle: Text(
-                            '${entry.supplier} - ${SystemWFormatters.shortDate.format(entry.registeredAt)}',
+                            '${entry.createdByName} - ${SystemWFormatters.shortDate.format(entry.effectiveFrom)}${entry.isActive ? ' - vigente' : ''}',
                           ),
                           trailing: Text(
-                            '${SystemWFormatters.currency.format(entry.unitCost)} - $unitLabel',
+                            priceLabel,
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                         );
@@ -1650,14 +1631,14 @@ class _MovementsSection extends ConsumerStatefulWidget {
     required this.state,
     required this.isBusy,
     required this.currentUser,
-    required this.onTransfer,
+    required this.onSubmitMovementCart,
     required this.onUpdateColdState,
   });
 
   final AdminMobileDashboardState state;
   final bool isBusy;
   final AppUser? currentUser;
-  final Future<void> Function(String? supplierId)? onTransfer;
+  final _MovementCartSubmit? onSubmitMovementCart;
   final _ColdStateSubmit onUpdateColdState;
 
   @override
@@ -1665,18 +1646,17 @@ class _MovementsSection extends ConsumerStatefulWidget {
 }
 
 class _MovementsSectionState extends ConsumerState<_MovementsSection> {
-  String? _selectedSupplierId;
   String? _selectedCategoryId;
   String _searchQuery = '';
   String _coldSearchQuery = '';
   String? _selectedColdProductId;
+  String? _selectedWarehouseLotId;
 
   @override
   void didUpdateWidget(covariant _MovementsSection oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.state.selectedProductId != null &&
-        widget.state.selectedProductId == null) {
-      _selectedSupplierId = null;
+    if (oldWidget.state.selectedProductId != widget.state.selectedProductId) {
+      _selectedWarehouseLotId = null;
     }
     if (!widget.state.products.any(
       (product) => product.id == _selectedColdProductId,
@@ -1747,68 +1727,58 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
       0,
       (sum, product) => sum + product.stockWarehouse,
     );
-    final supplierOptions = _supplierOptionsForProduct(state, selectedProduct);
-    final requiresSupplierReference =
-        selectedProduct != null &&
-        _isSupplierProductType(selectedProduct.productType);
-    final effectiveSupplierId =
-        supplierOptions.any((supplier) => supplier.id == _selectedSupplierId)
-            ? _selectedSupplierId
-            : null;
-    final effectiveSupplier = _supplierOptionById(
-      supplierOptions,
-      effectiveSupplierId,
-    );
     final quantity = state.quantity;
-    final shouldLoadSupplierLots =
-        selectedProduct != null &&
-        (!requiresSupplierReference ||
-            effectiveSupplierId != null ||
-            supplierOptions.isEmpty);
-    final supplierLotsQuery =
-        shouldLoadSupplierLots && selectedProduct != null
-            ? _SupplierLotQuery(
-              productId: selectedProduct.id,
-              supplierId:
-                  requiresSupplierReference ? effectiveSupplierId : null,
-            )
-            : null;
-    final supplierLotsAsync =
-        supplierLotsQuery == null
-            ? const AsyncData<List<WarehouseSupplierLot>>([])
-            : ref.watch(_warehouseSupplierLotsProvider(supplierLotsQuery));
-    final supplierLots = supplierLotsAsync.valueOrNull ?? const [];
-    final supplierAvailableUnits = supplierLots.fold<int>(
-      0,
-      (sum, lot) => sum + lot.availableUnits,
-    );
-    final waitingSupplierIdentity =
-        requiresSupplierReference &&
-        supplierOptions.isNotEmpty &&
-        effectiveSupplierId == null;
-    final waitingSupplierCalculation =
-        shouldLoadSupplierLots && supplierLotsAsync.isLoading;
-    final warehouseStock =
+    final warehouseLotsAsync =
         selectedProduct == null
-            ? 0
-            : shouldLoadSupplierLots
-            ? supplierAvailableUnits
-            : 0;
+            ? const AsyncData<List<WarehouseSupplierLot>>([])
+            : ref.watch(_warehouseSupplierLotsProvider(selectedProduct.id));
+    final warehouseLots =
+        [...(warehouseLotsAsync.valueOrNull ?? const <WarehouseSupplierLot>[])]
+          ..sort(_compareWarehouseLots);
+    final selectedWarehouseLot =
+        warehouseLots.any((lot) => lot.purchaseItemId == _selectedWarehouseLotId)
+            ? warehouseLots.firstWhere(
+              (lot) => lot.purchaseItemId == _selectedWarehouseLotId,
+            )
+            : warehouseLots.isEmpty
+            ? null
+            : warehouseLots.first;
+    final hiddenExpiredLots =
+        selectedProduct == null
+            ? <InventoryLotAlert>[]
+            : state.expiredLotAlerts
+                .where(
+                  (alert) =>
+                      alert.productId == selectedProduct.id &&
+                      alert.availableUnits > 0,
+                )
+                .toList()
+          ..sort((left, right) => left.expiryDate.compareTo(right.expiryDate));
+    final promotionPriorityLots = warehouseLots.where(
+      (lot) => lot.isPromotionPriority,
+    );
+    final warehouseStock = selectedWarehouseLot?.availableUnits ?? 0;
     final storeStock = selectedProduct?.stockStore ?? 0;
-    final remainingWarehouse =
-        waitingSupplierIdentity || waitingSupplierCalculation
-            ? warehouseStock
-            : warehouseStock - quantity;
+    final remainingWarehouse = warehouseStock - quantity;
     final nextStoreStock = storeStock + quantity;
     final hasEnoughStock =
-        selectedProduct == null ||
-        waitingSupplierIdentity ||
-        waitingSupplierCalculation ||
-        remainingWarehouse >= 0;
-    final transferAllocations = _buildWarehouseTransferPreviewFromLots(
-      supplierLots,
-      quantity,
-    );
+        selectedWarehouseLot != null && quantity > 0 && remainingWarehouse >= 0;
+    final purchaseMovementsCount =
+        state.movements
+            .where((movement) => movement.type.toLowerCase() == 'purchase')
+            .length;
+    final saleMovementsCount =
+        state.movements
+            .where((movement) => movement.type.toLowerCase() == 'sale')
+            .length;
+    final transferMovementsCount =
+        state.movements
+            .where((movement) => movement.type.toLowerCase() == 'transfer')
+            .length;
+    final lossMovementsCount =
+        state.movements
+            .where((movement) => movement.type.toLowerCase() == 'loss')
+            .length;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -1818,7 +1788,7 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
           const _MobileSectionHeading(
             title: 'Movimientos',
             subtitle:
-                'Define producto, proveedor de referencia y revisa un resumen final antes de mover stock de almacen a tienda.',
+                'Elige el producto, selecciona el lote exacto y acumula varios traslados antes de confirmarlos juntos.',
           ),
           const SizedBox(height: 16),
           SectionCard(
@@ -1948,7 +1918,7 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
           SectionCard(
             title: 'Mover de almacen a tienda',
             subtitle:
-                'El proveedor se toma como referencia del producto elegido para que el admin tenga mas contexto.',
+                'Los lotes en promo salen primero, los vencidos se ocultan y cada traslado queda amarrado al lote exacto.',
             child: Consumer(
               builder: (context, ref, _) {
                 return Column(
@@ -1981,7 +1951,7 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
                             return;
                           }
                           setState(() {
-                            _selectedSupplierId = null;
+                            _selectedWarehouseLotId = null;
                           });
                           ref
                               .read(
@@ -1991,69 +1961,63 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
                         },
                       ),
                       const SizedBox(height: 12),
-                      if (!requiresSupplierReference && selectedProduct != null)
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF8FAFC),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: const Color(0xFFE2E8F0)),
-                          ),
-                          child: Text(
-                            'Producto artesanal: no requiere proveedor para mover stock.',
-                            style: Theme.of(context).textTheme.bodyMedium,
-                          ),
+                      if (hiddenExpiredLots.isNotEmpty) ...[
+                        _ExpiredMovementLotsNoticeCard(alerts: hiddenExpiredLots),
+                        const SizedBox(height: 12),
+                      ],
+                      if (selectedProduct == null)
+                        const EmptyStateCard(
+                          title: 'Sin producto seleccionado',
+                          caption:
+                              'Elige un producto para revisar sus lotes disponibles en almacen.',
+                        )
+                      else if (warehouseLotsAsync.isLoading)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 24),
+                          child: Center(child: CircularProgressIndicator()),
+                        )
+                      else if (warehouseLotsAsync.hasError)
+                        const EmptyStateCard(
+                          title: 'No pudimos cargar los lotes',
+                          caption:
+                              'Intenta nuevamente para consultar los lotes disponibles de este producto.',
+                        )
+                      else if (warehouseLots.isEmpty)
+                        EmptyStateCard(
+                          title: 'Sin lotes movibles en almacen',
+                          caption:
+                              hiddenExpiredLots.isEmpty
+                                  ? 'Este producto no tiene lotes disponibles para trasladar ahora mismo.'
+                                  : 'Los lotes disponibles de este producto se ocultaron porque ya vencieron.',
                         )
                       else ...[
-                        DropdownButtonFormField<String>(
-                          value: effectiveSupplierId,
-                          decoration: const InputDecoration(
-                            labelText: 'Proveedor de referencia',
-                          ),
-                          items:
-                              supplierOptions
-                                  .map(
-                                    (supplier) => DropdownMenuItem(
-                                      value: supplier.id,
-                                      child: Text(supplier.name),
-                                    ),
-                                  )
-                                  .toList(),
-                          onChanged:
-                              supplierOptions.isEmpty
+                        _MovementLotSelectorCard(
+                          lots: warehouseLots,
+                          selectedPurchaseItemId:
+                              selectedWarehouseLot?.purchaseItemId,
+                          onSelectLot:
+                              widget.isBusy
                                   ? null
-                                  : (value) {
+                                  : (purchaseItemId) {
                                     setState(() {
-                                      _selectedSupplierId = value;
+                                      _selectedWarehouseLotId = purchaseItemId;
                                     });
                                   },
                         ),
-                        if (supplierOptions.isEmpty)
+                        const SizedBox(height: 12),
+                        if (promotionPriorityLots.isNotEmpty)
                           Padding(
-                            padding: const EdgeInsets.only(top: 8),
+                            padding: const EdgeInsets.only(bottom: 12),
                             child: Text(
-                              'Aun no hay proveedores relacionados con este producto en compras o historial de precios.',
+                              'Primero veras ${promotionPriorityLots.length} lote(s) en promocion para que salgan rapido de almacen hacia tienda.',
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ),
                       ],
-                      const SizedBox(height: 12),
-                      if (requiresSupplierReference &&
-                          selectedProduct != null &&
-                          effectiveSupplier != null) ...[
-                        _SupplierLotAvailabilityCard(
-                          supplierName: effectiveSupplier.name,
-                          lots: supplierLots,
-                          totalAvailableUnits: supplierAvailableUnits,
-                          isLoading: supplierLotsAsync.isLoading,
-                          hasError: supplierLotsAsync.hasError,
-                        ),
-                        const SizedBox(height: 12),
-                      ],
+                      if (warehouseLots.isNotEmpty) ...[
                       TextFormField(
                         key: ValueKey(
-                          'movement-quantity-${state.selectedProductId ?? 'none'}-${state.quantity}',
+                          'movement-quantity-${state.selectedProductId ?? 'none'}-${selectedWarehouseLot?.purchaseItemId ?? 'none'}-${state.quantity}',
                         ),
                         initialValue: '${state.quantity}',
                         keyboardType: TextInputType.number,
@@ -2073,41 +2037,126 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
                       const SizedBox(height: 16),
                       _MovementPreviewCard(
                         productName: selectedProduct?.name,
-                        supplierName:
-                            requiresSupplierReference
-                                ? effectiveSupplier?.name
-                                : 'No aplica',
+                        supplierName: selectedWarehouseLot?.supplierName,
+                        receivedAt: selectedWarehouseLot?.receivedAt,
+                        expiryDate: selectedWarehouseLot?.expiryDate,
+                        isPromotionPriority:
+                            selectedWarehouseLot?.isPromotionPriority ?? false,
+                        promotionStatus: selectedWarehouseLot?.promotionStatus,
+                        promotionalPrice: selectedWarehouseLot?.promotionalPrice,
+                        promotionNote: selectedWarehouseLot?.promotionNote,
                         quantity: quantity,
                         warehouseBefore: warehouseStock,
                         warehouseAfter: remainingWarehouse,
                         storeBefore: storeStock,
                         storeAfter: nextStoreStock,
                         hasEnoughStock: hasEnoughStock,
-                        allocations: transferAllocations,
                       ),
                       const SizedBox(height: 16),
+                      _MovementDraftCard(
+                        items: state.movementDraftItems,
+                        totalUnits: state.movementDraftUnits,
+                        onRemoveItem: (index) {
+                          ref
+                              .read(
+                                adminMobileDashboardViewModelProvider.notifier,
+                              )
+                              .removeMovementDraftLine(index);
+                        },
+                        onClear:
+                            state.movementDraftItems.isEmpty
+                                ? null
+                                : () {
+                                  ref
+                                      .read(
+                                        adminMobileDashboardViewModelProvider
+                                            .notifier,
+                                      )
+                                      .clearMovementDraft();
+                                },
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed:
+                              widget.currentUser == null ||
+                                      widget.isBusy ||
+                                      selectedProduct == null ||
+                                      selectedWarehouseLot == null ||
+                                      !hasEnoughStock ||
+                                      warehouseLotsAsync.isLoading
+                                  ? null
+                                  : () {
+                                    ref
+                                        .read(
+                                          adminMobileDashboardViewModelProvider
+                                              .notifier,
+                                        )
+                                        .addMovementDraftLine(
+                                          MovementDraftLine(
+                                            purchaseItemId:
+                                                selectedWarehouseLot
+                                                    .purchaseItemId,
+                                            productId: selectedProduct.id,
+                                            productName: selectedProduct.name,
+                                            supplierId:
+                                                selectedWarehouseLot.supplierId,
+                                            supplierName:
+                                                selectedWarehouseLot
+                                                    .supplierName,
+                                            quantity: quantity,
+                                            availableUnits:
+                                                selectedWarehouseLot
+                                                    .availableUnits,
+                                            receivedAt:
+                                                selectedWarehouseLot.receivedAt,
+                                            expiryDate:
+                                                selectedWarehouseLot.expiryDate,
+                                            isPromotionPriority:
+                                                selectedWarehouseLot
+                                                    .isPromotionPriority,
+                                            promotionId:
+                                                selectedWarehouseLot
+                                                    .promotionId,
+                                            promotionStatus:
+                                                selectedWarehouseLot
+                                                    .promotionStatus,
+                                            promotionalPrice:
+                                                selectedWarehouseLot
+                                                    .promotionalPrice,
+                                            promotionNote:
+                                                selectedWarehouseLot
+                                                    .promotionNote,
+                                          ),
+                                        );
+                                  },
+                          icon: const Icon(Icons.playlist_add_rounded),
+                          label: const Text('Agregar a lista'),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton.icon(
                           onPressed:
                               widget.currentUser == null ||
                                       widget.isBusy ||
-                                      widget.onTransfer == null ||
-                                      !hasEnoughStock ||
-                                      (requiresSupplierReference &&
-                                          supplierOptions.isNotEmpty &&
-                                          effectiveSupplierId == null) ||
-                                      supplierLotsAsync.isLoading
+                                      widget.onSubmitMovementCart == null ||
+                                      state.movementDraftItems.isEmpty
                                   ? null
-                                  : () => widget.onTransfer!(
-                                    requiresSupplierReference
-                                        ? effectiveSupplierId
-                                        : null,
-                                  ),
+                                  : () async {
+                                    await widget.onSubmitMovementCart!();
+                                  },
                           icon: const Icon(Icons.swap_horiz_rounded),
-                          label: const Text('Confirmar movimiento'),
+                          label: Text(
+                            state.movementDraftItems.isEmpty
+                                ? 'Agrega movimientos para registrar'
+                                : 'Registrar movimientos',
+                          ),
                         ),
                       ),
+                      ],
                     ],
                   ],
                 );
@@ -2320,10 +2369,40 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
                     ),
           ),
           const SizedBox(height: 16),
+          _MetricWrap(
+            children: [
+              MetricCard(
+                label: 'Total movimientos',
+                value: '${state.movements.length}',
+                detail: 'Compras, ventas, traslados y perdidas',
+                accent: const Color(0xFF2563EB),
+              ),
+              MetricCard(
+                label: 'Compras',
+                value: '$purchaseMovementsCount',
+                detail: 'Ingresos al almacen',
+                accent: const Color(0xFF0F766E),
+              ),
+              MetricCard(
+                label: 'Ventas',
+                value: '$saleMovementsCount',
+                detail: 'Salidas por atencion en tienda',
+                accent: const Color(0xFFEA580C),
+              ),
+              MetricCard(
+                label: 'Traslados y perdidas',
+                value: '${transferMovementsCount + lossMovementsCount}',
+                detail:
+                    '$transferMovementsCount traslados | $lossMovementsCount perdidas',
+                accent: const Color(0xFFB45309),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
           SectionCard(
-            title: 'Movimientos recientes',
+            title: 'Todos los movimientos',
             subtitle:
-                'Compras, ventas y transferencias con paginacion desde 10 registros.',
+                'Lista completa de compras, ventas, transferencias y perdidas con el mismo seguimiento operativo del modulo.',
             child:
                 state.movements.isEmpty
                     ? const EmptyStateCard(
@@ -2334,18 +2413,76 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
                     : _PaginatedList<InventoryMovement>(
                       items: state.movements,
                       itemBuilder: (context, movement) {
-                        return ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            '${movement.productName} - ${_movementTypeLabel(movement)} - ${movement.quantity} u.',
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
                           ),
-                          subtitle: Text(
-                            '${_movementOriginLabel(movement)} -> ${_movementDestinationLabel(movement)} - ${movement.actorName}',
-                          ),
-                          trailing: Text(
-                            SystemWFormatters.shortDate.format(
-                              movement.occurredAt,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          movement.productName,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.titleSmall,
+                                        ),
+                                        const SizedBox(height: 4),
+                                        Text(
+                                          _movementTypeLabel(movement),
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.bodyMedium,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    '${movement.quantity} u.',
+                                    style:
+                                        Theme.of(context).textTheme.titleMedium,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 10),
+                              _InfoLine(
+                                label: 'Ruta',
+                                value:
+                                    '${_movementOriginLabel(movement)} -> ${_movementDestinationLabel(movement)}',
+                              ),
+                              _InfoLine(
+                                label: 'Responsable',
+                                value: movement.actorName,
+                              ),
+                              if ((movement.supplierName ?? '').trim().isNotEmpty)
+                                _InfoLine(
+                                  label: 'Proveedor',
+                                  value: movement.supplierName!.trim(),
+                                ),
+                              _InfoLine(
+                                label: 'Fecha',
+                                value: SystemWFormatters.shortDateTime.format(
+                                  movement.occurredAt,
+                                ),
+                              ),
+                              if ((movement.notes ?? '').trim().isNotEmpty)
+                                _InfoLine(
+                                  label: 'Notas',
+                                  value: movement.notes!.trim(),
+                                ),
+                            ],
                           ),
                         );
                       },
@@ -2536,6 +2673,34 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(covariant _PurchaseForm oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final currentProductId = _selectedProductValue;
+    if (currentProductId == null || currentProductId == _newProductValue) {
+      return;
+    }
+
+    final previousProduct = _findProductById(oldWidget.state.products, currentProductId);
+    final nextProduct = _findProductById(widget.state.products, currentProductId);
+    final priceHistoryChanged =
+        oldWidget.state.priceHistory.length != widget.state.priceHistory.length;
+    final productPricingChanged =
+        previousProduct?.salePrice != nextProduct?.salePrice ||
+        previousProduct?.lastPurchaseCost != nextProduct?.lastPurchaseCost;
+    final shouldRefresh =
+        nextProduct != null &&
+        (_salePriceController.text.trim().isEmpty ||
+            priceHistoryChanged ||
+            productPricingChanged);
+
+    if (!shouldRefresh || nextProduct == null) {
+      return;
+    }
+
+    _loadProductFields(nextProduct);
+  }
+
   void _loadProductFields(Product? product) {
     if (product == null) {
       _selectedProductType = _supplierType;
@@ -2551,10 +2716,11 @@ class _PurchaseFormState extends ConsumerState<_PurchaseForm> {
     final packageCost =
         _toDouble(costDetails['precio_caja']) ??
         (product.lastPurchaseCost * product.unitsPerPackage);
+    final resolvedSalePrice = _latestKnownSalePrice(widget.state, product);
 
     _selectedProductType = product.productType;
     _salePriceController.text =
-        product.salePrice > 0 ? product.salePrice.toStringAsFixed(2) : '';
+        resolvedSalePrice > 0 ? resolvedSalePrice.toStringAsFixed(2) : '';
     _brandController.text = costDetails['marca']?.toString() ?? '';
     _presentationController.text =
         costDetails['presentacion']?.toString() ?? '';
@@ -3851,24 +4017,34 @@ class _MovementPreviewCard extends StatelessWidget {
   const _MovementPreviewCard({
     required this.productName,
     required this.supplierName,
+    this.receivedAt,
+    this.expiryDate,
+    required this.isPromotionPriority,
+    this.promotionStatus,
+    this.promotionalPrice,
+    this.promotionNote,
     required this.quantity,
     required this.warehouseBefore,
     required this.warehouseAfter,
     required this.storeBefore,
     required this.storeAfter,
     required this.hasEnoughStock,
-    required this.allocations,
   });
 
   final String? productName;
   final String? supplierName;
+  final DateTime? receivedAt;
+  final DateTime? expiryDate;
+  final bool isPromotionPriority;
+  final String? promotionStatus;
+  final double? promotionalPrice;
+  final String? promotionNote;
   final int quantity;
   final int warehouseBefore;
   final int warehouseAfter;
   final int storeBefore;
   final int storeAfter;
   final bool hasEnoughStock;
-  final List<_WarehouseTransferAllocation> allocations;
 
   @override
   Widget build(BuildContext context) {
@@ -3893,8 +4069,29 @@ class _MovementPreviewCard extends StatelessWidget {
           _InfoLine(label: 'Producto', value: productName ?? 'Sin seleccionar'),
           _InfoLine(
             label: 'Proveedor',
-            value: supplierName ?? 'Selecciona un proveedor',
+            value: supplierName ?? 'Selecciona un lote',
           ),
+          if (receivedAt != null)
+            _InfoLine(
+              label: 'Compra',
+              value: SystemWFormatters.shortDateTime.format(receivedAt!),
+            ),
+          if (expiryDate != null)
+            _InfoLine(
+              label: 'Vencimiento',
+              value: SystemWFormatters.shortDate.format(expiryDate!),
+            ),
+          if (isPromotionPriority)
+            _InfoLine(
+              label: 'Promo por lote',
+              value:
+                  promotionalPrice == null
+                      ? _movementPromotionStatusLabel(promotionStatus)
+                      : '${_movementPromotionStatusLabel(promotionStatus)} | ${SystemWFormatters.currency.format(promotionalPrice!)}',
+              isStrong: true,
+            ),
+          if ((promotionNote ?? '').trim().isNotEmpty)
+            _InfoLine(label: 'Nota promo', value: promotionNote!.trim()),
           _InfoLine(label: 'Cantidad a mover', value: '$quantity u.'),
           _InfoLine(
             label: 'Almacen',
@@ -3904,70 +4101,11 @@ class _MovementPreviewCard extends StatelessWidget {
             label: 'Tienda',
             value: '$storeBefore u. -> $storeAfter u.',
           ),
-          const SizedBox(height: 12),
-
-          const SizedBox(height: 8),
-          if (allocations.isEmpty)
-            Text(
-              productName == null
-                  ? 'Selecciona un producto para ver que ingresos saldrian primero del almacen.'
-                  : 'No pudimos reconstruir ingresos suficientes para detallar la salida desde el historial.',
-              style: Theme.of(context).textTheme.bodyMedium,
-            )
-          else
-            Column(
-              children:
-                  allocations.map((allocation) {
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFFE2E8F0)),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              allocation.sourceLabel,
-                              style: Theme.of(context).textTheme.titleSmall,
-                            ),
-                            const SizedBox(height: 6),
-                            _InfoLine(
-                              label: 'Ingreso',
-                              value: SystemWFormatters.shortDateTime.format(
-                                allocation.receivedAt,
-                              ),
-                            ),
-                            _InfoLine(
-                              label: 'Tomara',
-                              value: '${allocation.pickedUnits} u.',
-                            ),
-                            _InfoLine(
-                              label: 'Disponible en ese ingreso',
-                              value: '${allocation.availableUnits} u.',
-                            ),
-                            if (allocation.expiryDate != null)
-                              _InfoLine(
-                                label: 'Vence',
-                                value: SystemWFormatters.shortDate.format(
-                                  allocation.expiryDate!,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    );
-                  }).toList(),
-            ),
           if (!hasEnoughStock)
             Padding(
-              padding: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.only(top: 12),
               child: Text(
-                'La cantidad supera el stock disponible en almacen.',
+                'La cantidad supera el stock disponible del lote seleccionado.',
                 style: Theme.of(
                   context,
                 ).textTheme.bodySmall?.copyWith(color: const Color(0xFFB91C1C)),
@@ -3979,23 +4117,24 @@ class _MovementPreviewCard extends StatelessWidget {
   }
 }
 
-class _SupplierLotAvailabilityCard extends StatelessWidget {
-  const _SupplierLotAvailabilityCard({
-    required this.supplierName,
+class _MovementLotSelectorCard extends StatelessWidget {
+  const _MovementLotSelectorCard({
     required this.lots,
-    required this.totalAvailableUnits,
-    this.isLoading = false,
-    this.hasError = false,
+    required this.selectedPurchaseItemId,
+    this.onSelectLot,
   });
 
-  final String supplierName;
   final List<WarehouseSupplierLot> lots;
-  final int totalAvailableUnits;
-  final bool isLoading;
-  final bool hasError;
+  final String? selectedPurchaseItemId;
+  final ValueChanged<String>? onSelectLot;
 
   @override
   Widget build(BuildContext context) {
+    final totalAvailableUnits = lots.fold<int>(
+      0,
+      (sum, lot) => sum + lot.availableUnits,
+    );
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -4008,46 +4147,69 @@ class _SupplierLotAvailabilityCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Lotes del proveedor',
+            'Lotes disponibles',
             style: Theme.of(context).textTheme.titleMedium,
           ),
           const SizedBox(height: 10),
-          _InfoLine(label: 'Proveedor', value: supplierName),
           _InfoLine(
             label: 'Disponible para mover',
             value: '$totalAvailableUnits u.',
             isStrong: true,
           ),
+          _InfoLine(label: 'Lotes visibles', value: '${lots.length}'),
           const SizedBox(height: 8),
-          if (isLoading)
-            const Center(child: CircularProgressIndicator())
-          else if (hasError)
-            Text(
-              'No pudimos consultar los lotes de este proveedor en Supabase.',
-              style: Theme.of(context).textTheme.bodyMedium,
-            )
-          else if (lots.isEmpty)
-            Text(
-              'Este proveedor no tiene lotes disponibles en almacen para este producto.',
-              style: Theme.of(context).textTheme.bodyMedium,
-            )
-          else
-            Column(
-              children:
-                  lots.map((lot) {
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
+          Column(
+            children:
+                lots.map((lot) {
+                  final selected = lot.purchaseItemId == selectedPurchaseItemId;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap:
+                          onSelectLot == null
+                              ? null
+                              : () => onSelectLot!(lot.purchaseItemId),
                       child: Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                          border: Border.all(
+                            color:
+                                selected
+                                    ? const Color(0xFF0F766E)
+                                    : const Color(0xFFE2E8F0),
+                            width: selected ? 1.6 : 1,
+                          ),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    lot.supplierName,
+                                    style:
+                                        Theme.of(context).textTheme.titleSmall,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Icon(
+                                  selected
+                                      ? Icons.check_circle_rounded
+                                      : Icons.radio_button_unchecked_rounded,
+                                  color:
+                                      selected
+                                          ? const Color(0xFF0F766E)
+                                          : const Color(0xFF94A3B8),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
                             _InfoLine(
                               label: 'Compra',
                               value: SystemWFormatters.shortDateTime.format(
@@ -4057,17 +4219,233 @@ class _SupplierLotAvailabilityCard extends StatelessWidget {
                             _InfoLine(
                               label: 'Disponible',
                               value: '${lot.availableUnits} u.',
+                              isStrong: selected,
                             ),
                             _InfoLine(
                               label: 'Vencimiento',
                               value: _formatOptionalDate(lot.expiryDate),
                             ),
+                            if (lot.isPromotionPriority)
+                              _InfoLine(
+                                label: 'Promo por lote',
+                                value:
+                                    lot.promotionalPrice == null
+                                        ? _movementPromotionStatusLabel(
+                                          lot.promotionStatus,
+                                        )
+                                        : '${_movementPromotionStatusLabel(lot.promotionStatus)} | ${SystemWFormatters.currency.format(lot.promotionalPrice!)}',
+                                isStrong: true,
+                              ),
+                            if ((lot.promotionNote ?? '').trim().isNotEmpty)
+                              _InfoLine(
+                                label: 'Nota promo',
+                                value: lot.promotionNote!.trim(),
+                              ),
                           ],
                         ),
                       ),
-                    );
-                  }).toList(),
+                    ),
+                  );
+                }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExpiredMovementLotsNoticeCard extends StatelessWidget {
+  const _ExpiredMovementLotsNoticeCard({required this.alerts});
+
+  final List<InventoryLotAlert> alerts;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFF59E0B)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Lotes ocultos por vencimiento',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Estos lotes no aparecen en la lista de movimientos porque ya vencieron. Revisalos en perdidas.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 10),
+          ...alerts.map((alert) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFFED7AA)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      alert.supplierName,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 6),
+                    _InfoLine(
+                      label: 'Vencio',
+                      value: SystemWFormatters.shortDate.format(
+                        alert.expiryDate,
+                      ),
+                    ),
+                    _InfoLine(
+                      label: 'Disponible',
+                      value: '${alert.availableUnits} u.',
+                    ),
+                    _InfoLine(
+                      label: 'Compra',
+                      value: SystemWFormatters.shortDateTime.format(
+                        alert.receivedAt,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}
+
+class _MovementDraftCard extends StatelessWidget {
+  const _MovementDraftCard({
+    required this.items,
+    required this.totalUnits,
+    required this.onRemoveItem,
+    this.onClear,
+  });
+
+  final List<MovementDraftLine> items;
+  final int totalUnits;
+  final ValueChanged<int> onRemoveItem;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final promoPriorityCount = items.where((item) => item.isPromotionPriority).length;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Movimientos acumulados',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              if (onClear != null)
+                TextButton.icon(
+                  onPressed: onClear,
+                  icon: const Icon(Icons.delete_sweep_rounded),
+                  label: const Text('Vaciar'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (items.isEmpty)
+            Text(
+              'Todavia no agregas traslados. Selecciona un lote y acumula varios movimientos antes de registrarlos.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            )
+          else ...[
+            _InfoLine(label: 'Lineas', value: '${items.length}'),
+            _InfoLine(label: 'Unidades acumuladas', value: '$totalUnits u.'),
+            _InfoLine(
+              label: 'Lotes en promo',
+              value: '$promoPriorityCount',
             ),
+            const SizedBox(height: 8),
+            ...items.asMap().entries.map((entry) {
+              final index = entry.key;
+              final item = entry.value;
+              return Container(
+                margin: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            item.productName,
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${item.quantity} u. desde ${item.supplierName}',
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Compra: ${SystemWFormatters.shortDateTime.format(item.receivedAt)}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          Text(
+                            'Vence: ${_formatOptionalDate(item.expiryDate)}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          if (item.isPromotionPriority) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              item.promotionalPrice == null
+                                  ? 'Promo por lote: ${_movementPromotionStatusLabel(item.promotionStatus)}'
+                                  : 'Promo por lote: ${_movementPromotionStatusLabel(item.promotionStatus)} | ${SystemWFormatters.currency.format(item.promotionalPrice!)}',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: const Color(0xFFB45309),
+                                  ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => onRemoveItem(index),
+                      icon: const Icon(Icons.delete_outline_rounded),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
         ],
       ),
     );
@@ -4233,6 +4611,21 @@ double _unitMargin(Product product) {
   return (_unitProfit(product) / product.salePrice) * 100;
 }
 
+double _latestKnownSalePrice(
+  AdminMobileDashboardState state,
+  Product product,
+) {
+  for (final entry in state.priceHistory) {
+    if (entry.productId != product.id) {
+      continue;
+    }
+    if (entry.salePrice > 0) {
+      return entry.salePrice;
+    }
+  }
+  return product.salePrice;
+}
+
 String _productTypeLabel(String type) {
   return type.trim().toLowerCase() == 'artesanal' ? 'Artesanal' : 'Proveedor';
 }
@@ -4376,13 +4769,6 @@ int _uniqueSupplierCount(AdminMobileDashboardState state) {
     }
   }
 
-  for (final entry in state.priceHistory) {
-    final name = entry.supplier.trim();
-    if (_hasOperationalSupplier(name)) {
-      names.add(name);
-    }
-  }
-
   return names.length;
 }
 
@@ -4411,13 +4797,6 @@ List<String> _allSupplierOptions(AdminMobileDashboardState state) {
 
   for (final purchase in state.purchases) {
     final name = purchase.supplier.trim();
-    if (_hasOperationalSupplier(name)) {
-      names.add(name);
-    }
-  }
-
-  for (final entry in state.priceHistory) {
-    final name = entry.supplier.trim();
     if (_hasOperationalSupplier(name)) {
       names.add(name);
     }
@@ -4833,56 +5212,53 @@ String _promotionNoticeLabel(PromotionNotice notice) {
   return 'Aviso de promocion';
 }
 
-List<_WarehouseTransferAllocation> _buildWarehouseTransferPreviewFromLots(
-  List<WarehouseSupplierLot> lots,
-  int requestedUnits,
-) {
-  if (requestedUnits <= 0 || lots.isEmpty) {
-    return const [];
+String _movementPromotionStatusLabel(String? status) {
+  if (status == 'pending_transfer') {
+    return 'Pendiente de tienda';
   }
-
-  final availableUnits = lots.fold<int>(
-    0,
-    (sum, lot) => sum + lot.availableUnits,
-  );
-  var unitsToPick = math.min(requestedUnits, availableUnits);
-  final allocations = <_WarehouseTransferAllocation>[];
-
-  for (final lot in lots) {
-    if (unitsToPick <= 0) {
-      break;
-    }
-
-    final pickedUnits = math.min(lot.availableUnits, unitsToPick);
-    allocations.add(
-      _WarehouseTransferAllocation(
-        sourceLabel: lot.supplierName,
-        receivedAt: lot.receivedAt,
-        availableUnits: lot.availableUnits,
-        pickedUnits: pickedUnits,
-        expiryDate: lot.expiryDate,
-      ),
-    );
-    unitsToPick -= pickedUnits;
+  if (status == 'active_store') {
+    return 'Activa en tienda';
   }
-
-  return allocations;
+  return 'Promo por lote';
 }
 
-class _WarehouseTransferAllocation {
-  const _WarehouseTransferAllocation({
-    required this.sourceLabel,
-    required this.receivedAt,
-    required this.availableUnits,
-    required this.pickedUnits,
-    this.expiryDate,
-  });
+int _compareWarehouseLots(
+  WarehouseSupplierLot left,
+  WarehouseSupplierLot right,
+) {
+  final leftRank = _warehouseLotPriorityRank(left);
+  final rightRank = _warehouseLotPriorityRank(right);
+  if (leftRank != rightRank) {
+    return leftRank.compareTo(rightRank);
+  }
 
-  final String sourceLabel;
-  final DateTime receivedAt;
-  final int availableUnits;
-  final int pickedUnits;
-  final DateTime? expiryDate;
+  final leftExpiry = left.expiryDate;
+  final rightExpiry = right.expiryDate;
+  if (leftExpiry != null && rightExpiry != null) {
+    final expiryCompare = leftExpiry.compareTo(rightExpiry);
+    if (expiryCompare != 0) {
+      return expiryCompare;
+    }
+  } else if (leftExpiry != null) {
+    return -1;
+  } else if (rightExpiry != null) {
+    return 1;
+  }
+
+  return left.receivedAt.compareTo(right.receivedAt);
+}
+
+int _warehouseLotPriorityRank(WarehouseSupplierLot lot) {
+  if (!lot.isPromotionPriority) {
+    return 2;
+  }
+  if (lot.promotionStatus == 'pending_transfer') {
+    return 0;
+  }
+  if (lot.promotionStatus == 'active_store') {
+    return 1;
+  }
+  return 2;
 }
 
 class _PhoneNumberFormatter extends TextInputFormatter {
@@ -4963,18 +5339,16 @@ String? _latestSupplierPhone(List<Purchase> purchases) {
 }
 
 String _movementTypeLabel(InventoryMovement movement) {
-  if (movement.type.toLowerCase() == 'loss') {
-    return 'Perdida';
+  switch (movement.type.toLowerCase()) {
+    case 'purchase':
+      return 'Compra';
+    case 'sale':
+      return 'Venta';
+    case 'loss':
+      return 'Perdida';
+    default:
+      return 'Transferencia';
   }
-  final fromLocation = movement.fromLocation.toLowerCase();
-  final toLocation = movement.toLocation.toLowerCase();
-  if (fromLocation.contains('sin origen')) {
-    return 'Compra';
-  }
-  if (toLocation.contains('sin destino')) {
-    return 'Venta';
-  }
-  return 'Transferencia';
 }
 
 String _movementOriginLabel(InventoryMovement movement) {

@@ -1,5 +1,3 @@
-// ignore_for_file: unused_catch_clause
-
 import 'dart:async';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -50,7 +48,14 @@ class PurchaseRemoteDataSource {
     final rows = await _client
         .from('purchases')
         .select(
-          'id, received_at, supplier:suppliers!purchases_supplier_id_fkey(id, name, phone), admin:profiles!purchases_admin_id_fkey(full_name), purchase_items(id, product_id, quantity, unit_cost, expiry_date, product:products!purchase_items_product_id_fkey(name, units_per_package))',
+          'id, received_at, '
+          'supplier:suppliers!purchases_supplier_id_fkey(id, name, phone), '
+          'admin:profiles!purchases_admin_id_fkey(full_name), '
+          'purchase_items('
+          'id, product_id, quantity, unit_cost, expiry_date, cost_notes, '
+          'product:products!purchase_items_product_id_fkey('
+          'name, units_per_package, product_type, brand, presentation, package_name, unit_name'
+          '))',
         )
         .order('received_at', ascending: false);
 
@@ -62,12 +67,37 @@ class PurchaseRemoteDataSource {
               .map((item) => Map<String, dynamic>.from(item as Map))
               .map((item) {
                 final product = _mapNullable(item['product']);
+                final storedProductType =
+                    _stringOrNull(product['product_type']) ?? 'proveedor';
+                final unitsPerPackage =
+                    (product['units_per_package'] as num?)?.toInt() ?? 1;
+                final productCostDetails = <String, dynamic>{
+                  'tipo': storedProductType,
+                  'precio_caja': (item['unit_cost'] as num).toDouble() *
+                      unitsPerPackage,
+                  'cantidad_caja': unitsPerPackage,
+                  if (_stringOrNull(product['brand']) != null)
+                    'marca': _stringOrNull(product['brand']),
+                  if (_stringOrNull(product['presentation']) != null)
+                    'presentacion': _stringOrNull(product['presentation']),
+                  if (_stringOrNull(item['cost_notes']) != null)
+                    'observaciones': _stringOrNull(item['cost_notes']),
+                  if (storedProductType == 'artesanal' &&
+                      _stringOrNull(item['cost_notes']) != null)
+                    'observaciones_producto': _stringOrNull(item['cost_notes']),
+                  if (_stringOrNull(product['package_name']) != null)
+                    'package_name': _stringOrNull(product['package_name']),
+                  if (_stringOrNull(product['unit_name']) != null)
+                    'unit_name': _stringOrNull(product['unit_name']),
+                };
                 return PurchaseLine(
                   productId: item['product_id'] as String,
                   productName: product['name']?.toString() ?? 'Producto',
-                  quantity: item['quantity'] as int,
-                  unitsPerPackage:
-                      (product['units_per_package'] as num?)?.toInt() ?? 1,
+                  productType: storedProductType,
+                  salePrice: null,
+                  productCostDetails: productCostDetails,
+                  quantity: (item['quantity'] as num).toInt(),
+                  unitsPerPackage: unitsPerPackage,
                   unitCost: (item['unit_cost'] as num).toDouble(),
                   expiryDate:
                       item['expiry_date'] == null
@@ -119,9 +149,20 @@ class PurchaseRemoteDataSource {
             );
     final warehouseId = await _resolveLocationId('warehouse');
 
-    // La BD crea productos nuevos cuando product_id es null.
     final itemsPayload =
         purchase.items.map((item) {
+          final productCostDetails = item.productCostDetails ?? const {};
+          final packageName =
+              _stringOrNull(productCostDetails['package_name']) ?? 'caja';
+          final unitName =
+              _stringOrNull(productCostDetails['unit_name']) ?? 'unid';
+          final brand = _stringOrNull(productCostDetails['marca']);
+          final presentation = _stringOrNull(
+            productCostDetails['presentacion'],
+          );
+          final costNotes =
+              _stringOrNull(productCostDetails['observaciones']) ??
+              _stringOrNull(productCostDetails['observaciones_producto']);
           final isNewProduct = item.productId.trim().isEmpty;
           return {
             'product_id': isNewProduct ? null : item.productId,
@@ -131,56 +172,35 @@ class PurchaseRemoteDataSource {
             'name': isNewProduct ? item.productName : null,
             'category_id': isNewProduct ? item.categoryId : null,
             'sku': isNewProduct ? item.sku : null,
-            'sale_price': isNewProduct ? item.salePrice : null,
-            'units_per_package': isNewProduct ? item.unitsPerPackage : 1,
+            'product_type': item.productType,
+            'sale_price': item.salePrice,
+            'units_per_package': item.unitsPerPackage,
+            'package_name': packageName,
+            'unit_name': unitName,
+            'brand': brand,
+            'presentation': presentation,
+            'cost_notes': costNotes,
           };
         }).toList();
 
-    dynamic result;
-    try {
-      result = await _client.rpc(
-        'registrar_compra', // Llama a la versión limpia y definitiva
-        params: {
-          'p_supplier_id': supplierId,
-          'p_admin_id': currentUser.id,
-          'p_warehouse_id': warehouseId,
-          'p_total_price': purchase.total,
-          'p_items': itemsPayload,
-          // Omitimos p_received_at a propósito para que la BD use now() automático
-        },
-      );
-    } on PostgrestException catch (error) {
-      rethrow;
-    } catch (e) {
-      rethrow;
-    }
+    final result = await _client.rpc(
+      'registrar_compra',
+      params: {
+        'p_supplier_id': supplierId,
+        'p_admin_id': currentUser.id,
+        'p_warehouse_id': warehouseId,
+        'p_total_price': purchase.total,
+        'p_items': itemsPayload,
+      },
+    );
 
     final response = Map<String, dynamic>.from(result as Map);
     final purchaseId = response['purchase_id']?.toString();
 
     if (purchaseId == null || purchaseId.isEmpty) {
       throw StateError(
-        // Corregí el nombre de la función en tu mensaje de error para que no te confundas
         'La funcion registrar_compra no devolvio el id de la compra.',
       );
-    }
-
-    if (supplierId != null) {
-      final priceItems =
-          purchase.items
-              .where((item) => item.productId.trim().isNotEmpty)
-              .map(
-                (item) => {
-                  'product_id': item.productId,
-                  'supplier_id': supplierId,
-                  'unit_cost': item.unitCost,
-                  'effective_at': _toSupabaseDateTime(purchase.receivedAt),
-                },
-              )
-              .toList();
-      if (priceItems.isNotEmpty) {
-        await _client.from('product_prices').insert(priceItems);
-      }
     }
 
     return purchase.copyWith(id: purchaseId, supplierId: supplierId);
@@ -270,6 +290,17 @@ DateTime _parseSupabaseDateTime(String rawValue) {
   return DateTime.parse(rawValue).toLocal();
 }
 
-String _toSupabaseDateTime(DateTime value) {
-  return value.toUtc().toIso8601String();
+double? _toNullableDouble(dynamic value) {
+  if (value == null) {
+    return null;
+  }
+  if (value is num) {
+    return value.toDouble();
+  }
+  return double.tryParse(value.toString());
+}
+
+String? _stringOrNull(dynamic value) {
+  final normalized = value?.toString().trim() ?? '';
+  return normalized.isEmpty ? null : normalized;
 }

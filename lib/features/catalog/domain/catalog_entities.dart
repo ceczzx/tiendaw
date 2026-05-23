@@ -256,15 +256,26 @@ class PriceHistoryEntry {
     required this.id,
     required this.productId,
     required this.productName,
-    required this.supplier,
-    required this.unitCost,
-    required this.registeredAt,
+    required this.salePrice,
+    required this.coldPriceIncrement,
+    required this.effectiveFrom,
+    required this.createdByName,
+    this.promotionalPrice,
+    this.promotionNote,
+    this.effectiveTo,
   });
 
   final String id;
   final String productId;
   final String productName;
-  final String supplier;
-  final double unitCost;
-  final DateTime registeredAt;
+  final double salePrice;
+  final double? promotionalPrice;
+  final String? promotionNote;
+  final double coldPriceIncrement;
+  final DateTime effectiveFrom;
+  final DateTime? effectiveTo;
+  final String createdByName;
+
+  bool get hasPromotion => promotionalPrice != null;
+  bool get isActive => effectiveTo == null;
 }

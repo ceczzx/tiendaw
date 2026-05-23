@@ -85,5 +85,7 @@ abstract class CatalogRepository {
     required String productId,
     required int quantity,
     String? supplierId,
+    String? purchaseItemId,
+    String? notes,
   });
 }

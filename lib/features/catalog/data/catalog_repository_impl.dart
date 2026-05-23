@@ -473,11 +473,15 @@ class CatalogRepositoryImpl implements CatalogRepository {
     required String productId,
     required int quantity,
     String? supplierId,
+    String? purchaseItemId,
+    String? notes,
   }) {
     return _remote.transferWarehouseToStore(
       productId: productId,
       quantity: quantity,
       supplierId: supplierId,
+      purchaseItemId: purchaseItemId,
+      notes: notes,
     );
   }
 }

@@ -27,6 +27,16 @@ bool hasActivePromotion(Product product) {
   return availablePromotionUnits(product) > 0;
 }
 
+double? generalPromotionalPrice(Product product) {
+  final promotionalPrice = product.promotionalPrice;
+  if (promotionalPrice == null ||
+      promotionalPrice <= 0 ||
+      promotionalPrice >= product.salePrice) {
+    return null;
+  }
+  return promotionalPrice;
+}
+
 List<ProductPromotionOffer> activePromotionOffers(Product product) {
   return product.promotionOffers.where((offer) => offer.isActiveInStore).toList(
     growable: false,
@@ -45,17 +55,37 @@ double? bestPromotionalPrice(Product product) {
     return null;
   }
 
-  var bestPrice = offers.first.promotionalPrice;
+  var bestPrice = promotionalUnitPriceForOffer(product, offers.first);
   for (final offer in offers.skip(1)) {
-    if (offer.promotionalPrice < bestPrice) {
-      bestPrice = offer.promotionalPrice;
+    final offerPrice = promotionalUnitPriceForOffer(product, offer);
+    if (offerPrice < bestPrice) {
+      bestPrice = offerPrice;
     }
   }
   return bestPrice;
 }
 
+double promotionalUnitPriceForOffer(Product product, ProductPromotionOffer offer) {
+  final generalPrice = generalPromotionalPrice(product);
+  if (generalPrice == null || offer.promotionalPrice < generalPrice) {
+    return offer.promotionalPrice;
+  }
+  return generalPrice;
+}
+
 double effectiveBaseSalePrice(Product product) {
-  return bestPromotionalPrice(product) ?? product.salePrice;
+  var bestPrice = product.salePrice;
+  final generalPrice = generalPromotionalPrice(product);
+  final lotPrice = bestPromotionalPrice(product);
+
+  if (generalPrice != null && generalPrice < bestPrice) {
+    bestPrice = generalPrice;
+  }
+  if (lotPrice != null && lotPrice < bestPrice) {
+    bestPrice = lotPrice;
+  }
+
+  return bestPrice;
 }
 
 double effectiveSalePrice(Product product, {bool isIced = false}) {

@@ -37,6 +37,11 @@ class WarehouseSupplierLot {
     required this.receivedAt,
     required this.availableUnits,
     this.expiryDate,
+    this.isPromotionPriority = false,
+    this.promotionId,
+    this.promotionStatus,
+    this.promotionalPrice,
+    this.promotionNote,
   });
 
   final String purchaseItemId;
@@ -46,6 +51,11 @@ class WarehouseSupplierLot {
   final DateTime receivedAt;
   final int availableUnits;
   final DateTime? expiryDate;
+  final bool isPromotionPriority;
+  final String? promotionId;
+  final String? promotionStatus;
+  final double? promotionalPrice;
+  final String? promotionNote;
 }
 
 enum InventoryLotAlertStatus { expiring, expired }

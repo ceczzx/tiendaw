@@ -797,13 +797,17 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
           remainingQuantity < availablePromoUnits
               ? remainingQuantity
               : availablePromoUnits;
+      final promotionalUnitPrice = promotionalUnitPriceForOffer(
+        product,
+        offer,
+      );
       lines.add(
         SaleLine(
           productId: product.id,
           productName: product.name,
           quantity: promotionalQuantity,
-          unitPrice: offer.promotionalPrice + priceAdjustment,
-          baseUnitPrice: offer.promotionalPrice,
+          unitPrice: promotionalUnitPrice + priceAdjustment,
+          baseUnitPrice: promotionalUnitPrice,
           priceAdjustment: priceAdjustment,
           isIced: isIced,
           usedPromotionalPrice: true,
@@ -813,13 +817,15 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
 
     if (remainingQuantity > 0) {
+      final fallbackUnitPrice =
+          generalPromotionalPrice(product) ?? product.salePrice;
       lines.add(
         SaleLine(
           productId: product.id,
           productName: product.name,
           quantity: remainingQuantity,
-          unitPrice: product.salePrice + priceAdjustment,
-          baseUnitPrice: product.salePrice,
+          unitPrice: fallbackUnitPrice + priceAdjustment,
+          baseUnitPrice: fallbackUnitPrice,
           priceAdjustment: priceAdjustment,
           isIced: isIced,
           usedPromotionalPrice: false,

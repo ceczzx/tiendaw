@@ -14,6 +14,7 @@ import 'package:tiendaw/features/catalog/domain/product_pricing_rules.dart';
 import 'package:tiendaw/features/inventory/domain/inventory_entities.dart';
 import 'package:tiendaw/features/purchases/domain/purchase_entities.dart';
 import 'package:tiendaw/features/purchases/presentation/admin_mobile_dashboard_view_model.dart';
+import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 import 'package:tiendaw/shared/widgets/system_w_widgets.dart';
 
 enum _AdminMobileSection {
@@ -303,9 +304,44 @@ class _AdminMobileDashboardPageState
         );
   }
 
-  Future<bool> _handleClearGeneralPromotion({
-    required String productId,
+  Future<bool> _handleApproveShiftRequest(CashShift shift) async {
+    final currentUser =
+        ref.read(sessionViewModelProvider).valueOrNull?.currentUser;
+    if (_isActionInProgress || currentUser == null) {
+      return false;
+    }
+
+    setState(() {
+      _isActionInProgress = true;
+    });
+    return ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .approveShiftRequest(shiftId: shift.id, adminId: currentUser.id);
+  }
+
+  Future<bool> _handleRejectShiftRequest({
+    required CashShift shift,
+    required String rejectionReason,
   }) async {
+    final currentUser =
+        ref.read(sessionViewModelProvider).valueOrNull?.currentUser;
+    if (_isActionInProgress || currentUser == null) {
+      return false;
+    }
+
+    setState(() {
+      _isActionInProgress = true;
+    });
+    return ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .rejectShiftRequest(
+          shiftId: shift.id,
+          adminId: currentUser.id,
+          rejectionReason: rejectionReason,
+        );
+  }
+
+  Future<bool> _handleClearGeneralPromotion({required String productId}) async {
     if (_isActionInProgress) {
       return false;
     }
@@ -650,6 +686,290 @@ class _HomeSectionState extends State<_HomeSection> {
                           ),
                       ],
                     ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NotificationsSection extends StatelessWidget {
+  const _NotificationsSection({
+    required this.state,
+    required this.currentUser,
+    required this.isBusy,
+    required this.onApprove,
+    required this.onReject,
+  });
+
+  final AdminMobileDashboardState state;
+  final AppUser? currentUser;
+  final bool isBusy;
+  final Future<bool> Function(CashShift shift) onApprove;
+  final Future<bool> Function({
+    required CashShift shift,
+    required String rejectionReason,
+  })
+  onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    final pendingShifts = state.pendingShiftApprovals;
+    final answeredShifts =
+        state.cashShifts
+            .where(
+              (shift) =>
+                  shift.status == CashShiftStatus.approved ||
+                  shift.status == CashShiftStatus.rejected,
+            )
+            .take(5)
+            .toList();
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _MobileSectionHeading(
+            title: 'Permisos',
+            subtitle:
+                'Revisa solicitudes especiales de apertura de caja y responde con aprobacion o mensaje.',
+          ),
+          const SizedBox(height: 16),
+          _MetricWrap(
+            children: [
+              MetricCard(
+                label: 'Pendientes',
+                value: '${pendingShifts.length}',
+                detail: 'Solicitudes esperando respuesta',
+                accent: const Color(0xFFEA580C),
+              ),
+              MetricCard(
+                label: 'Respondidas',
+                value: '${answeredShifts.length}',
+                detail: 'Ultimas decisiones de permisos',
+                accent: const Color(0xFF2563EB),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Notificaciones de caja',
+            subtitle:
+                'Solo aparecen los turnos que Supabase marco para aprobacion especial.',
+            child:
+                pendingShifts.isEmpty
+                    ? const EmptyStateCard(
+                      title: 'Sin permisos pendientes',
+                      caption:
+                          'Cuando un vendedor solicite apertura especial, aparecera aqui.',
+                    )
+                    : Column(
+                      children:
+                          pendingShifts
+                              .map(
+                                (shift) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 12),
+                                  child: _ShiftApprovalCard(
+                                    shift: shift,
+                                    isBusy: isBusy || currentUser == null,
+                                    onApprove: () => onApprove(shift),
+                                    onReject:
+                                        (reason) => onReject(
+                                          shift: shift,
+                                          rejectionReason: reason,
+                                        ),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                    ),
+          ),
+          if (answeredShifts.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            SectionCard(
+              title: 'Ultimas respuestas',
+              subtitle:
+                  'Lectura rapida de permisos aprobados o rechazados recientemente.',
+              child: Column(
+                children:
+                    answeredShifts
+                        .map(
+                          (shift) => _AnsweredShiftTile(
+                            shift: shift,
+                            key: ValueKey(shift.id),
+                          ),
+                        )
+                        .toList(),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ShiftApprovalCard extends StatelessWidget {
+  const _ShiftApprovalCard({
+    required this.shift,
+    required this.isBusy,
+    required this.onApprove,
+    required this.onReject,
+  });
+
+  final CashShift shift;
+  final bool isBusy;
+  final Future<bool> Function() onApprove;
+  final Future<bool> Function(String rejectionReason) onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFFDE68A)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.notifications_active_rounded,
+                color: Color(0xFFB45309),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      shift.sellerName ?? 'Vendedor',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Solicitado ${SystemWFormatters.shortDateTime.format(shift.openedAt)}',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _InfoLine(
+            label: 'Monto inicial',
+            value: SystemWFormatters.currency.format(shift.openingAmount),
+          ),
+          _InfoLine(label: 'Lugar inicio', value: _shiftOpeningPlace(shift)),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              FilledButton.icon(
+                onPressed: isBusy ? null : onApprove,
+                icon: const Icon(Icons.check_rounded),
+                label: const Text('Aceptar'),
+              ),
+              OutlinedButton.icon(
+                onPressed:
+                    isBusy
+                        ? null
+                        : () async {
+                          final reason = await _promptRejectionReason(context);
+                          if (reason == null) {
+                            return;
+                          }
+                          await onReject(reason);
+                        },
+                icon: const Icon(Icons.close_rounded),
+                label: const Text('Rechazar'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _promptRejectionReason(BuildContext context) {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Rechazar permiso'),
+            content: TextField(
+              controller: controller,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Mensaje para el vendedor',
+                hintText: 'Explica por que no se aprueba la apertura.',
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed:
+                    () => Navigator.of(context).pop(controller.text.trim()),
+                child: const Text('Enviar respuesta'),
+              ),
+            ],
+          ),
+    );
+  }
+}
+
+class _AnsweredShiftTile extends StatelessWidget {
+  const _AnsweredShiftTile({required this.shift, super.key});
+
+  final CashShift shift;
+
+  @override
+  Widget build(BuildContext context) {
+    final isRejected = shift.status == CashShiftStatus.rejected;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          StatusPill(
+            label: isRejected ? 'Rechazado' : 'Aprobado',
+            background:
+                isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFECFDF5),
+            foreground:
+                isRejected ? const Color(0xFFB91C1C) : const Color(0xFF047857),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  shift.sellerName ?? 'Vendedor',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                Text(
+                  SystemWFormatters.shortDateTime.format(shift.openedAt),
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                if ((shift.rejectionReason ?? '').trim().isNotEmpty)
+                  Text(
+                    shift.rejectionReason!.trim(),
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1139,10 +1459,15 @@ class _PromotionsSectionState extends ConsumerState<_PromotionsSection> {
         !products.any((product) => product.id == _selectedGeneralProductId)) {
       _selectedGeneralProductId = products.first.id;
     }
-    return products.firstWhere((product) => product.id == _selectedGeneralProductId);
+    return products.firstWhere(
+      (product) => product.id == _selectedGeneralProductId,
+    );
   }
 
-  void _syncGeneralPromotionForm(Product product, PriceHistoryEntry? activeEntry) {
+  void _syncGeneralPromotionForm(
+    Product product,
+    PriceHistoryEntry? activeEntry,
+  ) {
     final seed =
         '${product.id}|${activeEntry?.effectiveFrom.toIso8601String() ?? 'sin-inicio'}|'
         '${activeEntry?.effectiveTo?.toIso8601String() ?? 'sin-fin'}|'
@@ -1342,8 +1667,7 @@ class _PromotionsSectionState extends ConsumerState<_PromotionsSection> {
                     final value = double.tryParse(promoController.text);
                     if (value == null || value <= 0) {
                       setState(() {
-                        errorMessage =
-                            'Ingresa un precio promocional valido.';
+                        errorMessage = 'Ingresa un precio promocional valido.';
                       });
                       return;
                     }
@@ -1407,13 +1731,11 @@ class _PromotionsSectionState extends ConsumerState<_PromotionsSection> {
     final activeGeneralPromotionCount =
         activeGeneralPromotionsByProductId.length;
     final activeGeneralEntries =
-        activeGeneralPromotionsByProductId.values.toList()
-          ..sort(
-            (left, right) =>
-                left.productName.toLowerCase().compareTo(
-                  right.productName.toLowerCase(),
-                ),
-          );
+        activeGeneralPromotionsByProductId.values.toList()..sort(
+          (left, right) => left.productName.toLowerCase().compareTo(
+            right.productName.toLowerCase(),
+          ),
+        );
     final activeLotPromotionCount = widget.state.activeLotPromotions.length;
     final selectedGeneralProduct = _resolveSelectedGeneralProduct(
       generalDiscountProducts,
@@ -1508,15 +1830,16 @@ class _PromotionsSectionState extends ConsumerState<_PromotionsSection> {
                             decoration: BoxDecoration(
                               color: const Color(0xFFF8FAFC),
                               borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: const Color(0xFFE2E8F0)),
+                              border: Border.all(
+                                color: const Color(0xFFE2E8F0),
+                              ),
                             ),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
                                   selectedGeneralProduct.name,
-                                  style:
-                                      Theme.of(context).textTheme.titleSmall,
+                                  style: Theme.of(context).textTheme.titleSmall,
                                 ),
                                 const SizedBox(height: 8),
                                 _InfoLine(
@@ -1587,10 +1910,9 @@ class _PromotionsSectionState extends ConsumerState<_PromotionsSection> {
                           const SizedBox(height: 12),
                           TextFormField(
                             controller: _generalPromoPriceController,
-                            keyboardType:
-                                const TextInputType.numberWithOptions(
-                                  decimal: true,
-                                ),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
                             decoration: const InputDecoration(
                               labelText: 'Precio promocional',
                             ),
@@ -1604,9 +1926,8 @@ class _PromotionsSectionState extends ConsumerState<_PromotionsSection> {
                                 onPressed:
                                     widget.isBusy
                                         ? null
-                                        : () => _pickGeneralPromotionDate(
-                                          context,
-                                        ),
+                                        : () =>
+                                            _pickGeneralPromotionDate(context),
                                 icon: const Icon(Icons.event_rounded),
                                 label: Text(
                                   _generalPromotionEndAt == null
@@ -1618,9 +1939,8 @@ class _PromotionsSectionState extends ConsumerState<_PromotionsSection> {
                                 onPressed:
                                     widget.isBusy
                                         ? null
-                                        : () => _pickGeneralPromotionTime(
-                                          context,
-                                        ),
+                                        : () =>
+                                            _pickGeneralPromotionTime(context),
                                 icon: const Icon(Icons.schedule_rounded),
                                 label: Text(
                                   _generalPromotionEndAt == null
@@ -1696,24 +2016,7 @@ class _PromotionsSectionState extends ConsumerState<_PromotionsSection> {
                                           );
                                         },
                                 icon: const Icon(Icons.local_offer_rounded),
-                                label: Text(
-                                  selectedGeneralEntry == null
-                                      ? 'Registrar descuento'
-                                      : 'Actualizar descuento',
-                                ),
-                              ),
-                              OutlinedButton.icon(
-                                onPressed:
-                                    widget.isBusy || selectedGeneralEntry == null
-                                        ? null
-                                        : () => widget.onClearGeneralPromotion(
-                                          productId:
-                                              selectedGeneralProduct.id,
-                                        ),
-                                icon: const Icon(
-                                  Icons.remove_circle_outline_rounded,
-                                ),
-                                label: const Text('Quitar descuento'),
+                                label: const Text('Registrar descuento'),
                               ),
                             ],
                           ),
@@ -1812,10 +2115,11 @@ class _PromotionsSectionState extends ConsumerState<_PromotionsSection> {
                                                   onPressed:
                                                       widget.isBusy
                                                           ? null
-                                                          : () => _openActiveGeneralPromotionDialog(
-                                                            product,
-                                                            entry,
-                                                          ),
+                                                          : () =>
+                                                              _openActiveGeneralPromotionDialog(
+                                                                product,
+                                                                entry,
+                                                              ),
                                                   icon: const Icon(
                                                     Icons.edit_rounded,
                                                   ),
@@ -2363,8 +2667,7 @@ class _LossesSectionState extends ConsumerState<_LossesSection> {
               final totalImpact = rows.fold<double>(
                 0,
                 (sum, row) =>
-                    sum +
-                    ((row['financial_impact'] as num?)?.toDouble() ?? 0),
+                    sum + ((row['financial_impact'] as num?)?.toDouble() ?? 0),
               );
               return _MetricWrap(
                 children: [
@@ -2787,14 +3090,12 @@ class _LossesSectionState extends ConsumerState<_LossesSection> {
     final notesController = TextEditingController(
       text: 'Perdida por vencimiento',
     );
-    final matchingProducts =
-        widget.state.products
-            .where((item) => item.id == alert.productId)
-            .toList(growable: false);
+    final matchingProducts = widget.state.products
+        .where((item) => item.id == alert.productId)
+        .toList(growable: false);
     final product = matchingProducts.isEmpty ? null : matchingProducts.first;
     final isBeverage =
-        product != null &&
-        isBeverageProduct(product, widget.state.categories);
+        product != null && isBeverageProduct(product, widget.state.categories);
     final auditFuture = Future.wait<dynamic>([
       ref
           .read(supabaseClientProvider)
@@ -2976,18 +3277,13 @@ class _LossesSectionState extends ConsumerState<_LossesSection> {
                     const SizedBox(height: 12),
                     DropdownButtonFormField<String>(
                       value: selectedStorageCondition,
-                      decoration: const InputDecoration(
-                        labelText: 'Condicion',
-                      ),
+                      decoration: const InputDecoration(labelText: 'Condicion'),
                       items: const [
                         DropdownMenuItem(
                           value: 'ambiente',
                           child: Text('Ambientado'),
                         ),
-                        DropdownMenuItem(
-                          value: 'frio',
-                          child: Text('Helado'),
-                        ),
+                        DropdownMenuItem(value: 'frio', child: Text('Helado')),
                       ],
                       onChanged: (value) {
                         setState(() {
@@ -3035,12 +3331,12 @@ class _LossesSectionState extends ConsumerState<_LossesSection> {
                       return;
                     }
 
-                    final maxAllowed = await (() async {
-                      if (!isBeverage || selectedStorageCondition == null) {
-                        return alert.availableUnits;
-                      }
-                      final rows =
-                          await ref
+                    final maxAllowed =
+                        await (() async {
+                          if (!isBeverage || selectedStorageCondition == null) {
+                            return alert.availableUnits;
+                          }
+                          final rows = await ref
                               .read(supabaseClientProvider)
                               .from('inventory_stock')
                               .select('quantity')
@@ -3050,14 +3346,17 @@ class _LossesSectionState extends ConsumerState<_LossesSection> {
                                 selectedStorageCondition!,
                               )
                               .gt('quantity', 0);
-                      return ((rows as List?) ?? const [])
-                          .map((row) => Map<String, dynamic>.from(row as Map))
-                          .fold<int>(
-                            0,
-                            (sum, row) =>
-                                sum + ((row['quantity'] as num?)?.toInt() ?? 0),
-                          );
-                    })();
+                          return ((rows as List?) ?? const [])
+                              .map(
+                                (row) => Map<String, dynamic>.from(row as Map),
+                              )
+                              .fold<int>(
+                                0,
+                                (sum, row) =>
+                                    sum +
+                                    ((row['quantity'] as num?)?.toInt() ?? 0),
+                              );
+                        })();
                     if (value > maxAllowed) {
                       setState(() {
                         errorMessage =
@@ -3118,7 +3417,9 @@ class _LossLotLookupCard extends ConsumerWidget {
                 children: [
                   Text('Stock por lote'),
                   SizedBox(height: 8),
-                  Text('Cuando exista un lote vencido podras consultarlo aqui.'),
+                  Text(
+                    'Cuando exista un lote vencido podras consultarlo aqui.',
+                  ),
                 ],
               )
               : FutureBuilder<dynamic>(
@@ -3144,7 +3445,9 @@ class _LossLotLookupCard extends ConsumerWidget {
                             sum + ((row['quantity'] as num?)?.toInt() ?? 0),
                       );
                   final coldUnits = rows
-                      .where((row) => row['storage_condition']?.toString() == 'frio')
+                      .where(
+                        (row) => row['storage_condition']?.toString() == 'frio',
+                      )
                       .fold<int>(
                         0,
                         (sum, row) =>
@@ -3183,10 +3486,7 @@ class _LossLotLookupCard extends ConsumerWidget {
                         label: 'Total disponible',
                         value: '${selectedAlert!.availableUnits} u.',
                       ),
-                      _InfoLine(
-                        label: 'Ambientado',
-                        value: '$ambientUnits u.',
-                      ),
+                      _InfoLine(label: 'Ambientado', value: '$ambientUnits u.'),
                       _InfoLine(label: 'Helado', value: '$coldUnits u.'),
                     ],
                   );
@@ -6825,6 +7125,48 @@ String _promotionNoticeLabel(PromotionNotice notice) {
     return 'Promo agotada';
   }
   return 'Aviso de promocion';
+}
+
+String _shiftOpeningPlace(CashShift shift) {
+  return _shiftPlaceLabel(
+    locationName: shift.locationName,
+    latitude: shift.openingLatitude,
+    longitude: shift.openingLongitude,
+    fallback: 'Sin ubicacion de inicio',
+  );
+}
+
+String _shiftPlaceLabel({
+  required String? locationName,
+  required double? latitude,
+  required double? longitude,
+  required String fallback,
+}) {
+  final name = locationName?.trim();
+  final coordinates = _coordinatesLabel(
+    latitude: latitude,
+    longitude: longitude,
+  );
+  if (name != null && name.isNotEmpty && coordinates != null) {
+    return '$name | $coordinates';
+  }
+  if (coordinates != null) {
+    return coordinates;
+  }
+  if (name != null && name.isNotEmpty) {
+    return name;
+  }
+  return fallback;
+}
+
+String? _coordinatesLabel({
+  required double? latitude,
+  required double? longitude,
+}) {
+  if (latitude == null || longitude == null) {
+    return null;
+  }
+  return '${latitude.toStringAsFixed(5)}, ${longitude.toStringAsFixed(5)}';
 }
 
 String _movementPromotionStatusLabel(String? status) {

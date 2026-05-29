@@ -101,6 +101,7 @@ class SellerDashboardState {
 
   bool get hasOpenShift => currentShift?.canSell ?? false;
   bool get hasPendingShiftApproval => currentShift?.isPendingApproval ?? false;
+  bool get hasRejectedShiftRequest => currentShift?.isRejected ?? false;
   bool get hasShiftRequest => currentShift != null && !currentShift!.isClosed;
 
   int quantityInCart(String productId) {
@@ -619,7 +620,8 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
 
   Future<bool> openShift(
     AppUser user, {
-    required double openingAmount,
+    required double openingCash,
+    required double openingYape,
     required double openingLatitude,
     required double openingLongitude,
   }) async {
@@ -647,7 +649,8 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     try {
       final shift = await ref.read(salesRepositoryProvider).openShift(
         sellerId: user.id,
-        openingAmount: openingAmount,
+        openingCash: openingCash,
+        openingYape: openingYape,
         openingLatitude: openingLatitude,
         openingLongitude: openingLongitude,
       );
@@ -674,8 +677,8 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
 
   Future<bool> closeShift(
     AppUser user, {
-    required double cashTotal,
-    required double yapeTotal,
+    required double closingCash,
+    required double closingYape,
     required double closingLatitude,
     required double closingLongitude,
   }) async {
@@ -696,8 +699,8 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     try {
       await ref.read(salesRepositoryProvider).closeShift(
         sellerId: user.id,
-        cashTotal: cashTotal,
-        yapeTotal: yapeTotal,
+        closingCash: closingCash,
+        closingYape: closingYape,
         closingLatitude: closingLatitude,
         closingLongitude: closingLongitude,
       );

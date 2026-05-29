@@ -100,13 +100,17 @@ class CashShift {
     required this.id,
     required this.sellerId,
     required this.openedAt,
-    required this.openingAmount,
+    required this.openingCash,
+    required this.openingYape,
     required this.cashSales,
     required this.yapeSales,
     required this.status,
     this.sellerName,
     this.closedAt,
+    this.closingCash,
+    this.closingYape,
     this.locationId,
+    this.locationName,
     this.openingLatitude,
     this.openingLongitude,
     this.closingLatitude,
@@ -120,11 +124,15 @@ class CashShift {
   final String sellerId;
   final String? sellerName;
   final DateTime openedAt;
-  final double openingAmount;
+  final double openingCash;
+  final double openingYape;
   final DateTime? closedAt;
+  final double? closingCash;
+  final double? closingYape;
   final double cashSales;
   final double yapeSales;
   final String? locationId;
+  final String? locationName;
   final double? openingLatitude;
   final double? openingLongitude;
   final double? closingLatitude;
@@ -141,17 +149,27 @@ class CashShift {
   bool get isRejected => status == CashShiftStatus.rejected;
   bool get canSell => isOpen && !isClosed;
   double get total => cashSales + yapeSales;
+  double get openingAmount => openingCash + openingYape;
+  double get expectedClosingCash => openingCash + cashSales;
+  double get expectedClosingYape => openingYape + yapeSales;
+  double get expectedClosingAmount => expectedClosingCash + expectedClosingYape;
+  double get closingAmount => (closingCash ?? 0) + (closingYape ?? 0);
+  double get finalAmount => isClosed ? closingAmount : expectedClosingAmount;
 
   CashShift copyWith({
     String? id,
     String? sellerId,
     String? sellerName,
     DateTime? openedAt,
-    double? openingAmount,
+    double? openingCash,
+    double? openingYape,
     DateTime? closedAt,
+    double? closingCash,
+    double? closingYape,
     double? cashSales,
     double? yapeSales,
     String? locationId,
+    String? locationName,
     double? openingLatitude,
     double? openingLongitude,
     double? closingLatitude,
@@ -166,11 +184,15 @@ class CashShift {
       sellerId: sellerId ?? this.sellerId,
       sellerName: sellerName ?? this.sellerName,
       openedAt: openedAt ?? this.openedAt,
-      openingAmount: openingAmount ?? this.openingAmount,
+      openingCash: openingCash ?? this.openingCash,
+      openingYape: openingYape ?? this.openingYape,
       closedAt: closedAt ?? this.closedAt,
+      closingCash: closingCash ?? this.closingCash,
+      closingYape: closingYape ?? this.closingYape,
       cashSales: cashSales ?? this.cashSales,
       yapeSales: yapeSales ?? this.yapeSales,
       locationId: locationId ?? this.locationId,
+      locationName: locationName ?? this.locationName,
       openingLatitude: openingLatitude ?? this.openingLatitude,
       openingLongitude: openingLongitude ?? this.openingLongitude,
       closingLatitude: closingLatitude ?? this.closingLatitude,

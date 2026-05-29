@@ -1,6 +1,7 @@
 // ignore_for_file: unused_local_variable, unused_element, prefer_null_aware_operators
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tiendaw/core/utils/formatters.dart';
 import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
@@ -186,9 +187,15 @@ class _SalesSectionState extends State<_SalesSection> {
                 'Inicio',
                 'Cierre',
                 'Vendedor',
-                'Efectivo',
-                'Digital',
-                'Total',
+                'Inicial efectivo',
+                'Inicial Yape',
+                'Venta efectivo',
+                'Venta digital',
+                'Cierre efectivo',
+                'Cierre Yape',
+                'Total final',
+                'Lugar inicio',
+                'Lugar cierre',
                 'Estado',
               ],
               rows:
@@ -215,12 +222,44 @@ class _SalesSectionState extends State<_SalesSection> {
                         ),
                         Text(shift.sellerName ?? 'Vendedor'),
                         Text(
+                          SystemWFormatters.currency.format(
+                            shift.openingCash,
+                          ),
+                        ),
+                        Text(
+                          SystemWFormatters.currency.format(
+                            shift.openingYape,
+                          ),
+                        ),
+                        Text(
                           SystemWFormatters.currency.format(shift.cashSales),
                         ),
                         Text(
                           SystemWFormatters.currency.format(shift.yapeSales),
                         ),
-                        Text(SystemWFormatters.currency.format(shift.total)),
+                        Text(_formatOptionalCurrency(shift.closingCash)),
+                        Text(_formatOptionalCurrency(shift.closingYape)),
+                        Text(
+                          SystemWFormatters.currency.format(
+                            shift.finalAmount,
+                          ),
+                        ),
+                        SizedBox(
+                          width: 260,
+                          child: _MapsLinkCell(
+                            label: _shiftOpeningPlace(shift),
+                            latitude: shift.openingLatitude,
+                            longitude: shift.openingLongitude,
+                          ),
+                        ),
+                        SizedBox(
+                          width: 260,
+                          child: _MapsLinkCell(
+                            label: _shiftClosingPlace(shift),
+                            latitude: shift.closingLatitude,
+                            longitude: shift.closingLongitude,
+                          ),
+                        ),
                         StatusPill(
                           label: _cashShiftStatusLabel(shift),
                           background: _cashShiftStatusBackground(shift),
@@ -1017,6 +1056,49 @@ class _DetailSummaryRow extends StatelessWidget {
             child: Text(value, style: style, textAlign: TextAlign.right),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _MapsLinkCell extends StatelessWidget {
+  const _MapsLinkCell({
+    required this.label,
+    required this.latitude,
+    required this.longitude,
+  });
+
+  final String label;
+  final double? latitude;
+  final double? longitude;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = _mapsUrl(latitude: latitude, longitude: longitude);
+    if (url == null) {
+      return Text(label);
+    }
+
+    return InkWell(
+      onTap: () {
+        Clipboard.setData(ClipboardData(text: url));
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('Link de Google Maps copiado.'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+      },
+      child: Text(
+        '$label\n$url',
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+          color: const Color(0xFF2563EB),
+          decoration: TextDecoration.underline,
+        ),
       ),
     );
   }
@@ -2617,6 +2699,9 @@ String _packageQuantityLabel(Product product, int stockUnits) {
 }
 
 String _cashShiftStatusLabel(CashShift shift) {
+  if (shift.isClosed) {
+    return 'Cerrado';
+  }
   return switch (shift.status) {
     CashShiftStatus.pendingApproval => 'Pendiente',
     CashShiftStatus.approved => 'Aprobado',
@@ -2626,7 +2711,17 @@ String _cashShiftStatusLabel(CashShift shift) {
   };
 }
 
+String _formatOptionalCurrency(double? value) {
+  if (value == null) {
+    return 'Pendiente';
+  }
+  return SystemWFormatters.currency.format(value);
+}
+
 Color _cashShiftStatusBackground(CashShift shift) {
+  if (shift.isClosed) {
+    return const Color(0xFFF1F5F9);
+  }
   return switch (shift.status) {
     CashShiftStatus.pendingApproval => const Color(0xFFFFF7ED),
     CashShiftStatus.approved => const Color(0xFFE0F2FE),
@@ -2637,6 +2732,9 @@ Color _cashShiftStatusBackground(CashShift shift) {
 }
 
 Color _cashShiftStatusForeground(CashShift shift) {
+  if (shift.isClosed) {
+    return const Color(0xFF334155);
+  }
   return switch (shift.status) {
     CashShiftStatus.pendingApproval => const Color(0xFF9A3412),
     CashShiftStatus.approved => const Color(0xFF075985),
@@ -2644,6 +2742,58 @@ Color _cashShiftStatusForeground(CashShift shift) {
     CashShiftStatus.closed => const Color(0xFF334155),
     CashShiftStatus.open => const Color(0xFF047857),
   };
+}
+
+String _shiftOpeningPlace(CashShift shift) {
+  return _shiftPlaceLabel(
+    locationName: shift.locationName,
+    latitude: shift.openingLatitude,
+    longitude: shift.openingLongitude,
+    fallback: 'Sin ubicacion de inicio',
+  );
+}
+
+String _shiftClosingPlace(CashShift shift) {
+  return _shiftPlaceLabel(
+    locationName: shift.locationName,
+    latitude: shift.closingLatitude,
+    longitude: shift.closingLongitude,
+    fallback: shift.isClosed ? 'Sin ubicacion de cierre' : 'Turno abierto',
+  );
+}
+
+String _shiftPlaceLabel({
+  required String? locationName,
+  required double? latitude,
+  required double? longitude,
+  required String fallback,
+}) {
+  final name = locationName?.trim();
+  final coordinates = _coordinatesLabel(latitude: latitude, longitude: longitude);
+  if (name != null && name.isNotEmpty && coordinates != null) {
+    return '$name | $coordinates';
+  }
+  if (coordinates != null) {
+    return coordinates;
+  }
+  if (name != null && name.isNotEmpty) {
+    return name;
+  }
+  return fallback;
+}
+
+String? _coordinatesLabel({required double? latitude, required double? longitude}) {
+  if (latitude == null || longitude == null) {
+    return null;
+  }
+  return '${latitude.toStringAsFixed(5)}, ${longitude.toStringAsFixed(5)}';
+}
+
+String? _mapsUrl({required double? latitude, required double? longitude}) {
+  if (latitude == null || longitude == null) {
+    return null;
+  }
+  return 'https://www.google.com/maps?q=$latitude,$longitude';
 }
 
 String _movementTypeLabel(InventoryMovement movement) {

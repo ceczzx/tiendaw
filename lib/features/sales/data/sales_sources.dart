@@ -137,10 +137,12 @@ class SalesRemoteDataSource {
     final rows = await _client
         .from('cash_shifts')
         .select(
-          'id, seller_id, opened_at, closed_at, opening_amount, cash_total, yape_total, '
+          'id, seller_id, opened_at, closed_at, opening_cash, opening_yape, closing_cash, closing_yape, '
           'location_id, opening_latitude, opening_longitude, closing_latitude, closing_longitude, '
           'status, approved_by, approved_at, rejection_reason, '
-          'seller:profiles!cash_shifts_seller_id_fkey(full_name)',
+          'seller:profiles!cash_shifts_seller_id_fkey(full_name), '
+          'location:locations!cash_shifts_location_id_fkey(name), '
+          'sales(payment_method, total)',
         )
         .order('opened_at', ascending: false);
 
@@ -150,7 +152,9 @@ class SalesRemoteDataSource {
   Stream<List<CashShift>> watchCashShifts() {
     return createRealtimeRefreshStream(
       load: getCashShifts,
-      triggers: [_tableTrigger('cash_shifts', primaryKey: const ['id'])],
+      triggers: [
+        _tableTrigger('cash_shifts', primaryKey: const ['id']),
+      ],
     );
   }
 
@@ -173,38 +177,38 @@ class SalesRemoteDataSource {
 
   Future<CashShift> openShift({
     required String sellerId,
-    required double openingAmount,
+    required double openingCash,
+    required double openingYape,
     required double openingLatitude,
     required double openingLongitude,
   }) async {
     final current = await _loadOpenShift(sellerId);
-    if (current != null) {
+    if (current != null && !current.isRejected) {
       return current;
     }
 
     final openedAt = DateTime.now();
     final storeLocationId = await _resolveLocationId('store');
-    final status = _resolveOpeningStatus(openedAt);
     final inserted =
         await _client
             .from('cash_shifts')
             .insert({
               'seller_id': sellerId,
-              'opening_amount': openingAmount,
-              'cash_total': 0,
-              'yape_total': 0,
+              'opening_cash': openingCash,
+              'opening_yape': openingYape,
               'location_id': storeLocationId,
               'opening_latitude': openingLatitude,
               'opening_longitude': openingLongitude,
-              'status': _shiftStatusToWire(status),
               'opened_at': _toSupabaseDateTime(openedAt),
             })
             .select(
-              'id, seller_id, opened_at, closed_at, opening_amount, cash_total, yape_total, '
-              'location_id, opening_latitude, opening_longitude, closing_latitude, closing_longitude, '
-              'status, approved_by, approved_at, rejection_reason',
-            )
-            .maybeSingle();
+          'id, seller_id, opened_at, closed_at, opening_cash, opening_yape, closing_cash, closing_yape, '
+          'location_id, opening_latitude, opening_longitude, closing_latitude, closing_longitude, '
+          'status, approved_by, approved_at, rejection_reason, '
+          'location:locations!cash_shifts_location_id_fkey(name), '
+          'sales(payment_method, total)',
+        )
+        .maybeSingle();
 
     if (inserted == null) {
       throw StateError('No se pudo abrir la caja del turno.');
@@ -221,7 +225,9 @@ class SalesRemoteDataSource {
 
     final openShift = await _loadOpenShift(currentUser.id);
     if (openShift == null) {
-      throw StateError('Inicia la caja antes de registrar ventas en la tienda.');
+      throw StateError(
+        'Inicia la caja antes de registrar ventas en la tienda.',
+      );
     }
     if (!openShift.canSell) {
       throw StateError(
@@ -263,26 +269,13 @@ class SalesRemoteDataSource {
 
     await _insertSaleItems(saleItemsPayload);
 
-    final totalField =
-        sale.paymentMethod == PaymentMethod.cash ? 'cash_total' : 'yape_total';
-    final nextTotal =
-        (sale.paymentMethod == PaymentMethod.cash
-            ? openShift.cashSales
-            : openShift.yapeSales) +
-        sale.total;
-
-    await _client
-        .from('cash_shifts')
-        .update({totalField: nextTotal})
-        .eq('id', openShift.id);
-
     return _PersistedSale(id: saleId, cashShiftId: openShift.id);
   }
 
   Future<void> closeShift({
     required String sellerId,
-    required double cashTotal,
-    required double yapeTotal,
+    required double closingCash,
+    required double closingYape,
     required double closingLatitude,
     required double closingLongitude,
   }) async {
@@ -292,14 +285,47 @@ class SalesRemoteDataSource {
           .from('cash_shifts')
           .update({
             'closed_at': _toSupabaseDateTime(DateTime.now()),
-            'cash_total': cashTotal,
-            'yape_total': yapeTotal,
+            'closing_cash': closingCash,
+            'closing_yape': closingYape,
             'closing_latitude': closingLatitude,
             'closing_longitude': closingLongitude,
             'status': 'closed',
           })
           .eq('id', current.id);
     }
+  }
+
+  Future<void> approveShift({
+    required String shiftId,
+    required String adminId,
+  }) async {
+    await _client
+        .from('cash_shifts')
+        .update({
+          'status': 'approved',
+          'approved_by': adminId,
+          'approved_at': _toSupabaseDateTime(DateTime.now()),
+          'rejection_reason': null,
+        })
+        .eq('id', shiftId)
+        .eq('status', 'pending_approval');
+  }
+
+  Future<void> rejectShift({
+    required String shiftId,
+    required String adminId,
+    required String rejectionReason,
+  }) async {
+    await _client
+        .from('cash_shifts')
+        .update({
+          'status': 'rejected',
+          'approved_by': adminId,
+          'approved_at': _toSupabaseDateTime(DateTime.now()),
+          'rejection_reason': rejectionReason.trim(),
+        })
+        .eq('id', shiftId)
+        .eq('status', 'pending_approval');
   }
 
   Future<void> _insertSaleItems(
@@ -360,13 +386,20 @@ class SalesRemoteDataSource {
     final rows = await _client
         .from('cash_shifts')
         .select(
-          'id, seller_id, opened_at, closed_at, opening_amount, cash_total, yape_total, '
+          'id, seller_id, opened_at, closed_at, opening_cash, opening_yape, closing_cash, closing_yape, '
           'location_id, opening_latitude, opening_longitude, closing_latitude, closing_longitude, '
-          'status, approved_by, approved_at, rejection_reason',
+          'status, approved_by, approved_at, rejection_reason, '
+          'location:locations!cash_shifts_location_id_fkey(name), '
+          'sales(payment_method, total)',
         )
         .eq('seller_id', sellerId)
         .isFilter('closed_at', null)
-        .inFilter('status', const ['open', 'approved', 'pending_approval'])
+        .inFilter('status', const [
+          'open',
+          'approved',
+          'pending_approval',
+          'rejected',
+        ])
         .order('opened_at', ascending: false)
         .limit(1);
 
@@ -397,19 +430,25 @@ class SalesRemoteDataSource {
 
   CashShift _mapCashShift(Map<String, dynamic> row) {
     final seller = _mapNullable(row['seller']);
+    final location = _mapNullable(row['location']);
+    final shiftSales = _mapShiftSales(row['sales']);
     return CashShift(
       id: row['id'] as String,
       sellerId: row['seller_id'] as String,
       sellerName: seller['full_name']?.toString(),
       openedAt: _parseSupabaseDateTime(row['opened_at'] as String),
-      openingAmount: (row['opening_amount'] as num?)?.toDouble() ?? 0,
+      openingCash: (row['opening_cash'] as num?)?.toDouble() ?? 0,
+      openingYape: (row['opening_yape'] as num?)?.toDouble() ?? 0,
       closedAt:
           row['closed_at'] == null
               ? null
               : _parseSupabaseDateTime(row['closed_at'] as String),
-      cashSales: (row['cash_total'] as num?)?.toDouble() ?? 0,
-      yapeSales: (row['yape_total'] as num?)?.toDouble() ?? 0,
+      closingCash: (row['closing_cash'] as num?)?.toDouble(),
+      closingYape: (row['closing_yape'] as num?)?.toDouble(),
+      cashSales: shiftSales.cash,
+      yapeSales: shiftSales.yape,
       locationId: row['location_id']?.toString(),
+      locationName: location['name']?.toString(),
       openingLatitude: (row['opening_latitude'] as num?)?.toDouble(),
       openingLongitude: (row['opening_longitude'] as num?)?.toDouble(),
       closingLatitude: (row['closing_latitude'] as num?)?.toDouble(),
@@ -438,21 +477,26 @@ class SalesRemoteDataSource {
     return Map<String, dynamic>.from(value as Map);
   }
 
+  ({double cash, double yape}) _mapShiftSales(dynamic rawSales) {
+    var cash = 0.0;
+    var yape = 0.0;
+    for (final item in (rawSales as List?) ?? const []) {
+      final row = Map<String, dynamic>.from(item as Map);
+      final total = (row['total'] as num?)?.toDouble() ?? 0;
+      if (row['payment_method'] == PaymentMethod.cash.name) {
+        cash += total;
+      } else {
+        yape += total;
+      }
+    }
+    return (cash: cash, yape: yape);
+  }
+
   Stream<dynamic> _tableTrigger(
     String table, {
     required List<String> primaryKey,
   }) {
     return _client.from(table).stream(primaryKey: primaryKey).skip(1);
-  }
-
-  CashShiftStatus _resolveOpeningStatus(DateTime openedAt) {
-    final minutes = openedAt.hour * 60 + openedAt.minute;
-    final isSunday = openedAt.weekday == DateTime.sunday;
-    final withinSchedule = minutes >= 8 * 60 && minutes <= 22 * 60;
-    if (!isSunday && withinSchedule) {
-      return CashShiftStatus.open;
-    }
-    return CashShiftStatus.pendingApproval;
   }
 
   CashShiftStatus _mapShiftStatus(String? rawStatus) {
@@ -462,16 +506,6 @@ class SalesRemoteDataSource {
       'rejected' => CashShiftStatus.rejected,
       'closed' => CashShiftStatus.closed,
       _ => CashShiftStatus.open,
-    };
-  }
-
-  String _shiftStatusToWire(CashShiftStatus status) {
-    return switch (status) {
-      CashShiftStatus.pendingApproval => 'pending_approval',
-      CashShiftStatus.approved => 'approved',
-      CashShiftStatus.rejected => 'rejected',
-      CashShiftStatus.closed => 'closed',
-      CashShiftStatus.open => 'open',
     };
   }
 }

@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:tiendaw/core/constants/app_breakpoints.dart';
+import 'package:tiendaw/core/utils/formatters.dart';
 import 'package:tiendaw/features/auth/domain/app_user.dart';
 import 'package:tiendaw/features/auth/presentation/session_view_model.dart';
 import 'package:tiendaw/features/dashboard/presentation/admin_desktop_dashboard_page.dart';
 import 'package:tiendaw/features/purchases/presentation/admin_mobile_dashboard_page.dart';
+import 'package:tiendaw/features/purchases/presentation/admin_mobile_dashboard_view_model.dart';
+import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 import 'package:tiendaw/features/sales/presentation/seller_dashboard_page.dart';
 import 'package:tiendaw/features/sales/presentation/seller_dashboard_view_model.dart';
 import 'package:tiendaw/shared/widgets/system_w_widgets.dart';
@@ -149,6 +152,10 @@ class _SystemWShellState extends ConsumerState<SystemWShell> {
                     ),
                   ),
                 ),
+              if (user.role == UserRole.admin &&
+                  (!isWideScreen ||
+                      _adminSection == AdminDesktopSection.operations))
+                _AdminMobileShiftNotificationsButton(currentUser: user),
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: IconButton(
@@ -307,6 +314,243 @@ class _SystemWShellState extends ConsumerState<SystemWShell> {
     }
 
     await ref.read(sessionViewModelProvider.notifier).signOut();
+  }
+}
+
+class _AdminMobileShiftNotificationsButton extends ConsumerStatefulWidget {
+  const _AdminMobileShiftNotificationsButton({required this.currentUser});
+
+  final AppUser currentUser;
+
+  @override
+  ConsumerState<_AdminMobileShiftNotificationsButton> createState() =>
+      _AdminMobileShiftNotificationsButtonState();
+}
+
+class _AdminMobileShiftNotificationsButtonState
+    extends ConsumerState<_AdminMobileShiftNotificationsButton> {
+  final MenuController _menuController = MenuController();
+  bool _isBusy = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final dashboard = ref.watch(adminMobileDashboardViewModelProvider);
+    final allPending =
+        dashboard.valueOrNull?.pendingShiftApprovals ?? const <CashShift>[];
+    final visiblePending = _visibleSpecialShiftRequests(allPending);
+    if (visiblePending.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    final latest = visiblePending.take(5).toList();
+    return Padding(
+      padding: const EdgeInsets.only(right: 2),
+      child: MenuAnchor(
+        controller: _menuController,
+        alignmentOffset: const Offset(-300, 8),
+        menuChildren: [
+          SizedBox(
+            width: 340,
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Permisos especiales',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Ultimas solicitudes pendientes',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 12),
+                  for (final shift in latest) ...[
+                    _ShiftRequestMenuCard(
+                      shift: shift,
+                      isBusy: _isBusy,
+                      onApprove: () => _approve(shift),
+                      onReject: () => _reject(context, shift),
+                    ),
+                    if (shift != latest.last) const SizedBox(height: 10),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+        builder: (context, controller, child) {
+          return Badge(
+            label: Text('${visiblePending.length}'),
+            child: IconButton(
+              tooltip: 'Permisos especiales pendientes',
+              onPressed: () {
+                if (controller.isOpen) {
+                  controller.close();
+                } else {
+                  controller.open();
+                }
+              },
+              icon: const Icon(Icons.notifications_active_rounded),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  List<CashShift> _visibleSpecialShiftRequests(List<CashShift> shifts) {
+    final filtered = [...shifts]
+      ..sort((a, b) => b.openedAt.compareTo(a.openedAt));
+    return filtered;
+  }
+
+  Future<void> _approve(CashShift shift) async {
+    if (_isBusy) {
+      return;
+    }
+
+    setState(() => _isBusy = true);
+    try {
+      final success = await ref
+          .read(adminMobileDashboardViewModelProvider.notifier)
+          .approveShiftRequest(
+            shiftId: shift.id,
+            adminId: widget.currentUser.id,
+          );
+      if (success) {
+        _menuController.close();
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isBusy = false);
+      }
+    }
+  }
+
+  Future<void> _reject(BuildContext context, CashShift shift) async {
+    if (_isBusy) {
+      return;
+    }
+
+    final reason = await _promptRejectionReason(context);
+    if (reason == null || reason.trim().isEmpty || !mounted) {
+      return;
+    }
+
+    setState(() => _isBusy = true);
+    try {
+      final success = await ref
+          .read(adminMobileDashboardViewModelProvider.notifier)
+          .rejectShiftRequest(
+            shiftId: shift.id,
+            adminId: widget.currentUser.id,
+            rejectionReason: reason,
+          );
+      if (success) {
+        _menuController.close();
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isBusy = false);
+      }
+    }
+  }
+
+  Future<String?> _promptRejectionReason(BuildContext context) {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Rechazar permiso'),
+            content: TextField(
+              controller: controller,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'Mensaje para el vendedor',
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed:
+                    () => Navigator.of(context).pop(controller.text.trim()),
+                child: const Text('Enviar'),
+              ),
+            ],
+          ),
+    );
+  }
+}
+
+class _ShiftRequestMenuCard extends StatelessWidget {
+  const _ShiftRequestMenuCard({
+    required this.shift,
+    required this.isBusy,
+    required this.onApprove,
+    required this.onReject,
+  });
+
+  final CashShift shift;
+  final bool isBusy;
+  final VoidCallback onApprove;
+  final VoidCallback onReject;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFFDE68A)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              shift.sellerName ?? 'Vendedor',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              SystemWFormatters.shortDateTime.format(shift.openedAt),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Inicial ${SystemWFormatters.currency.format(shift.openingAmount)}',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    onPressed: isBusy ? null : onApprove,
+                    child: const Text('Aceptar'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: isBusy ? null : onReject,
+                    child: const Text('No'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

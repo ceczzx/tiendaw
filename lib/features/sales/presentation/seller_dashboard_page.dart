@@ -83,6 +83,23 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
           );
         }
 
+        if (state.hasRejectedShiftRequest) {
+          return _RejectedShiftRequestView(
+            currentUser: currentUser,
+            currentShift: state.currentShift,
+            onStartShift:
+                currentUser == null || _isActionInProgress
+                    ? null
+                    : () => _startShift(currentUser),
+            onSignOut:
+                _isActionInProgress
+                    ? null
+                    : () {
+                      _signOut();
+                    },
+          );
+        }
+
         return Stack(
           children: [
             SingleChildScrollView(
@@ -113,21 +130,34 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                             ? Column(
                               children: [
                                 _SummaryRow(
-                                  label: 'Caja efectivo',
+                                  label: 'Inicial efectivo',
+                                  value: SystemWFormatters.currency.format(
+                                    state.currentShift?.openingCash ?? 0,
+                                  ),
+                                ),
+                                _SummaryRow(
+                                  label: 'Inicial Yape',
+                                  value: SystemWFormatters.currency.format(
+                                    state.currentShift?.openingYape ?? 0,
+                                  ),
+                                ),
+                                _SummaryRow(
+                                  label: 'Ventas efectivo',
                                   value: SystemWFormatters.currency.format(
                                     state.currentShift?.cashSales ?? 0,
                                   ),
                                 ),
                                 _SummaryRow(
-                                  label: 'Caja Yape/Transfer',
+                                  label: 'Ventas Yape/Transfer',
                                   value: SystemWFormatters.currency.format(
                                     state.currentShift?.yapeSales ?? 0,
                                   ),
                                 ),
                                 _SummaryRow(
-                                  label: 'Total turno',
+                                  label: 'Total esperado',
                                   value: SystemWFormatters.currency.format(
-                                    state.currentShift?.total ?? 0,
+                                    state.currentShift?.expectedClosingAmount ??
+                                        0,
                                   ),
                                   isStrong: true,
                                 ),
@@ -648,18 +678,6 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
       return;
     }
 
-    final openingAmount = await _promptAmount(
-      title: 'Iniciar caja',
-      message:
-          'Ingresa el monto inicial y luego activaremos GPS para registrar la apertura del turno.',
-      fieldLabel: 'Monto inicial',
-      confirmLabel: 'Continuar',
-      initialValue: '0',
-    );
-    if (openingAmount == null || !mounted) {
-      return;
-    }
-
     final position = await _resolveShiftPosition(
       locationDisabledMessage:
           'Activa el GPS del dispositivo para poder iniciar caja.',
@@ -670,12 +688,18 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
       return;
     }
 
+    final openingAmounts = await _promptOpeningAmounts();
+    if (openingAmounts == null || !mounted) {
+      return;
+    }
+
     setState(() => _isActionInProgress = true);
     final success = await ref
         .read(sellerDashboardViewModelProvider.notifier)
         .openShift(
           user,
-          openingAmount: openingAmount,
+          openingCash: openingAmounts.cash,
+          openingYape: openingAmounts.yape,
           openingLatitude: position.latitude,
           openingLongitude: position.longitude,
         );
@@ -736,7 +760,7 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
           'Confirma el total final en efectivo antes de registrar el cierre.',
       fieldLabel: 'Total efectivo',
       confirmLabel: 'Continuar',
-      initialValue: currentShift.cashSales.toStringAsFixed(2),
+      initialValue: currentShift.expectedClosingCash.toStringAsFixed(2),
     );
     if (cashTotal == null || !mounted) {
       return;
@@ -747,7 +771,7 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
           'Confirma el total final por Yape o transferencia para cerrar el turno.',
       fieldLabel: 'Total Yape / Transfer',
       confirmLabel: 'Revisar cierre',
-      initialValue: currentShift.yapeSales.toStringAsFixed(2),
+      initialValue: currentShift.expectedClosingYape.toStringAsFixed(2),
     );
     if (yapeTotal == null || !mounted) {
       return;
@@ -793,14 +817,107 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
         .read(sellerDashboardViewModelProvider.notifier)
         .closeShift(
           user,
-          cashTotal: cashTotal,
-          yapeTotal: yapeTotal,
+          closingCash: cashTotal,
+          closingYape: yapeTotal,
           closingLatitude: position.latitude,
           closingLongitude: position.longitude,
         );
     if (!success) {
       _releaseActionLockIfNoFeedback();
     }
+  }
+
+  Future<_ShiftOpeningAmounts?> _promptOpeningAmounts() async {
+    final cashController = TextEditingController(text: '0');
+    final yapeController = TextEditingController(text: '0');
+
+    return showDialog<_ShiftOpeningAmounts>(
+      context: context,
+      builder: (context) {
+        String? errorMessage;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            double parseAmount(TextEditingController controller) {
+              return double.tryParse(controller.text.trim()) ?? 0;
+            }
+
+            return AlertDialog(
+              title: const Text('Iniciar caja'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Ubicacion registrada. Ingresa el dinero inicial para efectivo y Yape.',
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: cashController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(
+                        RegExp(r'^\d*\.?\d{0,2}'),
+                      ),
+                    ],
+                    decoration: const InputDecoration(
+                      labelText: 'Inicial efectivo',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: yapeController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(
+                        RegExp(r'^\d*\.?\d{0,2}'),
+                      ),
+                    ],
+                    decoration: const InputDecoration(
+                      labelText: 'Inicial Yape',
+                    ),
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      errorMessage!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancelar'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final cash = parseAmount(cashController);
+                    final yape = parseAmount(yapeController);
+                    if (cash < 0 || yape < 0) {
+                      setState(() {
+                        errorMessage = 'Los montos no pueden ser negativos.';
+                      });
+                      return;
+                    }
+                    Navigator.of(
+                      context,
+                    ).pop(_ShiftOpeningAmounts(cash: cash, yape: yape));
+                  },
+                  child: const Text('Iniciar caja'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<double?> _promptAmount({
@@ -1417,6 +1534,89 @@ class _PendingShiftApprovalView extends StatelessWidget {
   }
 }
 
+class _RejectedShiftRequestView extends StatelessWidget {
+  const _RejectedShiftRequestView({
+    required this.currentUser,
+    required this.currentShift,
+    required this.onStartShift,
+    required this.onSignOut,
+  });
+
+  final AppUser? currentUser;
+  final CashShift? currentShift;
+  final VoidCallback? onStartShift;
+  final VoidCallback? onSignOut;
+
+  @override
+  Widget build(BuildContext context) {
+    final reason = currentShift?.rejectionReason?.trim();
+    return Scaffold(
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: SectionCard(
+              title: 'Solicitud no aprobada',
+              subtitle:
+                  'El administrador reviso el permiso especial para abrir caja.',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Vendedora: ${currentUser?.name ?? 'Usuario'}',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  _SummaryRow(
+                    label: 'Hora de solicitud',
+                    value:
+                        currentShift == null
+                            ? 'Pendiente'
+                            : SystemWFormatters.shortDateTime.format(
+                              currentShift!.openedAt,
+                            ),
+                  ),
+                  _SummaryRow(
+                    label: 'Monto inicial',
+                    value: SystemWFormatters.currency.format(
+                      currentShift?.openingAmount ?? 0,
+                    ),
+                  ),
+                  _SummaryRow(
+                    label: 'Mensaje',
+                    value:
+                        reason == null || reason.isEmpty
+                            ? 'Sin observacion registrada.'
+                            : reason,
+                  ),
+                  const SizedBox(height: 16),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: onStartShift,
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: const Text('Solicitar otra vez'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: onSignOut,
+                        icon: const Icon(Icons.logout_rounded),
+                        label: const Text('Cerrar sesion'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _CartItemRow extends StatelessWidget {
   const _CartItemRow({
     required this.item,
@@ -1596,6 +1796,13 @@ class _SummaryRow extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ShiftOpeningAmounts {
+  const _ShiftOpeningAmounts({required this.cash, required this.yape});
+
+  final double cash;
+  final double yape;
 }
 
 bool _isErrorFeedback(String message) {

@@ -10,6 +10,7 @@ import 'package:tiendaw/features/catalog/domain/catalog_entities.dart';
 import 'package:tiendaw/features/catalog/domain/load_catalog_overview_use_case.dart';
 import 'package:tiendaw/features/inventory/domain/inventory_entities.dart';
 import 'package:tiendaw/features/purchases/domain/purchase_entities.dart';
+import 'package:tiendaw/features/sales/domain/sales_entities.dart';
 import 'package:uuid/uuid.dart';
 
 class PurchaseDraftLine {
@@ -97,6 +98,7 @@ class AdminMobileDashboardState {
     required this.activeLotPromotions,
     required this.promotionNotices,
     required this.priceHistory,
+    required this.cashShifts,
     required this.purchases,
     required this.movements,
     required this.expiringLotAlerts,
@@ -119,6 +121,7 @@ class AdminMobileDashboardState {
   final List<LotPromotion> activeLotPromotions;
   final List<PromotionNotice> promotionNotices;
   final List<PriceHistoryEntry> priceHistory;
+  final List<CashShift> cashShifts;
   final List<Purchase> purchases;
   final List<InventoryMovement> movements;
   final List<InventoryLotAlert> expiringLotAlerts;
@@ -175,6 +178,12 @@ class AdminMobileDashboardState {
     return movementDraftItems.fold(0, (sum, item) => sum + item.quantity);
   }
 
+  List<CashShift> get pendingShiftApprovals {
+    return cashShifts
+        .where((shift) => shift.status == CashShiftStatus.pendingApproval)
+        .toList();
+  }
+
   AdminMobileDashboardState copyWith({
     List<Category>? categories,
     List<Product>? products,
@@ -182,6 +191,7 @@ class AdminMobileDashboardState {
     List<LotPromotion>? activeLotPromotions,
     List<PromotionNotice>? promotionNotices,
     List<PriceHistoryEntry>? priceHistory,
+    List<CashShift>? cashShifts,
     List<Purchase>? purchases,
     List<InventoryMovement>? movements,
     List<InventoryLotAlert>? expiringLotAlerts,
@@ -205,6 +215,7 @@ class AdminMobileDashboardState {
       activeLotPromotions: activeLotPromotions ?? this.activeLotPromotions,
       promotionNotices: promotionNotices ?? this.promotionNotices,
       priceHistory: priceHistory ?? this.priceHistory,
+      cashShifts: cashShifts ?? this.cashShifts,
       purchases: purchases ?? this.purchases,
       movements: movements ?? this.movements,
       expiringLotAlerts: expiringLotAlerts ?? this.expiringLotAlerts,
@@ -239,6 +250,7 @@ class AdminMobileDashboardViewModel
   StreamSubscription<List<LotPromotion>>? _activeLotPromotionsSubscription;
   StreamSubscription<List<PromotionNotice>>? _promotionNoticesSubscription;
   StreamSubscription<List<PriceHistoryEntry>>? _priceHistorySubscription;
+  StreamSubscription<List<CashShift>>? _cashShiftsSubscription;
   StreamSubscription<List<Purchase>>? _purchasesSubscription;
   StreamSubscription<List<InventoryMovement>>? _movementsSubscription;
   StreamSubscription<List<InventoryLotAlert>>? _expiringLotAlertsSubscription;
@@ -520,6 +532,77 @@ class AdminMobileDashboardViewModel
       state = AsyncData(
         current.copyWith(
           feedbackMessage: 'No se pudo retirar el descuento general: $error',
+        ),
+      );
+      return false;
+    }
+  }
+
+  Future<bool> approveShiftRequest({
+    required String shiftId,
+    required String adminId,
+  }) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    try {
+      await ref
+          .read(salesRepositoryProvider)
+          .approveShift(shiftId: shiftId, adminId: adminId);
+      await _refreshAll();
+      state = AsyncData(
+        state.requireValue.copyWith(feedbackMessage: 'Permiso aprobado.'),
+      );
+      return true;
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'No se pudo aprobar el permiso: $error',
+        ),
+      );
+      return false;
+    }
+  }
+
+  Future<bool> rejectShiftRequest({
+    required String shiftId,
+    required String adminId,
+    required String rejectionReason,
+  }) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    final reason = rejectionReason.trim();
+    if (reason.isEmpty) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'Escribe un mensaje para rechazar el permiso.',
+        ),
+      );
+      return false;
+    }
+
+    try {
+      await ref
+          .read(salesRepositoryProvider)
+          .rejectShift(
+            shiftId: shiftId,
+            adminId: adminId,
+            rejectionReason: reason,
+          );
+      await _refreshAll();
+      state = AsyncData(
+        state.requireValue.copyWith(feedbackMessage: 'Permiso rechazado.'),
+      );
+      return true;
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'No se pudo rechazar el permiso: $error',
         ),
       );
       return false;
@@ -882,6 +965,7 @@ class AdminMobileDashboardViewModel
         await ref.read(catalogRepositoryProvider).getPromotionNotices();
     final priceHistory =
         await ref.read(catalogRepositoryProvider).getPriceHistory();
+    final cashShifts = await ref.read(salesRepositoryProvider).getCashShifts();
     final purchases = await ref.read(purchaseRepositoryProvider).getPurchases();
     final movements =
         await ref.read(catalogRepositoryProvider).getInventoryMovements();
@@ -909,6 +993,7 @@ class AdminMobileDashboardViewModel
       activeLotPromotions: activeLotPromotions,
       promotionNotices: promotionNotices,
       priceHistory: priceHistory,
+      cashShifts: cashShifts,
       purchases: purchases,
       movements: movements,
       expiringLotAlerts: expiringLotAlerts,
@@ -1049,6 +1134,10 @@ class AdminMobileDashboardViewModel
         .read(catalogRepositoryProvider)
         .watchPriceHistory()
         .listen(_handlePriceHistoryUpdate, onError: (_, __) {});
+    _cashShiftsSubscription = ref
+        .read(salesRepositoryProvider)
+        .watchCashShifts()
+        .listen(_handleCashShiftsUpdate, onError: (_, __) {});
     _purchasesSubscription = ref
         .read(purchaseRepositoryProvider)
         .watchPurchases()
@@ -1073,6 +1162,7 @@ class AdminMobileDashboardViewModel
     _activeLotPromotionsSubscription?.cancel();
     _promotionNoticesSubscription?.cancel();
     _priceHistorySubscription?.cancel();
+    _cashShiftsSubscription?.cancel();
     _purchasesSubscription?.cancel();
     _movementsSubscription?.cancel();
     _expiringLotAlertsSubscription?.cancel();
@@ -1082,6 +1172,7 @@ class AdminMobileDashboardViewModel
     _activeLotPromotionsSubscription = null;
     _promotionNoticesSubscription = null;
     _priceHistorySubscription = null;
+    _cashShiftsSubscription = null;
     _purchasesSubscription = null;
     _movementsSubscription = null;
     _expiringLotAlertsSubscription = null;
@@ -1137,6 +1228,15 @@ class AdminMobileDashboardViewModel
     }
 
     state = AsyncData(current.copyWith(priceHistory: entries));
+  }
+
+  void _handleCashShiftsUpdate(List<CashShift> shifts) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(cashShifts: shifts));
   }
 
   void _handlePromotableLotsUpdate(List<PromotableLot> lots) {

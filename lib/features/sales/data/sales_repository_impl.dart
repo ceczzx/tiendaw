@@ -16,19 +16,44 @@ class SalesRepositoryImpl implements SalesRepository {
   @override
   Future<void> closeShift({
     required String sellerId,
-    required double cashTotal,
-    required double yapeTotal,
+    required double closingCash,
+    required double closingYape,
     required double closingLatitude,
     required double closingLongitude,
   }) async {
     await _remote.closeShift(
       sellerId: sellerId,
-      cashTotal: cashTotal,
-      yapeTotal: yapeTotal,
+      closingCash: closingCash,
+      closingYape: closingYape,
       closingLatitude: closingLatitude,
       closingLongitude: closingLongitude,
     );
     await _local.clearOpenShift(sellerId);
+  }
+
+  @override
+  Future<void> approveShift({
+    required String shiftId,
+    required String adminId,
+  }) async {
+    await _remote.approveShift(shiftId: shiftId, adminId: adminId);
+    final shifts = await _remote.getCashShifts();
+    await _local.saveCashShifts(shifts);
+  }
+
+  @override
+  Future<void> rejectShift({
+    required String shiftId,
+    required String adminId,
+    required String rejectionReason,
+  }) async {
+    await _remote.rejectShift(
+      shiftId: shiftId,
+      adminId: adminId,
+      rejectionReason: rejectionReason,
+    );
+    final shifts = await _remote.getCashShifts();
+    await _local.saveCashShifts(shifts);
   }
 
   @override
@@ -111,13 +136,15 @@ class SalesRepositoryImpl implements SalesRepository {
   @override
   Future<CashShift> openShift({
     required String sellerId,
-    required double openingAmount,
+    required double openingCash,
+    required double openingYape,
     required double openingLatitude,
     required double openingLongitude,
   }) async {
     final shift = await _remote.openShift(
       sellerId: sellerId,
-      openingAmount: openingAmount,
+      openingCash: openingCash,
+      openingYape: openingYape,
       openingLatitude: openingLatitude,
       openingLongitude: openingLongitude,
     );

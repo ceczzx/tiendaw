@@ -15,6 +15,10 @@ class SaleLine {
     this.priceAdjustment = 0,
     this.isIced = false,
     this.usedPromotionalPrice = false,
+    this.usedLotPromotion = false,
+    this.packId,
+    this.packName,
+    this.batchId,
   });
 
   final String productId;
@@ -26,20 +30,27 @@ class SaleLine {
   final double priceAdjustment;
   final bool isIced;
   final bool usedPromotionalPrice;
+  final bool usedLotPromotion;
+  final String? packId;
+  final String? packName;
+  final String? batchId;
 
   double get subtotal => quantity * unitPrice;
 
   String get cartKey =>
-      '$productId::${isIced ? 'iced' : 'regular'}::${unitPrice.toStringAsFixed(2)}';
+      '${packId ?? 'single'}::$productId::${batchId ?? 'any'}::${isIced ? 'iced' : 'regular'}::${unitPrice.toStringAsFixed(2)}';
 
   Map<String, dynamic> toItemMeta() {
     return <String, dynamic>{
       'is_iced': isIced,
       'base_unit_price': baseUnitPrice ?? unitPrice,
-      'original_unit_price':
-          originalUnitPrice ?? baseUnitPrice ?? unitPrice,
+      'original_unit_price': originalUnitPrice ?? baseUnitPrice ?? unitPrice,
       'price_adjustment': priceAdjustment,
       'used_promotional_price': usedPromotionalPrice,
+      'used_lot_promotion': usedLotPromotion,
+      if (packId != null) 'pack_id': packId,
+      if (packName != null) 'pack_name': packName,
+      if (batchId != null) 'batch_id': batchId,
     };
   }
 }

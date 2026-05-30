@@ -6,12 +6,18 @@ abstract class CatalogRepository {
   Stream<List<Category>> watchCategories();
   Future<List<Product>> getProducts();
   Stream<List<Product>> watchProducts();
+  Future<List<Pack>> getPacks();
+  Stream<List<Pack>> watchPacks();
+  Future<List<WarehouseSupplierLot>> getStoreSupplierLots({
+    required String productId,
+    String? supplierId,
+  });
   Future<List<PromotableLot>> getPromotableLots({
-    int daysAhead = 14,
+    int daysAhead = 30,
     bool expiredOnly = false,
   });
   Stream<List<PromotableLot>> watchPromotableLots({
-    int daysAhead = 14,
+    int daysAhead = 30,
     bool expiredOnly = false,
   });
   Future<List<LotPromotion>> getActiveLotPromotions();
@@ -23,11 +29,11 @@ abstract class CatalogRepository {
   Future<List<InventoryMovement>> getInventoryMovements();
   Stream<List<InventoryMovement>> watchInventoryMovements();
   Future<List<InventoryLotAlert>> getInventoryLotAlerts({
-    int daysAhead = 14,
+    int daysAhead = 30,
     bool expiredOnly = false,
   });
   Stream<List<InventoryLotAlert>> watchInventoryLotAlerts({
-    int daysAhead = 14,
+    int daysAhead = 30,
     bool expiredOnly = false,
   });
   Future<List<WarehouseSupplierLot>> getWarehouseSupplierLots({
@@ -100,5 +106,9 @@ abstract class CatalogRepository {
     String? supplierId,
     String? purchaseItemId,
     String? notes,
+  });
+  Future<Pack> createPack({
+    required String name,
+    required List<PackDraftItem> items,
   });
 }

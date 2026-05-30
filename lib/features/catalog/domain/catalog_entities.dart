@@ -287,3 +287,98 @@ class PriceHistoryEntry {
     return effectiveTo == null || effectiveTo!.isAfter(time);
   }
 }
+
+class PackItem {
+  const PackItem({
+    required this.id,
+    required this.packId,
+    required this.productId,
+    required this.productName,
+    required this.batchId,
+    required this.quantity,
+    required this.reducedUnitPrice,
+    required this.unitCost,
+    required this.salePrice,
+    required this.storeAvailableUnits,
+    this.expiryDate,
+  });
+
+  final String id;
+  final String packId;
+  final String productId;
+  final String productName;
+  final String batchId;
+  final int quantity;
+  final double reducedUnitPrice;
+  final double unitCost;
+  final double salePrice;
+  final int storeAvailableUnits;
+  final DateTime? expiryDate;
+
+  double get totalReducedPrice => reducedUnitPrice * quantity;
+  double get totalCost => unitCost * quantity;
+  double get totalRegularPrice => salePrice * quantity;
+  int get availablePacks =>
+      quantity <= 0 ? 0 : storeAvailableUnits ~/ quantity;
+}
+
+class Pack {
+  const Pack({
+    required this.id,
+    required this.name,
+    required this.totalPackPrice,
+    required this.status,
+    required this.createdBy,
+    required this.createdAt,
+    required this.items,
+  });
+
+  final String id;
+  final String name;
+  final double totalPackPrice;
+  final String status;
+  final String createdBy;
+  final DateTime createdAt;
+  final List<PackItem> items;
+
+  double get totalCost =>
+      items.fold(0, (sum, item) => sum + item.totalCost);
+  double get totalRegularPrice =>
+      items.fold(0, (sum, item) => sum + item.totalRegularPrice);
+  double get margin => totalPackPrice - totalCost;
+  int get availableInStore {
+    if (items.isEmpty || status != 'active') {
+      return 0;
+    }
+    return items
+        .map((item) => item.availablePacks)
+        .reduce((left, right) => left < right ? left : right);
+  }
+}
+
+class PackDraftItem {
+  const PackDraftItem({
+    required this.productId,
+    required this.productName,
+    required this.batchId,
+    required this.quantity,
+    required this.reducedUnitPrice,
+    required this.unitCost,
+    required this.salePrice,
+    required this.storeAvailableUnits,
+    this.expiryDate,
+  });
+
+  final String productId;
+  final String productName;
+  final String batchId;
+  final int quantity;
+  final double reducedUnitPrice;
+  final double unitCost;
+  final double salePrice;
+  final int storeAvailableUnits;
+  final DateTime? expiryDate;
+
+  double get totalReducedPrice => reducedUnitPrice * quantity;
+  double get totalCost => unitCost * quantity;
+}

@@ -22,6 +22,7 @@ enum _AdminMobileSection {
   purchases,
   suppliers,
   promotions,
+  packs,
   losses,
   movements,
 }
@@ -59,12 +60,24 @@ typedef _ColdStateSubmit =
       required double coldPriceIncrement,
     });
 typedef _MovementCartSubmit = Future<bool> Function();
+typedef _PackSubmit =
+    Future<bool> Function({
+      required String name,
+      required List<PackDraftItem> items,
+    });
 
 final _warehouseSupplierLotsProvider = FutureProvider.autoDispose
     .family<List<WarehouseSupplierLot>, String>((ref, productId) async {
       return ref
           .read(catalogRepositoryProvider)
           .getWarehouseSupplierLots(productId: productId);
+    });
+
+final _storeSupplierLotsProvider = FutureProvider.autoDispose
+    .family<List<WarehouseSupplierLot>, String>((ref, productId) async {
+      return ref
+          .read(catalogRepositoryProvider)
+          .getStoreSupplierLots(productId: productId);
     });
 
 class AdminMobileDashboardPage extends ConsumerStatefulWidget {
@@ -192,6 +205,11 @@ class _AdminMobileDashboardPageState
         onClearPromotion: _handlePromotionClear,
         onSaveGeneralPromotion: _handleSaveGeneralPromotion,
         onClearGeneralPromotion: _handleClearGeneralPromotion,
+      ),
+      _AdminMobileSection.packs => _PacksSection(
+        state: state,
+        isBusy: _isActionInProgress,
+        onCreatePack: _handleCreatePack,
       ),
       _AdminMobileSection.losses => _LossesSection(
         state: state,
@@ -354,6 +372,22 @@ class _AdminMobileDashboardPageState
         .clearGeneralPromotion(productId: productId);
   }
 
+  Future<bool> _handleCreatePack({
+    required String name,
+    required List<PackDraftItem> items,
+  }) async {
+    if (_isActionInProgress) {
+      return false;
+    }
+
+    setState(() {
+      _isActionInProgress = true;
+    });
+    return ref
+        .read(adminMobileDashboardViewModelProvider.notifier)
+        .createPack(name: name, items: items);
+  }
+
   Future<bool> _handleRegisterLoss({
     required String purchaseItemId,
     required int quantity,
@@ -473,6 +507,11 @@ class _AdminSectionStrip extends StatelessWidget {
             icon: Icons.local_offer_rounded,
             label: 'Promociones',
             section: _AdminMobileSection.promotions,
+          ),
+          (
+            icon: Icons.inventory_rounded,
+            label: 'Packs',
+            section: _AdminMobileSection.packs,
           ),
           (
             icon: Icons.inventory_2_rounded,
@@ -974,6 +1013,360 @@ class _AnsweredShiftTile extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _PacksSection extends ConsumerStatefulWidget {
+  const _PacksSection({
+    required this.state,
+    required this.isBusy,
+    required this.onCreatePack,
+  });
+
+  final AdminMobileDashboardState state;
+  final bool isBusy;
+  final _PackSubmit onCreatePack;
+
+  @override
+  ConsumerState<_PacksSection> createState() => _PacksSectionState();
+}
+
+class _PacksSectionState extends ConsumerState<_PacksSection> {
+  final _nameController = TextEditingController();
+  final _quantityController = TextEditingController(text: '1');
+  final _priceController = TextEditingController();
+  final List<PackDraftItem> _draftItems = [];
+  String? _selectedProductId;
+  String? _selectedBatchId;
+  String? _errorMessage;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _quantityController.dispose();
+    _priceController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final products = widget.state.products.where((p) => p.stockStore > 0).toList();
+    final selectedProduct = _productById(products, _selectedProductId);
+    final lotsAsync =
+        selectedProduct == null
+            ? const AsyncData<List<WarehouseSupplierLot>>([])
+            : ref.watch(_storeSupplierLotsProvider(selectedProduct.id));
+    final lots = lotsAsync.valueOrNull ?? const <WarehouseSupplierLot>[];
+    final selectedLot = _lotById(lots, _selectedBatchId);
+    final totalPrice = _draftItems.fold<double>(
+      0,
+      (sum, item) => sum + item.totalReducedPrice,
+    );
+    final totalCost = _draftItems.fold<double>(
+      0,
+      (sum, item) => sum + item.totalCost,
+    );
+    final profit = totalPrice - totalCost;
+    final statusColor =
+        profit > 0
+            ? const Color(0xFF047857)
+            : profit == 0
+            ? const Color(0xFFB45309)
+            : const Color(0xFFB91C1C);
+    final statusLabel = profit > 0 ? 'Ganancia' : profit == 0 ? 'Neutral' : 'Perdida';
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _MobileSectionHeading(
+            title: 'Packs',
+            subtitle:
+                'Arma packs con dos o mas productos, seleccionando estrictamente el lote de tienda para cada linea.',
+          ),
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Crear pack',
+            subtitle:
+                'Selecciona producto, lote, cantidad y precio minimo por unidad.',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: _nameController,
+                  decoration: const InputDecoration(labelText: 'Nombre del pack'),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: selectedProduct?.id,
+                  isExpanded: true,
+                  decoration: const InputDecoration(labelText: 'Producto'),
+                  items:
+                      products
+                          .map(
+                            (product) => DropdownMenuItem(
+                              value: product.id,
+                              child: Text(product.name),
+                            ),
+                          )
+                          .toList(),
+                  onChanged: (value) {
+                    setState(() {
+                      _selectedProductId = value;
+                      _selectedBatchId = null;
+                      _priceController.clear();
+                    });
+                  },
+                ),
+                const SizedBox(height: 12),
+                lotsAsync.isLoading
+                    ? const LinearProgressIndicator()
+                    : DropdownButtonFormField<String>(
+                      value: selectedLot?.purchaseItemId,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: 'Lote de tienda'),
+                      items:
+                          lots
+                              .map(
+                                (lot) => DropdownMenuItem(
+                                  value: lot.purchaseItemId,
+                                  child: Text(_packLotLabel(selectedProduct, lot)),
+                                ),
+                              )
+                              .toList(),
+                      onChanged:
+                          selectedProduct == null
+                              ? null
+                              : (value) {
+                                final lot = _lotById(lots, value);
+                                setState(() {
+                                  _selectedBatchId = value;
+                                  _priceController.text =
+                                      (selectedProduct.promotionalPrice ??
+                                              selectedProduct.salePrice)
+                                          .toStringAsFixed(2);
+                                  if (lot != null && lot.availableUnits <= 0) {
+                                    _errorMessage = 'El lote no tiene stock.';
+                                  }
+                                });
+                              },
+                    ),
+                if (selectedProduct != null && selectedLot != null) ...[
+                  const SizedBox(height: 12),
+                  _InfoLine(
+                    label: 'Costo unitario',
+                    value: SystemWFormatters.currency.format(selectedLot.unitCost),
+                  ),
+                  _InfoLine(
+                    label: 'Precio venta',
+                    value: SystemWFormatters.currency.format(selectedProduct.salePrice),
+                  ),
+                  _InfoLine(
+                    label: 'FV',
+                    value:
+                        selectedLot.expiryDate == null
+                            ? 'Sin FV'
+                            : SystemWFormatters.shortDate.format(selectedLot.expiryDate!),
+                  ),
+                  _InfoLine(label: 'Disponible tienda', value: '${selectedLot.availableUnits} u.'),
+                ],
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _quantityController,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        decoration: const InputDecoration(labelText: 'Cantidad'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: TextField(
+                        controller: _priceController,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
+                        ],
+                        decoration: const InputDecoration(labelText: 'Precio minimo'),
+                      ),
+                    ),
+                  ],
+                ),
+                if (_errorMessage != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _errorMessage!,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFFB91C1C),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed:
+                      selectedProduct == null || selectedLot == null
+                          ? null
+                          : () => _addDraftItem(selectedProduct, selectedLot),
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('Agregar producto'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Resumen del pack',
+            subtitle:
+                'El precio final se calcula con los precios minimos ingresados.',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _draftItems.isEmpty
+                    ? const EmptyStateCard(
+                      title: 'Sin productos en el pack',
+                      caption: 'Agrega al menos dos productos distintos.',
+                    )
+                    : Column(
+                      children:
+                          _draftItems.asMap().entries.map((entry) {
+                            final item = entry.value;
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(item.productName),
+                              subtitle: Text(
+                                'x${item.quantity} | ${SystemWFormatters.currency.format(item.reducedUnitPrice)} c/u | FV ${item.expiryDate == null ? 'Sin FV' : SystemWFormatters.shortDate.format(item.expiryDate!)}',
+                              ),
+                              trailing: IconButton(
+                                onPressed:
+                                    () => setState(
+                                      () => _draftItems.removeAt(entry.key),
+                                    ),
+                                icon: const Icon(Icons.delete_outline_rounded),
+                              ),
+                            );
+                          }).toList(),
+                    ),
+                const Divider(height: 24),
+                _InfoLine(label: 'Costo', value: SystemWFormatters.currency.format(totalCost)),
+                _InfoLine(label: 'Precio pack', value: SystemWFormatters.currency.format(totalPrice)),
+                _InfoLine(
+                  label: statusLabel,
+                  value: SystemWFormatters.currency.format(profit),
+                  isStrong: true,
+                ),
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value:
+                      totalPrice <= 0
+                          ? 0
+                          : (totalCost / totalPrice).clamp(0, 1).toDouble(),
+                  color: statusColor,
+                  backgroundColor: statusColor.withAlpha(40),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: widget.isBusy ? null : _submitPack,
+                    icon: const Icon(Icons.inventory_rounded),
+                    label: const Text('Guardar pack'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          SectionCard(
+            title: 'Packs activos',
+            subtitle: 'Stock disponible solo en tienda y margen actual.',
+            child:
+                widget.state.packs.isEmpty
+                    ? const EmptyStateCard(
+                      title: 'Sin packs registrados',
+                      caption: 'Los packs creados apareceran aqui.',
+                    )
+                    : Column(
+                      children:
+                          widget.state.packs.map((pack) {
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(pack.name),
+                              subtitle: Text(
+                                '${pack.items.length} productos | tienda ${pack.availableInStore} packs',
+                              ),
+                              trailing: Text(
+                                '${SystemWFormatters.currency.format(pack.totalPackPrice)}\n${SystemWFormatters.currency.format(pack.margin)}',
+                                textAlign: TextAlign.right,
+                              ),
+                            );
+                          }).toList(),
+                    ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _addDraftItem(Product product, WarehouseSupplierLot lot) {
+    final quantity = int.tryParse(_quantityController.text.trim()) ?? 0;
+    final price = double.tryParse(_priceController.text.trim()) ?? 0;
+    if (quantity <= 0 || quantity > lot.availableUnits) {
+      setState(() {
+        _errorMessage = 'La cantidad debe estar entre 1 y ${lot.availableUnits}.';
+      });
+      return;
+    }
+    if (price <= 0) {
+      setState(() {
+        _errorMessage = 'Ingresa un precio minimo valido.';
+      });
+      return;
+    }
+
+    setState(() {
+      _draftItems.add(
+        PackDraftItem(
+          productId: product.id,
+          productName: product.name,
+          batchId: lot.purchaseItemId,
+          quantity: quantity,
+          reducedUnitPrice: price,
+          unitCost: lot.unitCost,
+          salePrice: product.salePrice,
+          storeAvailableUnits: lot.availableUnits,
+          expiryDate: lot.expiryDate,
+        ),
+      );
+      _quantityController.text = '1';
+      _priceController.clear();
+      _selectedBatchId = null;
+      _errorMessage = null;
+    });
+  }
+
+  Future<void> _submitPack() async {
+    final distinctProducts = _draftItems.map((item) => item.productId).toSet();
+    if (distinctProducts.length < 2) {
+      setState(() {
+        _errorMessage = 'El pack debe tener dos o mas productos distintos.';
+      });
+      return;
+    }
+    final success = await widget.onCreatePack(
+      name: _nameController.text.trim(),
+      items: List<PackDraftItem>.unmodifiable(_draftItems),
+    );
+    if (!success || !mounted) {
+      return;
+    }
+    setState(() {
+      _nameController.clear();
+      _draftItems.clear();
+      _errorMessage = null;
+    });
   }
 }
 
@@ -7071,6 +7464,42 @@ String _promotionLocationLabel({
     return 'Solo almacen';
   }
   return 'Sin stock';
+}
+
+Product? _productById(List<Product> products, String? productId) {
+  if (productId == null) {
+    return null;
+  }
+  for (final product in products) {
+    if (product.id == productId) {
+      return product;
+    }
+  }
+  return null;
+}
+
+WarehouseSupplierLot? _lotById(
+  List<WarehouseSupplierLot> lots,
+  String? purchaseItemId,
+) {
+  if (purchaseItemId == null) {
+    return null;
+  }
+  for (final lot in lots) {
+    if (lot.purchaseItemId == purchaseItemId) {
+      return lot;
+    }
+  }
+  return null;
+}
+
+String _packLotLabel(Product? product, WarehouseSupplierLot lot) {
+  final salePrice = product == null ? 0 : product.salePrice;
+  final expiry =
+      lot.expiryDate == null
+          ? 'Sin FV'
+          : 'FV ${SystemWFormatters.shortDate.format(lot.expiryDate!)}';
+  return '${lot.supplierName} | ${lot.availableUnits} u. | Costo ${SystemWFormatters.currency.format(lot.unitCost)} | Venta ${SystemWFormatters.currency.format(salePrice)} | $expiry';
 }
 
 String _promotionRecommendationLabel({

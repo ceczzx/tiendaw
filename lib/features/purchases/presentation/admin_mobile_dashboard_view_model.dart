@@ -94,6 +94,7 @@ class AdminMobileDashboardState {
   const AdminMobileDashboardState({
     required this.categories,
     required this.products,
+    required this.packs,
     required this.promotableLots,
     required this.activeLotPromotions,
     required this.promotionNotices,
@@ -117,6 +118,7 @@ class AdminMobileDashboardState {
 
   final List<Category> categories;
   final List<Product> products;
+  final List<Pack> packs;
   final List<PromotableLot> promotableLots;
   final List<LotPromotion> activeLotPromotions;
   final List<PromotionNotice> promotionNotices;
@@ -187,6 +189,7 @@ class AdminMobileDashboardState {
   AdminMobileDashboardState copyWith({
     List<Category>? categories,
     List<Product>? products,
+    List<Pack>? packs,
     List<PromotableLot>? promotableLots,
     List<LotPromotion>? activeLotPromotions,
     List<PromotionNotice>? promotionNotices,
@@ -211,6 +214,7 @@ class AdminMobileDashboardState {
     return AdminMobileDashboardState(
       categories: categories ?? this.categories,
       products: products ?? this.products,
+      packs: packs ?? this.packs,
       promotableLots: promotableLots ?? this.promotableLots,
       activeLotPromotions: activeLotPromotions ?? this.activeLotPromotions,
       promotionNotices: promotionNotices ?? this.promotionNotices,
@@ -246,6 +250,7 @@ class AdminMobileDashboardViewModel
     extends AsyncNotifier<AdminMobileDashboardState> {
   final _uuid = const Uuid();
   StreamSubscription<CatalogOverview>? _catalogSubscription;
+  StreamSubscription<List<Pack>>? _packsSubscription;
   StreamSubscription<List<PromotableLot>>? _promotableLotsSubscription;
   StreamSubscription<List<LotPromotion>>? _activeLotPromotionsSubscription;
   StreamSubscription<List<PromotionNotice>>? _promotionNoticesSubscription;
@@ -533,6 +538,33 @@ class AdminMobileDashboardViewModel
         current.copyWith(
           feedbackMessage: 'No se pudo retirar el descuento general: $error',
         ),
+      );
+      return false;
+    }
+  }
+
+  Future<bool> createPack({
+    required String name,
+    required List<PackDraftItem> items,
+  }) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    try {
+      await ref.read(catalogRepositoryProvider).createPack(
+        name: name,
+        items: items,
+      );
+      await _refreshAll();
+      state = AsyncData(
+        state.requireValue.copyWith(feedbackMessage: 'Pack creado.'),
+      );
+      return true;
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(feedbackMessage: 'No se pudo crear el pack: $error'),
       );
       return false;
     }
@@ -957,6 +989,7 @@ class AdminMobileDashboardViewModel
     String? feedbackMessage,
   }) async {
     final catalog = await ref.read(loadCatalogOverviewUseCaseProvider)();
+    final packs = await ref.read(catalogRepositoryProvider).getPacks();
     final promotableLots =
         await ref.read(catalogRepositoryProvider).getPromotableLots();
     final activeLotPromotions =
@@ -989,6 +1022,7 @@ class AdminMobileDashboardViewModel
     return AdminMobileDashboardState(
       categories: catalog.categories,
       products: catalog.products,
+      packs: packs,
       promotableLots: promotableLots,
       activeLotPromotions: activeLotPromotions,
       promotionNotices: promotionNotices,
@@ -1118,6 +1152,10 @@ class AdminMobileDashboardViewModel
         .read(loadCatalogOverviewUseCaseProvider)
         .watch()
         .listen(_handleCatalogUpdate, onError: (_, __) {});
+    _packsSubscription = ref
+        .read(catalogRepositoryProvider)
+        .watchPacks()
+        .listen(_handlePacksUpdate, onError: (_, __) {});
     _promotableLotsSubscription = ref
         .read(catalogRepositoryProvider)
         .watchPromotableLots()
@@ -1158,6 +1196,7 @@ class AdminMobileDashboardViewModel
 
   void _disposeRealtimeSubscriptions() {
     _catalogSubscription?.cancel();
+    _packsSubscription?.cancel();
     _promotableLotsSubscription?.cancel();
     _activeLotPromotionsSubscription?.cancel();
     _promotionNoticesSubscription?.cancel();
@@ -1168,6 +1207,7 @@ class AdminMobileDashboardViewModel
     _expiringLotAlertsSubscription?.cancel();
     _expiredLotAlertsSubscription?.cancel();
     _catalogSubscription = null;
+    _packsSubscription = null;
     _promotableLotsSubscription = null;
     _activeLotPromotionsSubscription = null;
     _promotionNoticesSubscription = null;
@@ -1219,6 +1259,15 @@ class AdminMobileDashboardViewModel
                 : current.expiryDate,
       ),
     );
+  }
+
+  void _handlePacksUpdate(List<Pack> packs) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(packs: packs));
   }
 
   void _handlePriceHistoryUpdate(List<PriceHistoryEntry> entries) {

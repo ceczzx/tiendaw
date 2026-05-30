@@ -38,6 +38,7 @@ class WarehouseSupplierLot {
     required this.supplierName,
     required this.receivedAt,
     required this.availableUnits,
+    this.unitCost = 0,
     this.expiryDate,
     this.isPromotionPriority = false,
     this.promotionId,
@@ -52,6 +53,7 @@ class WarehouseSupplierLot {
   final String supplierName;
   final DateTime receivedAt;
   final int availableUnits;
+  final double unitCost;
   final DateTime? expiryDate;
   final bool isPromotionPriority;
   final String? promotionId;

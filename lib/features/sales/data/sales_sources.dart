@@ -86,6 +86,12 @@ class SalesRemoteDataSource {
                     item['item_meta'] is Map
                         ? Map<String, dynamic>.from(item['item_meta'] as Map)
                         : const <String, dynamic>{};
+                final usedPromotionalPrice =
+                    itemMeta['used_promotional_price'] == true;
+                final usedLotPromotion =
+                    itemMeta.containsKey('used_lot_promotion')
+                        ? itemMeta['used_lot_promotion'] == true
+                        : usedPromotionalPrice;
                 return SaleLine(
                   productId: item['product_id'] as String,
                   productName: product['name']?.toString() ?? 'Producto',
@@ -98,8 +104,11 @@ class SalesRemoteDataSource {
                   priceAdjustment:
                       (itemMeta['price_adjustment'] as num?)?.toDouble() ?? 0,
                   isIced: itemMeta['is_iced'] == true,
-                  usedPromotionalPrice:
-                      itemMeta['used_promotional_price'] == true,
+                  usedPromotionalPrice: usedPromotionalPrice,
+                  usedLotPromotion: usedLotPromotion,
+                  packId: itemMeta['pack_id']?.toString(),
+                  packName: itemMeta['pack_name']?.toString(),
+                  batchId: itemMeta['batch_id']?.toString(),
                 );
               })
               .toList();
@@ -202,13 +211,13 @@ class SalesRemoteDataSource {
               'opened_at': _toSupabaseDateTime(openedAt),
             })
             .select(
-          'id, seller_id, opened_at, closed_at, opening_cash, opening_yape, closing_cash, closing_yape, '
-          'location_id, opening_latitude, opening_longitude, closing_latitude, closing_longitude, '
-          'status, approved_by, approved_at, rejection_reason, '
-          'location:locations!cash_shifts_location_id_fkey(name), '
-          'sales(payment_method, total)',
-        )
-        .maybeSingle();
+              'id, seller_id, opened_at, closed_at, opening_cash, opening_yape, closing_cash, closing_yape, '
+              'location_id, opening_latitude, opening_longitude, closing_latitude, closing_longitude, '
+              'status, approved_by, approved_at, rejection_reason, '
+              'location:locations!cash_shifts_location_id_fkey(name), '
+              'sales(payment_method, total)',
+            )
+            .maybeSingle();
 
     if (inserted == null) {
       throw StateError('No se pudo abrir la caja del turno.');

@@ -107,6 +107,7 @@ class ProductModel extends Product {
 class CatalogLocalDataSource {
   List<Category> _categories = const [];
   List<Product> _products = const [];
+  List<Pack> _packs = const [];
   List<LotPromotion> _activeLotPromotions = const [];
   List<PriceHistoryEntry> _priceHistory = const [];
   List<InventoryMovement> _movements = const [];
@@ -114,11 +115,14 @@ class CatalogLocalDataSource {
   final Map<String, List<PromotableLot>> _promotableLots = {};
   final Map<bool, List<PromotionNotice>> _promotionNotices = {};
   final Map<String, List<WarehouseSupplierLot>> _warehouseSupplierLots = {};
+  final Map<String, List<WarehouseSupplierLot>> _storeSupplierLots = {};
 
   Future<List<Category>> getCategories() async =>
       List.unmodifiable(_categories);
 
   Future<List<Product>> getProducts() async => List.unmodifiable(_products);
+
+  Future<List<Pack>> getPacks() async => List.unmodifiable(_packs);
 
   Future<List<PromotableLot>> getPromotableLots({
     int daysAhead = 14,
@@ -175,12 +179,27 @@ class CatalogLocalDataSource {
     return List.unmodifiable(_warehouseSupplierLots[cacheKey] ?? const []);
   }
 
+  Future<List<WarehouseSupplierLot>> getStoreSupplierLots({
+    required String productId,
+    String? supplierId,
+  }) async {
+    final cacheKey = _warehouseSupplierLotsKey(
+      productId: productId,
+      supplierId: supplierId,
+    );
+    return List.unmodifiable(_storeSupplierLots[cacheKey] ?? const []);
+  }
+
   Future<void> saveCategories(List<Category> categories) async {
     _categories = List<Category>.unmodifiable(categories);
   }
 
   Future<void> saveProducts(List<Product> products) async {
     _products = List<Product>.unmodifiable(products);
+  }
+
+  Future<void> savePacks(List<Pack> packs) async {
+    _packs = List<Pack>.unmodifiable(packs);
   }
 
   Future<void> savePromotableLots({
@@ -234,6 +253,20 @@ class CatalogLocalDataSource {
       supplierId: supplierId,
     );
     _warehouseSupplierLots[cacheKey] = List<WarehouseSupplierLot>.unmodifiable(
+      lots,
+    );
+  }
+
+  Future<void> saveStoreSupplierLots({
+    required String productId,
+    String? supplierId,
+    required List<WarehouseSupplierLot> lots,
+  }) async {
+    final cacheKey = _warehouseSupplierLotsKey(
+      productId: productId,
+      supplierId: supplierId,
+    );
+    _storeSupplierLots[cacheKey] = List<WarehouseSupplierLot>.unmodifiable(
       lots,
     );
   }
@@ -354,6 +387,162 @@ class CatalogRemoteDataSource {
         _tableTrigger('promotion_notices', primaryKey: const ['id']),
       ],
     );
+  }
+
+  Future<List<Pack>> getPacks() async {
+    final rows = await _client
+        .from('packs')
+        .select(
+          'id, name, total_pack_price, status, created_by, created_at, '
+          'creator:profiles!packs_created_by_fkey(full_name), '
+          'pack_items(id, pack_id, product_id, batch_id, quantity, reduced_unit_price, '
+          'product:products!pack_items_product_id_fkey(name), '
+          'purchase_item:purchase_items!pack_items_batch_id_fkey(unit_cost, expiry_date))',
+        )
+        .order('created_at', ascending: false);
+    final mappedRows = _mapRows(rows);
+    final productIds = <String>{};
+    for (final row in mappedRows) {
+      for (final item in (row['pack_items'] as List?) ?? const []) {
+        final itemMap = Map<String, dynamic>.from(item as Map);
+        productIds.add(itemMap['product_id'] as String);
+      }
+    }
+
+    final pricingByProduct = await _loadActivePricingByProduct(
+      productIds: productIds.toList(),
+    );
+    final stockByBatch = await _loadBatchStockSummaries();
+
+    return mappedRows.map((row) {
+      final creator = _mapNullable(row['creator']);
+      final items =
+          ((row['pack_items'] as List?) ?? const [])
+              .map((item) => Map<String, dynamic>.from(item as Map))
+              .map((item) {
+                final product = _mapNullable(item['product']);
+                final purchaseItem = _mapNullable(item['purchase_item']);
+                final productId = item['product_id'] as String;
+                final batchId = item['batch_id'] as String;
+                return PackItem(
+                  id: item['id'] as String,
+                  packId: item['pack_id'] as String,
+                  productId: productId,
+                  productName: product['name']?.toString() ?? 'Producto',
+                  batchId: batchId,
+                  quantity: (item['quantity'] as num?)?.toInt() ?? 0,
+                  reducedUnitPrice:
+                      (item['reduced_unit_price'] as num?)?.toDouble() ?? 0,
+                  unitCost:
+                      (purchaseItem['unit_cost'] as num?)?.toDouble() ?? 0,
+                  salePrice:
+                      pricingByProduct[productId]?.salePrice ?? 0,
+                  storeAvailableUnits:
+                      stockByBatch[batchId]?.storeUnits ?? 0,
+                  expiryDate:
+                      purchaseItem['expiry_date'] == null
+                          ? null
+                          : DateTime.parse(
+                            purchaseItem['expiry_date'] as String,
+                          ),
+                );
+              })
+              .toList();
+
+      return Pack(
+        id: row['id'] as String,
+        name: row['name']?.toString() ?? 'Pack',
+        totalPackPrice: (row['total_pack_price'] as num?)?.toDouble() ?? 0,
+        status: row['status']?.toString() ?? 'active',
+        createdBy: creator['full_name']?.toString() ?? 'Admin',
+        createdAt: _parseSupabaseDateTime(row['created_at'] as String),
+        items: List<PackItem>.unmodifiable(items),
+      );
+    }).toList();
+  }
+
+  Stream<List<Pack>> watchPacks() {
+    return createRealtimeRefreshStream(
+      load: getPacks,
+      triggers: [
+        _tableTrigger('packs', primaryKey: const ['id']),
+        _tableTrigger('pack_items', primaryKey: const ['id']),
+        _tableTrigger('products', primaryKey: const ['id']),
+        _tableTrigger('purchase_items', primaryKey: const ['id']),
+        _tableTrigger(
+          'inventory_stock',
+          primaryKey: const [
+            'product_id',
+            'location_id',
+            'batch_id',
+            'storage_condition',
+          ],
+        ),
+        _tableTrigger('price_history', primaryKey: const ['id']),
+      ],
+    );
+  }
+
+  Future<Pack> createPack({
+    required String name,
+    required List<PackDraftItem> items,
+  }) async {
+    final normalizedName = name.trim();
+    if (normalizedName.isEmpty) {
+      throw StateError('El nombre del pack no puede estar vacio.');
+    }
+    final uniqueProductIds = items.map((item) => item.productId).toSet();
+    if (uniqueProductIds.length < 2) {
+      throw StateError('El pack debe tener al menos dos productos distintos.');
+    }
+    if (items.any((item) => item.quantity <= 0)) {
+      throw StateError('Cada producto del pack debe tener cantidad valida.');
+    }
+    if (items.any((item) => item.reducedUnitPrice <= 0)) {
+      throw StateError('Cada producto del pack debe tener precio valido.');
+    }
+    for (final item in items) {
+      final stock =
+          (await _loadBatchStockSummaries())[item.batchId] ??
+          _BatchStockSummary();
+      if (stock.storeUnits < item.quantity) {
+        throw StateError(
+          'El lote de ${item.productName} solo tiene ${stock.storeUnits} unidades en tienda.',
+        );
+      }
+    }
+
+    final totalPackPrice = items.fold<double>(
+      0,
+      (sum, item) => sum + item.totalReducedPrice,
+    );
+    final inserted =
+        await _client
+            .from('packs')
+            .insert({
+              'name': normalizedName,
+              'total_pack_price': totalPackPrice,
+              'created_by': _currentUserId(),
+            })
+            .select('id')
+            .single();
+    final packId = inserted['id'] as String;
+    await _client.from('pack_items').insert(
+      items
+          .map(
+            (item) => {
+              'pack_id': packId,
+              'product_id': item.productId,
+              'batch_id': item.batchId,
+              'quantity': item.quantity,
+              'reduced_unit_price': item.reducedUnitPrice,
+            },
+          )
+          .toList(),
+    );
+
+    final packs = await getPacks();
+    return packs.firstWhere((pack) => pack.id == packId);
   }
 
   Future<List<PromotableLot>> getPromotableLots({
@@ -1208,6 +1397,7 @@ class CatalogRemoteDataSource {
               supplierName: lot.supplierName,
               receivedAt: lot.receivedAt,
               availableUnits: lot.warehouseAvailableUnits,
+              unitCost: lot.unitCost,
               expiryDate: lot.expiryDate,
               isPromotionPriority: promotion != null,
               promotionId: promotion?.promotionId,
@@ -1238,6 +1428,42 @@ class CatalogRemoteDataSource {
 
             return left.receivedAt.compareTo(right.receivedAt);
           });
+
+    return result;
+  }
+
+  Future<List<WarehouseSupplierLot>> getStoreSupplierLots({
+    required String productId,
+    String? supplierId,
+  }) async {
+    final lots = await _loadLotContexts(
+      productId: productId,
+      supplierId: supplierId,
+    );
+    final activePromotionByPurchaseItemId =
+        await _loadActivePromotionByPurchaseItemId();
+
+    final result =
+        lots.where((lot) => lot.storeAvailableUnits > 0).map((lot) {
+            final promotion =
+                activePromotionByPurchaseItemId[lot.purchaseItemId];
+            return WarehouseSupplierLot(
+              purchaseItemId: lot.purchaseItemId,
+              productId: lot.productId,
+              supplierId: lot.supplierId,
+              supplierName: lot.supplierName,
+              receivedAt: lot.receivedAt,
+              availableUnits: lot.storeAvailableUnits,
+              unitCost: lot.unitCost,
+              expiryDate: lot.expiryDate,
+              isPromotionPriority: promotion != null,
+              promotionId: promotion?.promotionId,
+              promotionStatus: promotion?.status,
+              promotionalPrice: promotion?.promotionalPrice,
+              promotionNote: promotion?.note,
+            );
+          }).toList()
+          ..sort(_compareSupplierLots);
 
     return result;
   }
@@ -2332,6 +2558,29 @@ int _warehouseLotPromotionRank(WarehouseSupplierLot lot) {
     return 1;
   }
   return 2;
+}
+
+int _compareSupplierLots(WarehouseSupplierLot left, WarehouseSupplierLot right) {
+  final leftRank = _warehouseLotPromotionRank(left);
+  final rightRank = _warehouseLotPromotionRank(right);
+  if (leftRank != rightRank) {
+    return leftRank.compareTo(rightRank);
+  }
+
+  final leftExpiry = left.expiryDate;
+  final rightExpiry = right.expiryDate;
+  if (leftExpiry != null && rightExpiry != null) {
+    final expiryCompare = leftExpiry.compareTo(rightExpiry);
+    if (expiryCompare != 0) {
+      return expiryCompare;
+    }
+  } else if (leftExpiry != null) {
+    return -1;
+  } else if (rightExpiry != null) {
+    return 1;
+  }
+
+  return left.receivedAt.compareTo(right.receivedAt);
 }
 
 String _warehouseSupplierLotsKey({

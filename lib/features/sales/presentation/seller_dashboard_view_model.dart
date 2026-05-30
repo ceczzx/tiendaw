@@ -16,6 +16,7 @@ class SellerDashboardState {
   const SellerDashboardState({
     required this.categories,
     required this.products,
+    required this.packs,
     required this.selectedCategoryId,
     required this.selectedProductId,
     required this.quantity,
@@ -30,6 +31,7 @@ class SellerDashboardState {
 
   final List<Category> categories;
   final List<Product> products;
+  final List<Pack> packs;
   final String? selectedCategoryId;
   final String? selectedProductId;
   final int quantity;
@@ -44,6 +46,7 @@ class SellerDashboardState {
   SellerDashboardState copyWith({
     List<Category>? categories,
     List<Product>? products,
+    List<Pack>? packs,
     String? selectedCategoryId,
     bool clearSelectedCategory = false,
     String? selectedProductId,
@@ -61,6 +64,7 @@ class SellerDashboardState {
     return SellerDashboardState(
       categories: categories ?? this.categories,
       products: products ?? this.products,
+      packs: packs ?? this.packs,
       selectedCategoryId:
           clearSelectedCategory
               ? null
@@ -137,7 +141,7 @@ class SellerDashboardState {
   int promotionalQuantityInCart(String productId) {
     var total = 0;
     for (final item in cartItems) {
-      if (item.productId == productId && item.usedPromotionalPrice) {
+      if (item.productId == productId && item.usedLotPromotion) {
         total += item.quantity;
       }
     }
@@ -156,6 +160,7 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
   StreamSubscription<List<Sale>>? _salesSubscription;
   StreamSubscription<CashShift?>? _openShiftSubscription;
   StreamSubscription<List<PriceHistoryEntry>>? _priceHistorySubscription;
+  StreamSubscription<List<Pack>>? _packsSubscription;
   Timer? _promotionRefreshTimer;
 
   LoadCatalogOverviewUseCase get _catalogUseCase =>
@@ -306,6 +311,53 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     state = AsyncData(current.copyWith(cartItems: next));
   }
 
+  Future<void> addPackToCart(Pack pack, int quantity) async {
+    final current = state.valueOrNull;
+    if (current == null || quantity <= 0) {
+      return;
+    }
+
+    if (!current.hasOpenShift) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage: 'Inicia la caja antes de agregar packs a la venta.',
+        ),
+      );
+      return;
+    }
+
+    if (pack.availableInStore <= 0 || quantity > pack.availableInStore) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage:
+              'Solo hay ${pack.availableInStore} packs disponibles en tienda.',
+        ),
+      );
+      return;
+    }
+
+    final next = [...current.cartItems];
+    for (final item in pack.items) {
+      _mergeCartLine(
+        next,
+        SaleLine(
+          productId: item.productId,
+          productName: '${pack.name} / ${item.productName}',
+          quantity: item.quantity * quantity,
+          unitPrice: item.reducedUnitPrice,
+          baseUnitPrice: item.reducedUnitPrice,
+          originalUnitPrice: item.salePrice,
+          usedPromotionalPrice: item.reducedUnitPrice < item.salePrice,
+          packId: pack.id,
+          packName: pack.name,
+          batchId: item.batchId,
+        ),
+      );
+    }
+
+    state = AsyncData(current.copyWith(cartItems: next));
+  }
+
   Future<void> updateCartQuantity(String cartKey, int quantity) async {
     final current = state.valueOrNull;
     if (current == null) {
@@ -342,7 +394,7 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
           (item) =>
               item.productId == productId &&
               item.isIced != existing.isIced &&
-              item.usedPromotionalPrice,
+              item.usedLotPromotion,
         )
         .fold(0, (sum, item) => sum + item.quantity);
     final desiredModeQuantity =
@@ -437,7 +489,7 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
           (item) =>
               item.productId == existing.productId &&
               item.isIced != existing.isIced &&
-              item.usedPromotionalPrice,
+              item.usedLotPromotion,
         )
         .fold(0, (sum, item) => sum + item.quantity);
 
@@ -559,7 +611,7 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
 
     final promotionalQuantityByProduct = <String, int>{};
     for (final item in current.cartItems) {
-      if (!item.usedPromotionalPrice) {
+      if (!item.usedLotPromotion) {
         continue;
       }
       promotionalQuantityByProduct.update(
@@ -647,13 +699,15 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
 
     try {
-      final shift = await ref.read(salesRepositoryProvider).openShift(
-        sellerId: user.id,
-        openingCash: openingCash,
-        openingYape: openingYape,
-        openingLatitude: openingLatitude,
-        openingLongitude: openingLongitude,
-      );
+      final shift = await ref
+          .read(salesRepositoryProvider)
+          .openShift(
+            sellerId: user.id,
+            openingCash: openingCash,
+            openingYape: openingYape,
+            openingLatitude: openingLatitude,
+            openingLongitude: openingLongitude,
+          );
       await _refreshAll();
       state = AsyncData(
         state.requireValue.copyWith(
@@ -697,13 +751,15 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
 
     try {
-      await ref.read(salesRepositoryProvider).closeShift(
-        sellerId: user.id,
-        closingCash: closingCash,
-        closingYape: closingYape,
-        closingLatitude: closingLatitude,
-        closingLongitude: closingLongitude,
-      );
+      await ref
+          .read(salesRepositoryProvider)
+          .closeShift(
+            sellerId: user.id,
+            closingCash: closingCash,
+            closingYape: closingYape,
+            closingLatitude: closingLatitude,
+            closingLongitude: closingLongitude,
+          );
       await _refreshAll();
       state = AsyncData(
         state.requireValue.copyWith(
@@ -741,6 +797,7 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     final shift = await ref.read(salesRepositoryProvider).getOpenShift(user.id);
     final priceHistory =
         await ref.read(catalogRepositoryProvider).getPriceHistory();
+    final packs = await ref.read(catalogRepositoryProvider).getPacks();
 
     final effectiveCategoryId =
         catalog.categories.any((category) => category.id == selectedCategoryId)
@@ -774,6 +831,7 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     return SellerDashboardState(
       categories: catalog.categories,
       products: catalog.products,
+      packs: packs,
       priceHistory: priceHistory,
       selectedCategoryId: effectiveCategoryId,
       selectedProductId: effectiveProductId,
@@ -859,14 +917,15 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
           priceAdjustment: priceAdjustment,
           isIced: isIced,
           usedPromotionalPrice: true,
+          usedLotPromotion: true,
         ),
       );
       remainingQuantity -= promotionalQuantity;
     }
 
     if (remainingQuantity > 0) {
-      final fallbackUnitPrice =
-          generalPromotionalPrice(product) ?? product.salePrice;
+      final generalPromoPrice = generalPromotionalPrice(product);
+      final fallbackUnitPrice = generalPromoPrice ?? product.salePrice;
       lines.add(
         SaleLine(
           productId: product.id,
@@ -877,7 +936,8 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
           originalUnitPrice: product.salePrice,
           priceAdjustment: priceAdjustment,
           isIced: isIced,
-          usedPromotionalPrice: false,
+          usedPromotionalPrice: generalPromoPrice != null,
+          usedLotPromotion: false,
         ),
       );
     }
@@ -905,6 +965,10 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       priceAdjustment: current.priceAdjustment,
       isIced: current.isIced,
       usedPromotionalPrice: current.usedPromotionalPrice,
+      usedLotPromotion: current.usedLotPromotion,
+      packId: current.packId,
+      packName: current.packName,
+      batchId: current.batchId,
     );
   }
 
@@ -937,6 +1001,10 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
         .read(catalogRepositoryProvider)
         .watchPriceHistory()
         .listen(_handlePriceHistoryUpdate, onError: (_, __) {});
+    _packsSubscription = ref
+        .read(catalogRepositoryProvider)
+        .watchPacks()
+        .listen(_handlePacksUpdate, onError: (_, __) {});
   }
 
   void _disposeRealtimeSubscriptions() {
@@ -945,11 +1013,13 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     _salesSubscription?.cancel();
     _openShiftSubscription?.cancel();
     _priceHistorySubscription?.cancel();
+    _packsSubscription?.cancel();
     _promotionRefreshTimer = null;
     _catalogSubscription = null;
     _salesSubscription = null;
     _openShiftSubscription = null;
     _priceHistorySubscription = null;
+    _packsSubscription = null;
   }
 
   void _handlePriceHistoryUpdate(List<PriceHistoryEntry> entries) {
@@ -960,6 +1030,15 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
 
     state = AsyncData(current.copyWith(priceHistory: entries));
     _schedulePromotionRefresh(entries);
+  }
+
+  void _handlePacksUpdate(List<Pack> packs) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(packs: packs));
   }
 
   void _schedulePromotionRefresh(List<PriceHistoryEntry> entries) {

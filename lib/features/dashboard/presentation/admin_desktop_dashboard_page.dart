@@ -557,6 +557,72 @@ class _ProductsSection extends StatelessWidget {
                   'Cuando cargues el catalogo, aqui aparecera la lectura completa de cada producto.',
             ),
           ),
+          const SizedBox(height: 20),
+          SectionCard(
+            title: 'Packs en tienda',
+            subtitle:
+                'Lectura de packs activos con stock disponible solo en tienda, precio, costo y margen.',
+            child: _DesktopTable(
+              columns: const [
+                'Pack',
+                'Productos',
+                'Stock tienda',
+                'Precio pack',
+                'Costo',
+                'Margen',
+                'Estado',
+              ],
+              rows:
+                  state.packs
+                      .map(
+                        (pack) => _DesktopTableRow(
+                          cells: [
+                            SizedBox(width: 220, child: Text(pack.name)),
+                            SizedBox(
+                              width: 320,
+                              child: Text(
+                                pack.items
+                                    .map(
+                                      (item) =>
+                                          '${item.productName} x${item.quantity}',
+                                    )
+                                    .join('\n'),
+                                maxLines: 4,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            Text('${pack.availableInStore} packs'),
+                            Text(
+                              SystemWFormatters.currency.format(
+                                pack.totalPackPrice,
+                              ),
+                            ),
+                            Text(
+                              SystemWFormatters.currency.format(pack.totalCost),
+                            ),
+                            Text(
+                              SystemWFormatters.currency.format(pack.margin),
+                            ),
+                            StatusPill(
+                              label: _packStatusLabel(pack),
+                              background:
+                                  pack.availableInStore > 0
+                                      ? const Color(0xFFECFDF5)
+                                      : const Color(0xFFF1F5F9),
+                              foreground:
+                                  pack.availableInStore > 0
+                                      ? const Color(0xFF047857)
+                                      : const Color(0xFF334155),
+                            ),
+                          ],
+                        ),
+                      )
+                      .toList(),
+              emptyTitle: 'Sin packs registrados',
+              emptyCaption:
+                  'Crea packs desde Operaciones en admin móvil para verlos aqui.',
+            ),
+          ),
         ],
       ),
     );
@@ -2709,6 +2775,16 @@ String _cashShiftStatusLabel(CashShift shift) {
     CashShiftStatus.closed => 'Cerrado',
     CashShiftStatus.open => 'Abierto',
   };
+}
+
+String _packStatusLabel(Pack pack) {
+  if (pack.status == 'cancelled') {
+    return 'Cancelado';
+  }
+  if (pack.status == 'exhausted' || pack.availableInStore <= 0) {
+    return 'Agotado';
+  }
+  return 'Activo';
 }
 
 String _formatOptionalCurrency(double? value) {

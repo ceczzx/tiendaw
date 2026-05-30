@@ -14,6 +14,7 @@ class AdminDesktopDashboardState {
   const AdminDesktopDashboardState({
     required this.categories,
     required this.products,
+    required this.packs,
     required this.sales,
     required this.cashShifts,
     required this.purchases,
@@ -30,6 +31,7 @@ class AdminDesktopDashboardState {
 
   final List<Category> categories;
   final List<Product> products;
+  final List<Pack> packs;
   final List<Sale> sales;
   final List<CashShift> cashShifts;
   final List<Purchase> purchases;
@@ -234,6 +236,7 @@ class AdminDesktopDashboardState {
   AdminDesktopDashboardState copyWith({
     List<Category>? categories,
     List<Product>? products,
+    List<Pack>? packs,
     List<Sale>? sales,
     List<CashShift>? cashShifts,
     List<Purchase>? purchases,
@@ -250,6 +253,7 @@ class AdminDesktopDashboardState {
     return AdminDesktopDashboardState(
       categories: categories ?? this.categories,
       products: products ?? this.products,
+      packs: packs ?? this.packs,
       sales: sales ?? this.sales,
       cashShifts: cashShifts ?? this.cashShifts,
       purchases: purchases ?? this.purchases,
@@ -289,6 +293,7 @@ final adminDesktopDashboardViewModelProvider = AsyncNotifierProvider<
 class AdminDesktopDashboardViewModel
     extends AsyncNotifier<AdminDesktopDashboardState> {
   StreamSubscription<CatalogOverview>? _catalogSubscription;
+  StreamSubscription<List<Pack>>? _packsSubscription;
   StreamSubscription<List<Sale>>? _salesSubscription;
   StreamSubscription<List<CashShift>>? _cashShiftsSubscription;
   StreamSubscription<List<Purchase>>? _purchasesSubscription;
@@ -331,6 +336,7 @@ class AdminDesktopDashboardViewModel
     DateTime? periodEnd,
   }) async {
     final catalog = await ref.read(loadCatalogOverviewUseCaseProvider)();
+    final packs = await ref.read(catalogRepositoryProvider).getPacks();
     final sales = await ref.read(salesRepositoryProvider).getSales();
     final cashShifts = await ref.read(salesRepositoryProvider).getCashShifts();
     final purchases = await ref.read(purchaseRepositoryProvider).getPurchases();
@@ -354,6 +360,7 @@ class AdminDesktopDashboardViewModel
     return AdminDesktopDashboardState(
       categories: catalog.categories,
       products: catalog.products,
+      packs: packs,
       sales: sales,
       cashShifts: cashShifts,
       purchases: purchases,
@@ -376,6 +383,10 @@ class AdminDesktopDashboardViewModel
       _handleCatalogUpdate,
       onError: (_, __) {},
     );
+    _packsSubscription = ref
+        .read(catalogRepositoryProvider)
+        .watchPacks()
+        .listen(_handlePacksUpdate, onError: (_, __) {});
     _salesSubscription = ref
         .read(salesRepositoryProvider)
         .watchSales()
@@ -404,6 +415,7 @@ class AdminDesktopDashboardViewModel
 
   void _disposeRealtimeSubscriptions() {
     _catalogSubscription?.cancel();
+    _packsSubscription?.cancel();
     _salesSubscription?.cancel();
     _cashShiftsSubscription?.cancel();
     _purchasesSubscription?.cancel();
@@ -411,6 +423,7 @@ class AdminDesktopDashboardViewModel
     _expiringLotAlertsSubscription?.cancel();
     _expiredLotAlertsSubscription?.cancel();
     _catalogSubscription = null;
+    _packsSubscription = null;
     _salesSubscription = null;
     _cashShiftsSubscription = null;
     _purchasesSubscription = null;
@@ -446,6 +459,15 @@ class AdminDesktopDashboardViewModel
     }
 
     state = AsyncData(current.copyWith(sales: sales));
+  }
+
+  void _handlePacksUpdate(List<Pack> packs) {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    state = AsyncData(current.copyWith(packs: packs));
   }
 
   void _handleCashShiftsUpdate(List<CashShift> shifts) {

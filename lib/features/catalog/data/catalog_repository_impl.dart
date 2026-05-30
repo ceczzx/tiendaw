@@ -169,6 +169,65 @@ class CatalogRepositoryImpl implements CatalogRepository {
   }
 
   @override
+  Future<List<WarehouseSupplierLot>> getStoreSupplierLots({
+    required String productId,
+    String? supplierId,
+  }) async {
+    try {
+      final lots = await _remote.getStoreSupplierLots(
+        productId: productId,
+        supplierId: supplierId,
+      );
+      await _local.saveStoreSupplierLots(
+        productId: productId,
+        supplierId: supplierId,
+        lots: lots,
+      );
+      return lots;
+    } catch (_) {
+      final cached = await _local.getStoreSupplierLots(
+        productId: productId,
+        supplierId: supplierId,
+      );
+      if (cached.isEmpty) {
+        rethrow;
+      }
+      return cached;
+    }
+  }
+
+  @override
+  Future<List<Pack>> getPacks() async {
+    try {
+      final packs = await _remote.getPacks();
+      await _local.savePacks(packs);
+      return packs;
+    } catch (_) {
+      final cached = await _local.getPacks();
+      if (cached.isEmpty) {
+        rethrow;
+      }
+      return cached;
+    }
+  }
+
+  @override
+  Stream<List<Pack>> watchPacks() async* {
+    try {
+      await for (final packs in _remote.watchPacks()) {
+        await _local.savePacks(packs);
+        yield packs;
+      }
+    } catch (_) {
+      final cached = await _local.getPacks();
+      if (cached.isNotEmpty) {
+        yield cached;
+      }
+      rethrow;
+    }
+  }
+
+  @override
   Future<List<PriceHistoryEntry>> getPriceHistory({String? productId}) async {
     try {
       final entries = await _remote.getPriceHistory(productId: productId);
@@ -515,5 +574,13 @@ class CatalogRepositoryImpl implements CatalogRepository {
       purchaseItemId: purchaseItemId,
       notes: notes,
     );
+  }
+
+  @override
+  Future<Pack> createPack({
+    required String name,
+    required List<PackDraftItem> items,
+  }) {
+    return _remote.createPack(name: name, items: items);
   }
 }

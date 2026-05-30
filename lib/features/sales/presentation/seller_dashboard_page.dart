@@ -503,6 +503,54 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                   ),
                   const SizedBox(height: 16),
                   SectionCard(
+                    title: 'Packs',
+                    subtitle:
+                        state.hasOpenShift
+                            ? 'Combos activos armados por admin con lotes de tienda.'
+                            : 'Los packs se habilitan al iniciar caja.',
+                    child:
+                        !state.hasOpenShift
+                            ? const EmptyStateCard(
+                              title: 'Caja pendiente',
+                              caption:
+                                  'Inicia caja para poder vender packs.',
+                            )
+                            : state.packs
+                                .where((pack) => pack.availableInStore > 0)
+                                .isEmpty
+                            ? const EmptyStateCard(
+                              title: 'Sin packs disponibles',
+                              caption:
+                                  'Cuando admin cree packs con stock de tienda apareceran aqui.',
+                            )
+                            : Column(
+                              children:
+                                  state.packs
+                                      .where(
+                                        (pack) => pack.availableInStore > 0,
+                                      )
+                                      .map(
+                                        (pack) => Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 12,
+                                          ),
+                                          child: _PackSaleCard(
+                                            pack: pack,
+                                            onAdd:
+                                                () => ref
+                                                    .read(
+                                                      sellerDashboardViewModelProvider
+                                                          .notifier,
+                                                    )
+                                                    .addPackToCart(pack, 1),
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                            ),
+                  ),
+                  const SizedBox(height: 16),
+                  SectionCard(
                     title: 'Lista de venta',
                     subtitle: 'Revisa cantidades antes de cobrar.',
                     child:
@@ -681,8 +729,7 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
     final position = await _resolveShiftPosition(
       locationDisabledMessage:
           'Activa el GPS del dispositivo para poder iniciar caja.',
-      permissionDeniedMessage:
-          'Debes permitir la ubicacion para iniciar caja.',
+      permissionDeniedMessage: 'Debes permitir la ubicacion para iniciar caja.',
     );
     if (position == null || !mounted) {
       return;
@@ -805,8 +852,7 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
     final position = await _resolveShiftPosition(
       locationDisabledMessage:
           'Activa el GPS del dispositivo para poder cerrar caja.',
-      permissionDeniedMessage:
-          'Debes permitir la ubicacion para cerrar caja.',
+      permissionDeniedMessage: 'Debes permitir la ubicacion para cerrar caja.',
     );
     if (position == null || !mounted) {
       return;
@@ -1702,6 +1748,64 @@ class _CartItemRow extends StatelessWidget {
   }
 }
 
+class _PackSaleCard extends StatelessWidget {
+  const _PackSaleCard({required this.pack, required this.onAdd});
+
+  final Pack pack;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE5E7EB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(pack.name, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 6),
+          Text(
+            '${pack.items.length} productos | ${pack.availableInStore} packs en tienda',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            pack.items
+                .map((item) => '${item.productName} x${item.quantity}')
+                .join(' | '),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  SystemWFormatters.currency.format(pack.totalPackPrice),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: const Color(0xFF0F766E),
+                  ),
+                ),
+              ),
+              FilledButton.icon(
+                onPressed: onAdd,
+                icon: const Icon(Icons.add_shopping_cart_rounded),
+                label: const Text('Anadir'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _CartSummaryBar extends StatelessWidget {
   const _CartSummaryBar({
     required this.itemCount,
@@ -1819,7 +1923,7 @@ String _saleLineDescriptor(SaleLine item) {
   final originalUnitPrice =
       item.originalUnitPrice ?? item.baseUnitPrice ?? item.unitPrice;
   final baseUnitPrice = item.baseUnitPrice ?? item.unitPrice;
-  if (item.usedPromotionalPrice) {
+  if (item.usedLotPromotion) {
     details.add('precio promo por lote');
   } else if (originalUnitPrice > baseUnitPrice) {
     details.add('descuento general');
@@ -1964,6 +2068,7 @@ List<SaleLine> _previewSelectionLines(
         priceAdjustment: priceAdjustment,
         isIced: isIced,
         usedPromotionalPrice: true,
+        usedLotPromotion: true,
       ),
     );
     remainingQuantity -= promotionalQuantity;
@@ -1981,6 +2086,8 @@ List<SaleLine> _previewSelectionLines(
         originalUnitPrice: product.salePrice,
         priceAdjustment: priceAdjustment,
         isIced: isIced,
+        usedPromotionalPrice: generalPromotionalPrice != null,
+        usedLotPromotion: false,
       ),
     );
   }

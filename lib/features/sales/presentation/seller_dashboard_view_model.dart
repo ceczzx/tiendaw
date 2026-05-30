@@ -111,6 +111,9 @@ class SellerDashboardState {
   int quantityInCart(String productId) {
     var total = 0;
     for (final item in cartItems) {
+      if (item.stockReservedByPack) {
+        continue;
+      }
       if (item.productId == productId) {
         total += item.quantity;
       }
@@ -121,6 +124,9 @@ class SellerDashboardState {
   int icedQuantityInCart(String productId) {
     var total = 0;
     for (final item in cartItems) {
+      if (item.stockReservedByPack) {
+        continue;
+      }
       if (item.productId == productId && item.isIced) {
         total += item.quantity;
       }
@@ -131,6 +137,9 @@ class SellerDashboardState {
   int normalQuantityInCart(String productId) {
     var total = 0;
     for (final item in cartItems) {
+      if (item.stockReservedByPack) {
+        continue;
+      }
       if (item.productId == productId && !item.isIced) {
         total += item.quantity;
       }
@@ -141,6 +150,9 @@ class SellerDashboardState {
   int promotionalQuantityInCart(String productId) {
     var total = 0;
     for (final item in cartItems) {
+      if (item.stockReservedByPack) {
+        continue;
+      }
       if (item.productId == productId && item.usedLotPromotion) {
         total += item.quantity;
       }
@@ -174,8 +186,14 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
 
   @override
   Future<SellerDashboardState> build() async {
+    // ignore: avoid_print
+    print('[SELLER_PACKS][viewmodel-build] start');
     ref.onDispose(_disposeRealtimeSubscriptions);
     final hydrated = await _hydrate();
+    // ignore: avoid_print
+    print(
+      '[SELLER_PACKS][viewmodel-build] hydrated packs=${hydrated.packs.length}',
+    );
     _bindRealtime();
     _schedulePromotionRefresh(hydrated.priceHistory);
     return hydrated;
@@ -325,21 +343,38 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       );
       return;
     }
-
-    if (pack.availableInStore <= 0 || quantity > pack.availableInStore) {
+    if (pack.items.isEmpty) {
       state = AsyncData(
         current.copyWith(
           feedbackMessage:
-              'Solo hay ${pack.availableInStore} packs disponibles en tienda.',
+              'El pack "${pack.name}" no tiene productos cargados. Revisa pack_items en Supabase.',
+        ),
+      );
+      return;
+    }
+
+    final reservedPacks = _cartPackQuantity(current.cartItems, pack.id);
+    final requestedTotal = reservedPacks + quantity;
+    if (pack.availableForSale <= 0 || requestedTotal > pack.availableForSale) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage:
+              'Solo hay ${pack.availableForSale} packs disponibles en tienda.',
         ),
       );
       return;
     }
 
     final next = [...current.cartItems];
+    _addPackLines(next, pack, quantity);
+
+    state = AsyncData(current.copyWith(cartItems: next));
+  }
+
+  void _addPackLines(List<SaleLine> cartItems, Pack pack, int quantity) {
     for (final item in pack.items) {
       _mergeCartLine(
-        next,
+        cartItems,
         SaleLine(
           productId: item.productId,
           productName: '${pack.name} / ${item.productName}',
@@ -351,11 +386,12 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
           packId: pack.id,
           packName: pack.name,
           batchId: item.batchId,
+          packSaleQuantity: quantity,
+          packItemQuantity: item.quantity,
+          stockReservedByPack: true,
         ),
       );
     }
-
-    state = AsyncData(current.copyWith(cartItems: next));
   }
 
   Future<void> updateCartQuantity(String cartKey, int quantity) async {
@@ -371,6 +407,35 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
 
     final existing = next[index];
+    if (existing.packId != null) {
+      final pack = _packById(current, existing.packId!);
+      if (pack == null) {
+        return;
+      }
+      final currentPackQuantity = _cartPackQuantity(next, existing.packId!);
+      final desiredPackQuantity =
+          quantity <= 0
+              ? 0
+              : quantity > existing.quantity
+              ? currentPackQuantity + 1
+              : currentPackQuantity - 1;
+      if (desiredPackQuantity > pack.availableForSale) {
+        state = AsyncData(
+          current.copyWith(
+            feedbackMessage:
+                'Solo hay ${pack.availableForSale} packs disponibles en tienda.',
+          ),
+        );
+        return;
+      }
+      next.removeWhere((item) => item.packId == existing.packId);
+      if (desiredPackQuantity > 0) {
+        _addPackLines(next, pack, desiredPackQuantity);
+      }
+      state = AsyncData(current.copyWith(cartItems: next));
+      return;
+    }
+
     final productId = existing.productId;
     final product = _productById(current, productId);
     if (product == null) {
@@ -455,6 +520,12 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
 
     final existing = next[index];
+    if (existing.packId != null) {
+      next.removeWhere((item) => item.packId == existing.packId);
+      state = AsyncData(current.copyWith(cartItems: next));
+      return;
+    }
+
     final product = _productById(current, existing.productId);
     if (product == null) {
       next.removeAt(index);
@@ -589,6 +660,9 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
 
     for (final item in current.cartItems) {
+      if (item.stockReservedByPack) {
+        continue;
+      }
       final product = _productById(current, item.productId);
       if (product == null) {
         continue;
@@ -729,6 +803,34 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     }
   }
 
+  Future<bool> deletePendingShiftRequest(AppUser user) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return false;
+    }
+
+    final shift = current.currentShift;
+    if (shift == null || !shift.isPendingApproval) {
+      return true;
+    }
+
+    try {
+      await ref
+          .read(salesRepositoryProvider)
+          .deletePendingShiftRequest(sellerId: user.id, shiftId: shift.id);
+      state = AsyncData(current.copyWith(clearCurrentShift: true));
+      return true;
+    } catch (error) {
+      state = AsyncData(
+        current.copyWith(
+          feedbackMessage:
+              'No se pudo eliminar la solicitud de apertura: $error',
+        ),
+      );
+      return false;
+    }
+  }
+
   Future<bool> closeShift(
     AppUser user, {
     required double closingCash,
@@ -798,6 +900,7 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
     final priceHistory =
         await ref.read(catalogRepositoryProvider).getPriceHistory();
     final packs = await ref.read(catalogRepositoryProvider).getPacks();
+    _debugSellerPacks('hydrate', packs);
 
     final effectiveCategoryId =
         catalog.categories.any((category) => category.id == selectedCategoryId)
@@ -969,7 +1072,42 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       packId: current.packId,
       packName: current.packName,
       batchId: current.batchId,
+      packSaleQuantity:
+          current.packId == null
+              ? current.packSaleQuantity
+              : (current.packSaleQuantity ?? 0) +
+                  (incoming.packSaleQuantity ?? 0),
+      packItemQuantity: current.packItemQuantity,
+      stockReservedByPack:
+          current.stockReservedByPack || incoming.stockReservedByPack,
     );
+  }
+
+  int _cartPackQuantity(List<SaleLine> cartItems, String packId) {
+    var quantity = 0;
+    for (final item in cartItems) {
+      if (item.packId != packId) {
+        continue;
+      }
+      final itemPackQuantity =
+          item.packSaleQuantity ??
+          ((item.packItemQuantity ?? 0) <= 0
+              ? 0
+              : item.quantity ~/ item.packItemQuantity!);
+      if (itemPackQuantity > quantity) {
+        quantity = itemPackQuantity;
+      }
+    }
+    return quantity;
+  }
+
+  Pack? _packById(SellerDashboardState state, String packId) {
+    for (final pack in state.packs) {
+      if (pack.id == packId) {
+        return pack;
+      }
+    }
+    return null;
   }
 
   // ignore: unused_element
@@ -1035,9 +1173,11 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
   void _handlePacksUpdate(List<Pack> packs) {
     final current = state.valueOrNull;
     if (current == null) {
+      _debugSellerPacks('realtime-sin-state', packs);
       return;
     }
 
+    _debugSellerPacks('realtime', packs);
     state = AsyncData(current.copyWith(packs: packs));
   }
 
@@ -1161,4 +1301,36 @@ int _icedStockForProduct(Product product) {
 int _normalStockForProduct(Product product) {
   final normalUnits = product.stockStore - _icedStockForProduct(product);
   return normalUnits < 0 ? 0 : normalUnits;
+}
+
+void _debugSellerPacks(String source, List<Pack> packs) {
+  // ignore: avoid_print
+  print('[SELLER_PACKS][$source] total=${packs.length}');
+  for (final pack in packs) {
+    // ignore: avoid_print
+    print(
+      '[SELLER_PACKS][$source] '
+      'id=${pack.id} '
+      'name="${pack.name}" '
+      'status=${pack.status} '
+      'remaining=${pack.packQuantityRemaining} '
+      'total=${pack.packQuantityTotal} '
+      'items=${pack.items.length} '
+      'availableForSale=${pack.availableForSale} '
+      'availableInStore=${pack.availableInStore} '
+      'price=${pack.totalPackPrice}',
+    );
+    for (final item in pack.items) {
+      // ignore: avoid_print
+      print(
+        '[SELLER_PACKS][$source][item] '
+        'pack=${pack.id} '
+        'product=${item.productName} '
+        'quantity=${item.quantity} '
+        'store=${item.storeAvailableUnits} '
+        'price=${item.reducedUnitPrice} '
+        'batch=${item.batchId}',
+      );
+    }
+  }
 }

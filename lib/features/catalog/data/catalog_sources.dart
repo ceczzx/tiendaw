@@ -390,10 +390,13 @@ class CatalogRemoteDataSource {
   }
 
   Future<List<Pack>> getPacks() async {
+    // ignore: avoid_print
+    print('[CATALOG_PACKS][getPacks] start');
     final rows = await _client
         .from('packs')
         .select(
           'id, name, total_pack_price, status, created_by, created_at, '
+          'pack_quantity_total, pack_quantity_remaining, '
           'creator:profiles!packs_created_by_fkey(full_name), '
           'pack_items(id, pack_id, product_id, batch_id, quantity, reduced_unit_price, '
           'product:products!pack_items_product_id_fkey(name), '
@@ -401,6 +404,20 @@ class CatalogRemoteDataSource {
         )
         .order('created_at', ascending: false);
     final mappedRows = _mapRows(rows);
+    // ignore: avoid_print
+    print('[CATALOG_PACKS][getPacks] rows=${mappedRows.length}');
+    for (final row in mappedRows) {
+      // ignore: avoid_print
+      print(
+        "[CATALOG_PACKS][row] "
+        "id=${row['id']} "
+        "name=\"${row['name']}\" "
+        "status=${row['status']} "
+        "remaining=${row['pack_quantity_remaining']} "
+        "total=${row['pack_quantity_total']} "
+        "items=${((row['pack_items'] as List?) ?? const []).length}",
+      );
+    }
     final productIds = <String>{};
     for (final row in mappedRows) {
       for (final item in (row['pack_items'] as List?) ?? const []) {
@@ -414,7 +431,7 @@ class CatalogRemoteDataSource {
     );
     final stockByBatch = await _loadBatchStockSummaries();
 
-    return mappedRows.map((row) {
+    final packs = mappedRows.map((row) {
       final creator = _mapNullable(row['creator']);
       final items =
           ((row['pack_items'] as List?) ?? const [])
@@ -453,12 +470,19 @@ class CatalogRemoteDataSource {
         id: row['id'] as String,
         name: row['name']?.toString() ?? 'Pack',
         totalPackPrice: (row['total_pack_price'] as num?)?.toDouble() ?? 0,
+        packQuantityTotal:
+            (row['pack_quantity_total'] as num?)?.toInt() ?? 0,
+        packQuantityRemaining:
+            (row['pack_quantity_remaining'] as num?)?.toInt() ?? 0,
         status: row['status']?.toString() ?? 'active',
         createdBy: creator['full_name']?.toString() ?? 'Admin',
         createdAt: _parseSupabaseDateTime(row['created_at'] as String),
         items: List<PackItem>.unmodifiable(items),
       );
     }).toList();
+    // ignore: avoid_print
+    print('[CATALOG_PACKS][getPacks] mapped=${packs.length}');
+    return packs;
   }
 
   Stream<List<Pack>> watchPacks() {
@@ -485,6 +509,7 @@ class CatalogRemoteDataSource {
 
   Future<Pack> createPack({
     required String name,
+    required int packQuantity,
     required List<PackDraftItem> items,
   }) async {
     final normalizedName = name.trim();
@@ -494,6 +519,9 @@ class CatalogRemoteDataSource {
     final uniqueProductIds = items.map((item) => item.productId).toSet();
     if (uniqueProductIds.length < 2) {
       throw StateError('El pack debe tener al menos dos productos distintos.');
+    }
+    if (packQuantity <= 0) {
+      throw StateError('La cantidad de packs debe ser mayor a cero.');
     }
     if (items.any((item) => item.quantity <= 0)) {
       throw StateError('Cada producto del pack debe tener cantidad valida.');
@@ -505,9 +533,10 @@ class CatalogRemoteDataSource {
       final stock =
           (await _loadBatchStockSummaries())[item.batchId] ??
           _BatchStockSummary();
-      if (stock.storeUnits < item.quantity) {
+      final requiredUnits = item.quantity * packQuantity;
+      if (stock.storeUnits < requiredUnits) {
         throw StateError(
-          'El lote de ${item.productName} solo tiene ${stock.storeUnits} unidades en tienda.',
+          'El lote de ${item.productName} solo tiene ${stock.storeUnits} unidades en tienda y necesitas $requiredUnits.',
         );
       }
     }
@@ -522,6 +551,8 @@ class CatalogRemoteDataSource {
             .insert({
               'name': normalizedName,
               'total_pack_price': totalPackPrice,
+              'pack_quantity_total': packQuantity,
+              'pack_quantity_remaining': packQuantity,
               'created_by': _currentUserId(),
             })
             .select('id')

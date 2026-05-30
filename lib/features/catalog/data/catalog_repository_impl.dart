@@ -579,8 +579,13 @@ class CatalogRepositoryImpl implements CatalogRepository {
   @override
   Future<Pack> createPack({
     required String name,
+    required int packQuantity,
     required List<PackDraftItem> items,
   }) {
-    return _remote.createPack(name: name, items: items);
+    return _remote.createPack(
+      name: name,
+      packQuantity: packQuantity,
+      items: items,
+    );
   }
 }

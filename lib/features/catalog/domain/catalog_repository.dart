@@ -109,6 +109,7 @@ abstract class CatalogRepository {
   });
   Future<Pack> createPack({
     required String name,
+    required int packQuantity,
     required List<PackDraftItem> items,
   });
 }

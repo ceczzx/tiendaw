@@ -69,17 +69,22 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                       (product) => product.name.toLowerCase().contains(query),
                     )
                     .toList();
+        final availablePacks =
+            state.packs.where((pack) => pack.availableForSale > 0).toList();
+        _debugSellerPacksView(
+          hasOpenShift: state.hasOpenShift,
+          packs: state.packs,
+          availablePacks: availablePacks,
+        );
 
         if (state.hasPendingShiftApproval) {
           return _PendingShiftApprovalView(
             currentUser: currentUser,
             currentShift: state.currentShift,
             onSignOut:
-                _isActionInProgress
+                currentUser == null || _isActionInProgress
                     ? null
-                    : () {
-                      _signOut();
-                    },
+                    : () => _signOutWithPendingShiftCleanup(currentUser),
           );
         }
 
@@ -512,41 +517,50 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                         !state.hasOpenShift
                             ? const EmptyStateCard(
                               title: 'Caja pendiente',
-                              caption:
-                                  'Inicia caja para poder vender packs.',
+                              caption: 'Inicia caja para poder vender packs.',
                             )
-                            : state.packs
-                                .where((pack) => pack.availableInStore > 0)
-                                .isEmpty
+                            : availablePacks.isEmpty
                             ? const EmptyStateCard(
                               title: 'Sin packs disponibles',
                               caption:
                                   'Cuando admin cree packs con stock de tienda apareceran aqui.',
                             )
-                            : Column(
-                              children:
-                                  state.packs
-                                      .where(
-                                        (pack) => pack.availableInStore > 0,
-                                      )
-                                      .map(
-                                        (pack) => Padding(
-                                          padding: const EdgeInsets.only(
-                                            bottom: 12,
-                                          ),
-                                          child: _PackSaleCard(
-                                            pack: pack,
-                                            onAdd:
-                                                () => ref
-                                                    .read(
-                                                      sellerDashboardViewModelProvider
-                                                          .notifier,
-                                                    )
-                                                    .addPackToCart(pack, 1),
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
+                            : LayoutBuilder(
+                              builder: (context, constraints) {
+                                final width = constraints.maxWidth;
+                                final crossAxisCount =
+                                    width < 420
+                                        ? 2
+                                        : width < 720
+                                        ? 3
+                                        : 4;
+
+                                return GridView.builder(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  itemCount: availablePacks.length,
+                                  gridDelegate:
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: crossAxisCount,
+                                        crossAxisSpacing: 12,
+                                        mainAxisSpacing: 12,
+                                        childAspectRatio: 0.82,
+                                      ),
+                                  itemBuilder: (context, index) {
+                                    final pack = availablePacks[index];
+                                    return _PackSaleCard(
+                                      pack: pack,
+                                      onAdd:
+                                          () => ref
+                                              .read(
+                                                sellerDashboardViewModelProvider
+                                                    .notifier,
+                                              )
+                                              .addPackToCart(pack, 1),
+                                    );
+                                  },
+                                );
+                              },
                             ),
                   ),
                   const SizedBox(height: 16),
@@ -637,11 +651,16 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
           ],
         );
       },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error:
-          (_, _) => const Center(
-            child: Text('No pudimos cargar ventas en este momento.'),
-          ),
+      loading: () {
+        // ignore: avoid_print
+        return const Center(child: CircularProgressIndicator());
+      },
+      error: (error, stackTrace) {
+        // ignore: avoid_print
+        return const Center(
+          child: Text('No pudimos cargar ventas en este momento.'),
+        );
+      },
     );
   }
 
@@ -692,6 +711,10 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
       return;
     }
     if (nextState.hasPendingShiftApproval || nextState.hasShiftRequest) {
+      _initialShiftPromptHandled = true;
+      return;
+    }
+    if (nextState.hasRejectedShiftRequest) {
       _initialShiftPromptHandled = true;
       return;
     }
@@ -1127,6 +1150,23 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
     await _signOut();
   }
 
+  Future<void> _signOutWithPendingShiftCleanup(AppUser user) async {
+    if (_isActionInProgress) {
+      return;
+    }
+
+    setState(() => _isActionInProgress = true);
+    final success = await ref
+        .read(sellerDashboardViewModelProvider.notifier)
+        .deletePendingShiftRequest(user);
+    if (!success) {
+      _releaseActionLockIfNoFeedback();
+      return;
+    }
+
+    await _signOut();
+  }
+
   Future<void> _signOut() async {
     await ref.read(sessionViewModelProvider.notifier).signOut();
   }
@@ -1521,6 +1561,37 @@ class _PendingShiftApprovalView extends StatelessWidget {
   final CashShift? currentShift;
   final VoidCallback? onSignOut;
 
+  Future<void> _confirmSignOut(BuildContext context) async {
+    if (onSignOut == null) {
+      return;
+    }
+
+    final shouldSignOut = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Cerrar sesion'),
+            content: const Text(
+              'Si cierras sesion, la solicitud de apertura se borrara y tendras que enviarla otra vez.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Cerrar sesion'),
+              ),
+            ],
+          ),
+    );
+
+    if (shouldSignOut == true) {
+      onSignOut!();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1537,7 +1608,7 @@ class _PendingShiftApprovalView extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Vendedora: ${currentUser?.name ?? 'Usuario'}',
+                    'Vendedor(a): ${currentUser?.name ?? 'Usuario'}',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 12),
@@ -1565,7 +1636,10 @@ class _PendingShiftApprovalView extends StatelessWidget {
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: onSignOut,
+                      onPressed:
+                          onSignOut == null
+                              ? null
+                              : () => _confirmSignOut(context),
                       icon: const Icon(Icons.logout_rounded),
                       label: const Text('Cerrar sesion'),
                     ),
@@ -1756,51 +1830,73 @@ class _PackSaleCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(pack.name, style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 6),
-          Text(
-            '${pack.items.length} productos | ${pack.availableInStore} packs en tienda',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
-          const SizedBox(height: 6),
-          Text(
-            pack.items
-                .map((item) => '${item.productName} x${item.quantity}')
-                .join(' | '),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  SystemWFormatters.currency.format(pack.totalPackPrice),
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    color: const Color(0xFF0F766E),
-                  ),
-                ),
-              ),
-              FilledButton.icon(
+    final itemsLabel = pack.items
+        .map(
+          (item) =>
+              '${item.productName} ${SystemWFormatters.currency.format(item.reducedUnitPrice)}',
+        )
+        .join(' | ');
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onAdd,
+      child: Ink(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFAFAF9),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              pack.name,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${pack.items.length} productos | ${pack.availableForSale} disp.',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6B7280)),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              itemsLabel,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: const Color(0xFF6B7280)),
+            ),
+            const Spacer(),
+            Text(
+              SystemWFormatters.currency.format(pack.totalPackPrice),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(color: const Color(0xFF0F766E)),
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
                 onPressed: onAdd,
-                icon: const Icon(Icons.add_shopping_cart_rounded),
-                label: const Text('Anadir'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0F766E),
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Anadir'),
               ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2135,3 +2231,9 @@ int _normalStockForProduct(Product product) {
   final normalUnits = product.stockStore - _icedStockForProduct(product);
   return normalUnits < 0 ? 0 : normalUnits;
 }
+
+void _debugSellerPacksView({
+  required bool hasOpenShift,
+  required List<Pack> packs,
+  required List<Pack> availablePacks,
+}) {}

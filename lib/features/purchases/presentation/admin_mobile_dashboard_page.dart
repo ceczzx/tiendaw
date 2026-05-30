@@ -63,6 +63,7 @@ typedef _MovementCartSubmit = Future<bool> Function();
 typedef _PackSubmit =
     Future<bool> Function({
       required String name,
+      required int packQuantity,
       required List<PackDraftItem> items,
     });
 
@@ -181,6 +182,21 @@ class _AdminMobileDashboardPageState
         onOpenMovements: () {
           setState(() {
             _activeSection = _AdminMobileSection.movements;
+          });
+        },
+        onOpenPromotions: () {
+          setState(() {
+            _activeSection = _AdminMobileSection.promotions;
+          });
+        },
+        onOpenPacks: () {
+          setState(() {
+            _activeSection = _AdminMobileSection.packs;
+          });
+        },
+        onOpenLosses: () {
+          setState(() {
+            _activeSection = _AdminMobileSection.losses;
           });
         },
       ),
@@ -374,6 +390,7 @@ class _AdminMobileDashboardPageState
 
   Future<bool> _handleCreatePack({
     required String name,
+    required int packQuantity,
     required List<PackDraftItem> items,
   }) async {
     if (_isActionInProgress) {
@@ -385,7 +402,7 @@ class _AdminMobileDashboardPageState
     });
     return ref
         .read(adminMobileDashboardViewModelProvider.notifier)
-        .createPack(name: name, items: items);
+        .createPack(name: name, packQuantity: packQuantity, items: items);
   }
 
   Future<bool> _handleRegisterLoss({
@@ -562,12 +579,18 @@ class _HomeSection extends StatefulWidget {
     required this.onOpenPurchaseComposer,
     required this.onOpenSuppliers,
     required this.onOpenMovements,
+    required this.onOpenPromotions,
+    required this.onOpenPacks,
+    required this.onOpenLosses,
   });
 
   final AdminMobileDashboardState state;
   final VoidCallback onOpenPurchaseComposer;
   final VoidCallback onOpenSuppliers;
   final VoidCallback onOpenMovements;
+  final VoidCallback onOpenPromotions;
+  final VoidCallback onOpenPacks;
+  final VoidCallback onOpenLosses;
 
   @override
   State<_HomeSection> createState() => _HomeSectionState();
@@ -649,6 +672,21 @@ class _HomeSectionState extends State<_HomeSection> {
                       onPressed: widget.onOpenMovements,
                       icon: const Icon(Icons.swap_horiz_rounded),
                       label: const Text('Mover stock'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: widget.onOpenPromotions,
+                      icon: const Icon(Icons.local_offer_rounded),
+                      label: const Text('Promociones'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: widget.onOpenPacks,
+                      icon: const Icon(Icons.inventory_rounded),
+                      label: const Text('Packs'),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: widget.onOpenLosses,
+                      icon: const Icon(Icons.inventory_2_rounded),
+                      label: const Text('Perdidas'),
                     ),
                   ],
                 ),
@@ -758,8 +796,8 @@ class _NotificationsSection extends StatelessWidget {
         state.cashShifts
             .where(
               (shift) =>
-                  shift.status == CashShiftStatus.approved ||
-                  shift.status == CashShiftStatus.rejected,
+                  shift.status == CashShiftStatus.rejected ||
+                  shift.approvedAt != null,
             )
             .take(5)
             .toList();
@@ -1033,7 +1071,7 @@ class _PacksSection extends ConsumerStatefulWidget {
 
 class _PacksSectionState extends ConsumerState<_PacksSection> {
   final _nameController = TextEditingController();
-  final _quantityController = TextEditingController(text: '1');
+  final _packCountController = TextEditingController(text: '1');
   final _priceController = TextEditingController();
   final List<PackDraftItem> _draftItems = [];
   String? _selectedProductId;
@@ -1043,14 +1081,15 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
   @override
   void dispose() {
     _nameController.dispose();
-    _quantityController.dispose();
+    _packCountController.dispose();
     _priceController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final products = widget.state.products.where((p) => p.stockStore > 0).toList();
+    final products =
+        widget.state.products.where((p) => p.stockStore > 0).toList();
     final selectedProduct = _productById(products, _selectedProductId);
     final lotsAsync =
         selectedProduct == null
@@ -1067,13 +1106,30 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
       (sum, item) => sum + item.totalCost,
     );
     final profit = totalPrice - totalCost;
+    final packCount = int.tryParse(_packCountController.text.trim()) ?? 1;
+    final totalBatchPrice = totalPrice * packCount;
+    final totalBatchCost = totalCost * packCount;
+    final totalBatchProfit = profit * packCount;
+    final distinctProductCount =
+        _draftItems.map((item) => item.productId).toSet().length;
+    final maxCreatablePacks = _maxCreatablePacks();
+    final exceedsAvailableStock =
+        maxCreatablePacks != null && packCount > maxCreatablePacks;
+    final totalProductsToUse = _draftItems.length * packCount;
+    final visiblePacks =
+        widget.state.packs.where((pack) => pack.status != 'cancelled').toList();
     final statusColor =
         profit > 0
             ? const Color(0xFF047857)
             : profit == 0
             ? const Color(0xFFB45309)
             : const Color(0xFFB91C1C);
-    final statusLabel = profit > 0 ? 'Ganancia' : profit == 0 ? 'Neutral' : 'Perdida';
+    final statusLabel =
+        profit > 0
+            ? 'Ganancia'
+            : profit == 0
+            ? 'Neutral'
+            : 'Perdida';
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -1083,19 +1139,21 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
           const _MobileSectionHeading(
             title: 'Packs',
             subtitle:
-                'Arma packs con dos o mas productos, seleccionando estrictamente el lote de tienda para cada linea.',
+                'Arma packs con dos o mas productos de tienda, seleccionando estrictamente el lote para cada linea.',
           ),
           const SizedBox(height: 16),
           SectionCard(
             title: 'Crear pack',
             subtitle:
-                'Selecciona producto, lote, cantidad y precio minimo por unidad.',
+                'Selecciona cada producto de tienda y define el precio que tendra dentro del pack.',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 TextField(
                   controller: _nameController,
-                  decoration: const InputDecoration(labelText: 'Nombre del pack'),
+                  decoration: const InputDecoration(
+                    labelText: 'Nombre del pack',
+                  ),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
@@ -1125,13 +1183,17 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
                     : DropdownButtonFormField<String>(
                       value: selectedLot?.purchaseItemId,
                       isExpanded: true,
-                      decoration: const InputDecoration(labelText: 'Lote de tienda'),
+                      decoration: const InputDecoration(
+                        labelText: 'Lote de tienda',
+                      ),
                       items:
                           lots
                               .map(
                                 (lot) => DropdownMenuItem(
                                   value: lot.purchaseItemId,
-                                  child: Text(_packLotLabel(selectedProduct, lot)),
+                                  child: Text(
+                                    _packLotLabel(selectedProduct, lot),
+                                  ),
                                 ),
                               )
                               .toList(),
@@ -1143,9 +1205,9 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
                                 setState(() {
                                   _selectedBatchId = value;
                                   _priceController.text =
-                                      (selectedProduct.promotionalPrice ??
-                                              selectedProduct.salePrice)
-                                          .toStringAsFixed(2);
+                                      selectedProduct.salePrice.toStringAsFixed(
+                                        2,
+                                      );
                                   if (lot != null && lot.availableUnits <= 0) {
                                     _errorMessage = 'El lote no tiene stock.';
                                   }
@@ -1156,44 +1218,44 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
                   const SizedBox(height: 12),
                   _InfoLine(
                     label: 'Costo unitario',
-                    value: SystemWFormatters.currency.format(selectedLot.unitCost),
+                    value: SystemWFormatters.currency.format(
+                      selectedLot.unitCost,
+                    ),
                   ),
                   _InfoLine(
                     label: 'Precio venta',
-                    value: SystemWFormatters.currency.format(selectedProduct.salePrice),
+                    value: SystemWFormatters.currency.format(
+                      selectedProduct.salePrice,
+                    ),
                   ),
                   _InfoLine(
                     label: 'FV',
                     value:
                         selectedLot.expiryDate == null
                             ? 'Sin FV'
-                            : SystemWFormatters.shortDate.format(selectedLot.expiryDate!),
+                            : SystemWFormatters.shortDate.format(
+                              selectedLot.expiryDate!,
+                            ),
                   ),
-                  _InfoLine(label: 'Disponible tienda', value: '${selectedLot.availableUnits} u.'),
+                  _InfoLine(
+                    label: 'Disponible tienda',
+                    value: '${selectedLot.availableUnits} u.',
+                  ),
                 ],
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _quantityController,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                        decoration: const InputDecoration(labelText: 'Cantidad'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: _priceController,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d{0,2}')),
-                        ],
-                        decoration: const InputDecoration(labelText: 'Precio minimo'),
-                      ),
+                TextField(
+                  controller: _priceController,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.allow(
+                      RegExp(r'^\d*\.?\d{0,2}'),
                     ),
                   ],
+                  decoration: const InputDecoration(
+                    labelText: 'Precio de este producto en el pack',
+                  ),
                 ),
                 if (_errorMessage != null) ...[
                   const SizedBox(height: 8),
@@ -1211,7 +1273,7 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
                           ? null
                           : () => _addDraftItem(selectedProduct, selectedLot),
                   icon: const Icon(Icons.add_rounded),
-                  label: const Text('Agregar producto'),
+                  label: const Text('Agregar al pack'),
                 ),
               ],
             ),
@@ -1220,7 +1282,7 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
           SectionCard(
             title: 'Resumen del pack',
             subtitle:
-                'El precio final se calcula con los precios minimos ingresados.',
+                'El precio final se calcula con los precios elegidos para cada producto.',
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1230,14 +1292,22 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
                       caption: 'Agrega al menos dos productos distintos.',
                     )
                     : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children:
                           _draftItems.asMap().entries.map((entry) {
                             final item = entry.value;
+                            final requiredUnits = item.quantity * packCount;
+                            final lineProfit =
+                                item.totalReducedPrice - item.totalCost;
                             return ListTile(
                               contentPadding: EdgeInsets.zero,
-                              title: Text(item.productName),
+                              title: Text(
+                                '${entry.key + 1}. ${item.productName}',
+                              ),
                               subtitle: Text(
-                                'x${item.quantity} | ${SystemWFormatters.currency.format(item.reducedUnitPrice)} c/u | FV ${item.expiryDate == null ? 'Sin FV' : SystemWFormatters.shortDate.format(item.expiryDate!)}',
+                                '1 unidad por pack | Para $packCount packs: $requiredUnits/${item.storeAvailableUnits} u.\n'
+                                'Costo unitario ${SystemWFormatters.currency.format(item.unitCost)} | Precio venta ${SystemWFormatters.currency.format(item.salePrice)} | Precio elegido ${SystemWFormatters.currency.format(item.reducedUnitPrice)}\n'
+                                'Subtotal ${SystemWFormatters.currency.format(item.totalReducedPrice)} | Margen ${SystemWFormatters.currency.format(lineProfit)} | FV ${item.expiryDate == null ? 'Sin FV' : SystemWFormatters.shortDate.format(item.expiryDate!)}',
                               ),
                               trailing: IconButton(
                                 onPressed:
@@ -1250,11 +1320,72 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
                           }).toList(),
                     ),
                 const Divider(height: 24),
-                _InfoLine(label: 'Costo', value: SystemWFormatters.currency.format(totalCost)),
-                _InfoLine(label: 'Precio pack', value: SystemWFormatters.currency.format(totalPrice)),
                 _InfoLine(
-                  label: statusLabel,
+                  label: 'Productos distintos',
+                  value: '$distinctProductCount',
+                ),
+                _InfoLine(
+                  label: 'Maximo por stock',
+                  value:
+                      maxCreatablePacks == null
+                          ? '-'
+                          : '$maxCreatablePacks packs',
+                ),
+                if (exceedsAvailableStock) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'No se puede crear $packCount packs con el stock elegido. Maximo permitido: $maxCreatablePacks.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFFB91C1C),
+                    ),
+                  ),
+                ],
+                _InfoLine(
+                  label: 'Costo por pack',
+                  value: SystemWFormatters.currency.format(totalCost),
+                ),
+                _InfoLine(
+                  label: 'Precio por pack',
+                  value: SystemWFormatters.currency.format(totalPrice),
+                ),
+                _InfoLine(
+                  label: '$statusLabel por pack',
                   value: SystemWFormatters.currency.format(profit),
+                  isStrong: true,
+                ),
+                _InfoLine(
+                  label: 'Productos por pack',
+                  value: '${_draftItems.length}',
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _packCountController,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: const InputDecoration(
+                    labelText: 'Cantidad de packs a crear',
+                    helperText:
+                        'Esta cantidad se descuenta hasta quedar agotada.',
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+                const SizedBox(height: 12),
+                _InfoLine(
+                  label: 'Productos totales a usar',
+                  value: '$totalProductsToUse',
+                  isStrong: true,
+                ),
+                _InfoLine(
+                  label: 'Venta total esperada',
+                  value: SystemWFormatters.currency.format(totalBatchPrice),
+                ),
+                _InfoLine(
+                  label: 'Costo total',
+                  value: SystemWFormatters.currency.format(totalBatchCost),
+                ),
+                _InfoLine(
+                  label: '$statusLabel total',
+                  value: SystemWFormatters.currency.format(totalBatchProfit),
                   isStrong: true,
                 ),
                 const SizedBox(height: 8),
@@ -1266,6 +1397,15 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
                   color: statusColor,
                   backgroundColor: statusColor.withAlpha(40),
                 ),
+                if (_errorMessage != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _errorMessage!,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFFB91C1C),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 16),
                 SizedBox(
                   width: double.infinity,
@@ -1281,28 +1421,21 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
           const SizedBox(height: 16),
           SectionCard(
             title: 'Packs activos',
-            subtitle: 'Stock disponible solo en tienda y margen actual.',
+            subtitle:
+                'Cantidad disponible en tienda, restantes y detalle por producto.',
             child:
-                widget.state.packs.isEmpty
+                visiblePacks.isEmpty
                     ? const EmptyStateCard(
                       title: 'Sin packs registrados',
                       caption: 'Los packs creados apareceran aqui.',
                     )
                     : Column(
                       children:
-                          widget.state.packs.map((pack) {
-                            return ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              title: Text(pack.name),
-                              subtitle: Text(
-                                '${pack.items.length} productos | tienda ${pack.availableInStore} packs',
-                              ),
-                              trailing: Text(
-                                '${SystemWFormatters.currency.format(pack.totalPackPrice)}\n${SystemWFormatters.currency.format(pack.margin)}',
-                                textAlign: TextAlign.right,
-                              ),
-                            );
-                          }).toList(),
+                          visiblePacks
+                              .map(
+                                (pack) => _ActivePackTile(pack: pack),
+                              )
+                              .toList(),
                     ),
           ),
         ],
@@ -1311,36 +1444,43 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
   }
 
   void _addDraftItem(Product product, WarehouseSupplierLot lot) {
-    final quantity = int.tryParse(_quantityController.text.trim()) ?? 0;
     final price = double.tryParse(_priceController.text.trim()) ?? 0;
-    if (quantity <= 0 || quantity > lot.availableUnits) {
+    final existingIndex = _draftItems.indexWhere(
+      (item) => item.productId == product.id,
+    );
+    if (existingIndex != -1) {
       setState(() {
-        _errorMessage = 'La cantidad debe estar entre 1 y ${lot.availableUnits}.';
+        _errorMessage =
+            '${product.name} ya esta en el pack. Quitalo del resumen si quieres cambiar el lote o precio.';
+      });
+      return;
+    }
+    if (lot.availableUnits <= 0) {
+      setState(() {
+        _errorMessage = 'El lote seleccionado no tiene stock en tienda.';
       });
       return;
     }
     if (price <= 0) {
       setState(() {
-        _errorMessage = 'Ingresa un precio minimo valido.';
+        _errorMessage = 'Ingresa un precio valido para este producto.';
       });
       return;
     }
 
     setState(() {
-      _draftItems.add(
-        PackDraftItem(
-          productId: product.id,
-          productName: product.name,
-          batchId: lot.purchaseItemId,
-          quantity: quantity,
-          reducedUnitPrice: price,
-          unitCost: lot.unitCost,
-          salePrice: product.salePrice,
-          storeAvailableUnits: lot.availableUnits,
-          expiryDate: lot.expiryDate,
-        ),
+      final draftItem = PackDraftItem(
+        productId: product.id,
+        productName: product.name,
+        batchId: lot.purchaseItemId,
+        quantity: 1,
+        reducedUnitPrice: price,
+        unitCost: lot.unitCost,
+        salePrice: product.salePrice,
+        storeAvailableUnits: lot.availableUnits,
+        expiryDate: lot.expiryDate,
       );
-      _quantityController.text = '1';
+      _draftItems.add(draftItem);
       _priceController.clear();
       _selectedBatchId = null;
       _errorMessage = null;
@@ -1348,6 +1488,12 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
   }
 
   Future<void> _submitPack() async {
+    if (_nameController.text.trim().isEmpty) {
+      setState(() {
+        _errorMessage = 'Ingresa el nombre del pack.';
+      });
+      return;
+    }
     final distinctProducts = _draftItems.map((item) => item.productId).toSet();
     if (distinctProducts.length < 2) {
       setState(() {
@@ -1355,8 +1501,26 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
       });
       return;
     }
+    final packQuantity = int.tryParse(_packCountController.text.trim()) ?? 0;
+    if (packQuantity <= 0) {
+      setState(() {
+        _errorMessage = 'Ingresa cuantos packs habra disponibles.';
+      });
+      return;
+    }
+    for (final item in _draftItems) {
+      final requiredUnits = item.quantity * packQuantity;
+      if (requiredUnits > item.storeAvailableUnits) {
+        setState(() {
+          _errorMessage =
+              'No se puede crear $packQuantity packs: ${item.productName} necesita $requiredUnits unidades y solo hay ${item.storeAvailableUnits} en tienda.';
+        });
+        return;
+      }
+    }
     final success = await widget.onCreatePack(
       name: _nameController.text.trim(),
+      packQuantity: packQuantity,
       items: List<PackDraftItem>.unmodifiable(_draftItems),
     );
     if (!success || !mounted) {
@@ -1364,9 +1528,127 @@ class _PacksSectionState extends ConsumerState<_PacksSection> {
     }
     setState(() {
       _nameController.clear();
+      _packCountController.text = '1';
       _draftItems.clear();
       _errorMessage = null;
     });
+  }
+
+  int? _maxCreatablePacks() {
+    if (_draftItems.isEmpty) {
+      return null;
+    }
+
+    int? maxPacks;
+    for (final item in _draftItems) {
+      if (item.quantity <= 0) {
+        return 0;
+      }
+      final available = item.storeAvailableUnits ~/ item.quantity;
+      if (maxPacks == null || available < maxPacks) {
+        maxPacks = available;
+      }
+    }
+    return maxPacks;
+  }
+}
+
+class _ActivePackTile extends StatelessWidget {
+  const _ActivePackTile({required this.pack});
+
+  final Pack pack;
+
+  @override
+  Widget build(BuildContext context) {
+    final isAvailable = pack.availableForSale > 0;
+    final quantityColor =
+        isAvailable ? const Color(0xFF047857) : const Color(0xFF64748B);
+    final detail = pack.items
+        .map(
+          (item) =>
+              '${item.productName} x${item.quantity} | '
+              'costo ${SystemWFormatters.currency.format(item.unitCost)} | '
+              'venta ${SystemWFormatters.currency.format(item.salePrice)} | '
+              'pack ${SystemWFormatters.currency.format(item.reducedUnitPrice)} | '
+              'FV ${item.expiryDate == null ? 'Sin FV' : SystemWFormatters.shortDate.format(item.expiryDate!)}',
+        )
+        .join('\n');
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE5E7EB)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    pack.name,
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  SystemWFormatters.currency.format(pack.totalPackPrice),
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    color: const Color(0xFF0F766E),
+                  ),
+                  textAlign: TextAlign.right,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                StatusPill(
+                  label: _packStatusLabel(pack),
+                  background:
+                      isAvailable
+                          ? const Color(0xFFECFDF5)
+                          : const Color(0xFFF1F5F9),
+                  foreground: quantityColor,
+                ),
+                StatusPill(
+                  label: '${pack.availableForSale} disponibles',
+                  background: const Color(0xFFEFF6FF),
+                  foreground: const Color(0xFF1D4ED8),
+                ),
+                StatusPill(
+                  label:
+                      '${pack.packQuantityRemaining}/${pack.packQuantityTotal} restantes',
+                  background: const Color(0xFFFFF7ED),
+                  foreground: const Color(0xFFC2410C),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              detail,
+              maxLines: 6,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            _InfoLine(
+              label: 'Margen por pack',
+              value: SystemWFormatters.currency.format(pack.margin),
+              isStrong: true,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -4756,11 +5038,6 @@ class _MovementsSectionState extends ConsumerState<_MovementsSection> {
                                   movement.occurredAt,
                                 ),
                               ),
-                              if ((movement.notes ?? '').trim().isNotEmpty)
-                                _InfoLine(
-                                  label: 'Notas',
-                                  value: movement.notes!.trim(),
-                                ),
                             ],
                           ),
                         );
@@ -7500,6 +7777,16 @@ String _packLotLabel(Product? product, WarehouseSupplierLot lot) {
           ? 'Sin FV'
           : 'FV ${SystemWFormatters.shortDate.format(lot.expiryDate!)}';
   return '${lot.supplierName} | ${lot.availableUnits} u. | Costo ${SystemWFormatters.currency.format(lot.unitCost)} | Venta ${SystemWFormatters.currency.format(salePrice)} | $expiry';
+}
+
+String _packStatusLabel(Pack pack) {
+  if (pack.status == 'cancelled') {
+    return 'Cancelado';
+  }
+  if (pack.status == 'exhausted' || pack.availableForSale <= 0) {
+    return 'Agotado';
+  }
+  return 'Activo';
 }
 
 String _promotionRecommendationLabel({

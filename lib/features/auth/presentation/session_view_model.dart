@@ -72,16 +72,8 @@ class SessionViewModel extends AsyncNotifier<SessionState> {
       'No pudimos conectarnos a internet. Revisa tu conexion e intenta nuevamente.';
   static const _invalidCredentialsMessage =
       'Correo o contrasena incorrectos. Verifica tus datos e intenta otra vez.';
-
-  // Invitation link deshabilitado temporalmente.
-  // static const _inviteCompletedMessage =
-  //     'Tu cuenta ya quedo activada. Inicia sesion con tu correo y tu nueva contrasena.';
-
   StreamSubscription<AuthState>? _authSubscription;
   bool _isSigningOut = false;
-  // Invitation link deshabilitado temporalmente.
-  // StreamSubscription<Uri>? _inviteLinkSubscription;
-  // bool _pendingInviteSuccessMessage = false;
 
   @override
   Future<SessionState> build() async {
@@ -107,12 +99,6 @@ class SessionViewModel extends AsyncNotifier<SessionState> {
       return SessionState(errorMessage: _normalizeError(error));
     }
   }
-
-  // Invitation link deshabilitado temporalmente.
-  // void _initializeInviteLinkHandling() {
-  //   _listenToAuthStateChanges();
-  //   _listenToInviteLinks();
-  // }
 
   Future<void> signIn({required String email, required String password}) async {
     final current = state.valueOrNull ?? const SessionState();
@@ -195,10 +181,6 @@ class SessionViewModel extends AsyncNotifier<SessionState> {
         });
     ref.onDispose(() => _authSubscription?.cancel());
   }
-
-  // Invitation link deshabilitado temporalmente.
-  // void _listenToInviteLinks() { ... }
-  // Future<void> _consumeInviteLink(Uri uri) async { ... }
 
   Future<void> _handleAuthStateChange(AuthState authState) async {
     final current = state.valueOrNull ?? const SessionState();
@@ -309,16 +291,6 @@ class SessionViewModel extends AsyncNotifier<SessionState> {
         event == AuthChangeEvent.passwordRecovery;
   }
 
-  // Invitation link deshabilitado temporalmente.
-  // bool _hasPendingInvitePasswordSetup() {
-  //   return ref.read(authRepositoryProvider).hasPendingInvitePasswordSetup();
-  // }
-
-  // bool _hasInviteSession() {
-  //   final auth = ref.read(supabaseClientProvider).auth;
-  //   return auth.currentSession != null;
-  // }
-
   String _normalizeError(Object error) {
     if (_isInvalidCredentialsError(error)) {
       return _invalidCredentialsMessage;
@@ -412,7 +384,8 @@ class SessionViewModel extends AsyncNotifier<SessionState> {
 
   AppUser? _buildFallbackUserFromSession([User? preferredUser]) {
     final auth = ref.read(supabaseClientProvider).auth;
-    final authUser = preferredUser ?? auth.currentUser ?? auth.currentSession?.user;
+    final authUser =
+        preferredUser ?? auth.currentUser ?? auth.currentSession?.user;
     if (authUser == null) {
       return null;
     }

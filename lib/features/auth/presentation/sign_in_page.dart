@@ -78,7 +78,7 @@ class _SignInPageState extends ConsumerState<SignInPage> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Ingresa tu DNI y contrasena para entrar con tu cuenta de Supabase Auth.',
+                        'Ingresa tu DNI y contrasena para entrar.',
                         style: theme.textTheme.bodyLarge,
                       ),
                       const SizedBox(height: 20),
@@ -163,10 +163,6 @@ class _SignInPageState extends ConsumerState<SignInPage> {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      Text(
-                        'Tip: si el usuario existe en Auth pero aun no tiene perfil, la app creara su fila en public.profiles con el rol seller por defecto.',
-                        style: theme.textTheme.bodyMedium,
-                      ),
                     ],
                   ),
                 ),

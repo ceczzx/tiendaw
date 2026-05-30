@@ -118,8 +118,16 @@ class _SalesSectionState extends State<_SalesSection> {
     final categoryById = {
       for (final category in state.categories) category.id: category.name,
     };
-    final visibleShiftIds =
-        state.filteredCashShifts.map((shift) => shift.id).toSet();
+    final rejectedCashShifts =
+        state.filteredCashShifts
+            .where((shift) => shift.status == CashShiftStatus.rejected)
+            .toList();
+    final visibleCashShifts =
+        state.filteredCashShifts
+            .where((shift) => shift.status != CashShiftStatus.rejected)
+            .toList();
+    final rejectedSummaries = _buildRejectedShiftSummaries(rejectedCashShifts);
+    final visibleShiftIds = visibleCashShifts.map((shift) => shift.id).toSet();
     final activeShiftId =
         _selectedShiftId != null && visibleShiftIds.contains(_selectedShiftId)
             ? _selectedShiftId
@@ -127,7 +135,7 @@ class _SalesSectionState extends State<_SalesSection> {
     final selectedShift =
         activeShiftId == null
             ? null
-            : state.filteredCashShifts.firstWhere(
+            : visibleCashShifts.firstWhere(
               (shift) => shift.id == activeShiftId,
             );
     final salesRows =
@@ -199,7 +207,7 @@ class _SalesSectionState extends State<_SalesSection> {
                 'Estado',
               ],
               rows:
-                  state.filteredCashShifts.map((shift) {
+                  visibleCashShifts.map((shift) {
                     final isSelected = shift.id == activeShiftId;
                     return _DesktopTableRow(
                       isSelected: isSelected,
@@ -222,14 +230,10 @@ class _SalesSectionState extends State<_SalesSection> {
                         ),
                         Text(shift.sellerName ?? 'Vendedor'),
                         Text(
-                          SystemWFormatters.currency.format(
-                            shift.openingCash,
-                          ),
+                          SystemWFormatters.currency.format(shift.openingCash),
                         ),
                         Text(
-                          SystemWFormatters.currency.format(
-                            shift.openingYape,
-                          ),
+                          SystemWFormatters.currency.format(shift.openingYape),
                         ),
                         Text(
                           SystemWFormatters.currency.format(shift.cashSales),
@@ -240,9 +244,7 @@ class _SalesSectionState extends State<_SalesSection> {
                         Text(_formatOptionalCurrency(shift.closingCash)),
                         Text(_formatOptionalCurrency(shift.closingYape)),
                         Text(
-                          SystemWFormatters.currency.format(
-                            shift.finalAmount,
-                          ),
+                          SystemWFormatters.currency.format(shift.finalAmount),
                         ),
                         SizedBox(
                           width: 260,
@@ -348,6 +350,33 @@ class _SalesSectionState extends State<_SalesSection> {
                   selectedShift == null
                       ? 'Ajusta el periodo o registra nuevas ventas.'
                       : 'Cuando se vendan productos en esta caja, apareceran aqui.',
+            ),
+          ),
+          const SizedBox(height: 20),
+          SectionCard(
+            title: 'Turnos rechazados',
+            subtitle:
+                rejectedCashShifts.isEmpty
+                    ? 'No hay turnos rechazados en este periodo.'
+                    : 'Resumen de ${rejectedCashShifts.length} rechazos agrupado por vendedor.',
+            child: _DesktopTable(
+              columns: const ['Vendedor', 'Rechazos', 'Ultimo rechazo'],
+              rows:
+                  rejectedSummaries.map((summary) {
+                    return _DesktopTableRow(
+                      cells: [
+                        Text(summary.sellerName),
+                        Text('${summary.rejectionCount}'),
+                        Text(
+                          SystemWFormatters.shortDateTime.format(
+                            summary.lastRejectedAt,
+                          ),
+                        ),
+                      ],
+                    );
+                  }).toList(),
+              emptyTitle: 'Sin turnos rechazados',
+              emptyCaption: 'No hubo rechazos en el periodo seleccionado.',
             ),
           ),
         ],
@@ -591,7 +620,9 @@ class _ProductsSection extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                            Text('${pack.availableInStore} packs'),
+                            Text(
+                              '${pack.availableForSale} disponibles\n${pack.packQuantityRemaining}/${pack.packQuantityTotal} activos',
+                            ),
                             Text(
                               SystemWFormatters.currency.format(
                                 pack.totalPackPrice,
@@ -606,11 +637,11 @@ class _ProductsSection extends StatelessWidget {
                             StatusPill(
                               label: _packStatusLabel(pack),
                               background:
-                                  pack.availableInStore > 0
+                                  pack.availableForSale > 0
                                       ? const Color(0xFFECFDF5)
                                       : const Color(0xFFF1F5F9),
                               foreground:
-                                  pack.availableInStore > 0
+                                  pack.availableForSale > 0
                                       ? const Color(0xFF047857)
                                       : const Color(0xFF334155),
                             ),
@@ -1799,6 +1830,18 @@ class _MovementSupplierSummary {
   final DateTime lastMovementAt;
 }
 
+class _RejectedShiftSummary {
+  const _RejectedShiftSummary({
+    required this.sellerName,
+    required this.rejectionCount,
+    required this.lastRejectedAt,
+  });
+
+  final String sellerName;
+  final int rejectionCount;
+  final DateTime lastRejectedAt;
+}
+
 class _OperationalAlertRow {
   const _OperationalAlertRow({
     required this.productName,
@@ -2510,6 +2553,44 @@ List<_MovementSupplierSummary> _buildMovementSupplierSummaries(
   return summaries;
 }
 
+List<_RejectedShiftSummary> _buildRejectedShiftSummaries(
+  List<CashShift> rejectedShifts,
+) {
+  final counts = <String, int>{};
+  final lastDates = <String, DateTime>{};
+
+  for (final shift in rejectedShifts) {
+    final sellerName =
+        shift.sellerName?.trim().isNotEmpty == true
+            ? shift.sellerName!.trim()
+            : 'Vendedor';
+    counts[sellerName] = (counts[sellerName] ?? 0) + 1;
+    final occurredAt = shift.closedAt ?? shift.openedAt;
+    final existing = lastDates[sellerName];
+    if (existing == null || occurredAt.isAfter(existing)) {
+      lastDates[sellerName] = occurredAt;
+    }
+  }
+
+  final summaries =
+      counts.entries.map((entry) {
+          return _RejectedShiftSummary(
+            sellerName: entry.key,
+            rejectionCount: entry.value,
+            lastRejectedAt: lastDates[entry.key]!,
+          );
+        }).toList()
+        ..sort((a, b) {
+          final byCount = b.rejectionCount.compareTo(a.rejectionCount);
+          if (byCount != 0) {
+            return byCount;
+          }
+          return b.lastRejectedAt.compareTo(a.lastRejectedAt);
+        });
+
+  return summaries;
+}
+
 List<_OperationalAlertRow> _buildOperationalAlertRows(
   AdminDesktopDashboardState state,
 ) {
@@ -2765,15 +2846,22 @@ String _packageQuantityLabel(Product product, int stockUnits) {
 }
 
 String _cashShiftStatusLabel(CashShift shift) {
+  if (shift.status == CashShiftStatus.rejected) {
+    return 'Rechazado';
+  }
+  if (shift.status == CashShiftStatus.canceled) {
+    return 'Cancelado';
+  }
   if (shift.isClosed) {
     return 'Cerrado';
   }
   return switch (shift.status) {
     CashShiftStatus.pendingApproval => 'Pendiente',
     CashShiftStatus.approved => 'Aprobado',
-    CashShiftStatus.rejected => 'Rechazado',
     CashShiftStatus.closed => 'Cerrado',
     CashShiftStatus.open => 'Abierto',
+    CashShiftStatus.rejected => 'Rechazado',
+    CashShiftStatus.canceled => 'Cancelado',
   };
 }
 
@@ -2781,7 +2869,7 @@ String _packStatusLabel(Pack pack) {
   if (pack.status == 'cancelled') {
     return 'Cancelado';
   }
-  if (pack.status == 'exhausted' || pack.availableInStore <= 0) {
+  if (pack.status == 'exhausted' || pack.availableForSale <= 0) {
     return 'Agotado';
   }
   return 'Activo';
@@ -2795,28 +2883,42 @@ String _formatOptionalCurrency(double? value) {
 }
 
 Color _cashShiftStatusBackground(CashShift shift) {
+  if (shift.status == CashShiftStatus.rejected) {
+    return const Color(0xFFFEF2F2);
+  }
+  if (shift.status == CashShiftStatus.canceled) {
+    return const Color(0xFFE2E8F0);
+  }
   if (shift.isClosed) {
     return const Color(0xFFF1F5F9);
   }
   return switch (shift.status) {
     CashShiftStatus.pendingApproval => const Color(0xFFFFF7ED),
     CashShiftStatus.approved => const Color(0xFFE0F2FE),
-    CashShiftStatus.rejected => const Color(0xFFFEF2F2),
     CashShiftStatus.closed => const Color(0xFFF1F5F9),
     CashShiftStatus.open => const Color(0xFFECFDF5),
+    CashShiftStatus.rejected => const Color(0xFFFEF2F2),
+    CashShiftStatus.canceled => const Color(0xFFE2E8F0),
   };
 }
 
 Color _cashShiftStatusForeground(CashShift shift) {
+  if (shift.status == CashShiftStatus.rejected) {
+    return const Color(0xFFB91C1C);
+  }
+  if (shift.status == CashShiftStatus.canceled) {
+    return const Color(0xFF475569);
+  }
   if (shift.isClosed) {
     return const Color(0xFF334155);
   }
   return switch (shift.status) {
     CashShiftStatus.pendingApproval => const Color(0xFF9A3412),
     CashShiftStatus.approved => const Color(0xFF075985),
-    CashShiftStatus.rejected => const Color(0xFFB91C1C),
     CashShiftStatus.closed => const Color(0xFF334155),
     CashShiftStatus.open => const Color(0xFF047857),
+    CashShiftStatus.rejected => const Color(0xFFB91C1C),
+    CashShiftStatus.canceled => const Color(0xFF475569),
   };
 }
 
@@ -2845,7 +2947,10 @@ String _shiftPlaceLabel({
   required String fallback,
 }) {
   final name = locationName?.trim();
-  final coordinates = _coordinatesLabel(latitude: latitude, longitude: longitude);
+  final coordinates = _coordinatesLabel(
+    latitude: latitude,
+    longitude: longitude,
+  );
   if (name != null && name.isNotEmpty && coordinates != null) {
     return '$name | $coordinates';
   }
@@ -2858,7 +2963,10 @@ String _shiftPlaceLabel({
   return fallback;
 }
 
-String? _coordinatesLabel({required double? latitude, required double? longitude}) {
+String? _coordinatesLabel({
+  required double? latitude,
+  required double? longitude,
+}) {
   if (latitude == null || longitude == null) {
     return null;
   }

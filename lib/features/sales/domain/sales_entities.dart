@@ -2,7 +2,14 @@ import 'package:tiendaw/core/sync/sync_status.dart';
 
 enum PaymentMethod { cash, yape, transfer }
 
-enum CashShiftStatus { pendingApproval, approved, rejected, open, closed }
+enum CashShiftStatus {
+  pendingApproval,
+  approved,
+  rejected,
+  canceled,
+  open,
+  closed,
+}
 
 class SaleLine {
   const SaleLine({
@@ -19,6 +26,9 @@ class SaleLine {
     this.packId,
     this.packName,
     this.batchId,
+    this.packSaleQuantity,
+    this.packItemQuantity,
+    this.stockReservedByPack = false,
   });
 
   final String productId;
@@ -34,6 +44,9 @@ class SaleLine {
   final String? packId;
   final String? packName;
   final String? batchId;
+  final int? packSaleQuantity;
+  final int? packItemQuantity;
+  final bool stockReservedByPack;
 
   double get subtotal => quantity * unitPrice;
 
@@ -51,6 +64,9 @@ class SaleLine {
       if (packId != null) 'pack_id': packId,
       if (packName != null) 'pack_name': packName,
       if (batchId != null) 'batch_id': batchId,
+      if (packSaleQuantity != null) 'pack_sale_quantity': packSaleQuantity,
+      if (packItemQuantity != null) 'pack_item_quantity': packItemQuantity,
+      if (stockReservedByPack) 'stock_reserved_by_pack': true,
     };
   }
 }
@@ -156,7 +172,10 @@ class CashShift {
   bool get isOpen =>
       status == CashShiftStatus.open || status == CashShiftStatus.approved;
   bool get isPendingApproval => status == CashShiftStatus.pendingApproval;
-  bool get isClosed => status == CashShiftStatus.closed || closedAt != null;
+  bool get isClosed =>
+      status == CashShiftStatus.closed ||
+      status == CashShiftStatus.canceled ||
+      closedAt != null;
   bool get isRejected => status == CashShiftStatus.rejected;
   bool get canSell => isOpen && !isClosed;
   double get total => cashSales + yapeSales;

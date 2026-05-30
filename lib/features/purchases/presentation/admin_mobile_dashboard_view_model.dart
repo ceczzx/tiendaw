@@ -545,6 +545,7 @@ class AdminMobileDashboardViewModel
 
   Future<bool> createPack({
     required String name,
+    required int packQuantity,
     required List<PackDraftItem> items,
   }) async {
     final current = state.valueOrNull;
@@ -555,6 +556,7 @@ class AdminMobileDashboardViewModel
     try {
       await ref.read(catalogRepositoryProvider).createPack(
         name: name,
+        packQuantity: packQuantity,
         items: items,
       );
       await _refreshAll();

@@ -8,6 +8,10 @@ abstract class SalesRepository {
   Stream<List<CashShift>> watchCashShifts();
   Future<CashShift?> getOpenShift(String sellerId);
   Stream<CashShift?> watchOpenShift(String sellerId);
+  Future<void> deletePendingShiftRequest({
+    required String sellerId,
+    String? shiftId,
+  });
   Future<CashShift> openShift({
     required String sellerId,
     required double openingCash,
@@ -22,10 +26,7 @@ abstract class SalesRepository {
     required double closingLatitude,
     required double closingLongitude,
   });
-  Future<void> approveShift({
-    required String shiftId,
-    required String adminId,
-  });
+  Future<void> approveShift({required String shiftId, required String adminId});
   Future<void> rejectShift({
     required String shiftId,
     required String adminId,

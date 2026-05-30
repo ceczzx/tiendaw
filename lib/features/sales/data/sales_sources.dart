@@ -109,6 +109,12 @@ class SalesRemoteDataSource {
                   packId: itemMeta['pack_id']?.toString(),
                   packName: itemMeta['pack_name']?.toString(),
                   batchId: itemMeta['batch_id']?.toString(),
+                  packSaleQuantity:
+                      (itemMeta['pack_sale_quantity'] as num?)?.toInt(),
+                  packItemQuantity:
+                      (itemMeta['pack_item_quantity'] as num?)?.toInt(),
+                  stockReservedByPack:
+                      itemMeta['stock_reserved_by_pack'] == true,
                 );
               })
               .toList();
@@ -168,12 +174,12 @@ class SalesRemoteDataSource {
   }
 
   Future<CashShift?> getOpenShift(String sellerId) {
-    return _loadOpenShift(sellerId);
+    return _loadLatestShift(sellerId);
   }
 
   Stream<CashShift?> watchOpenShift(String sellerId) {
     return createRealtimeRefreshStream(
-      load: () => _loadOpenShift(sellerId),
+      load: () => _loadLatestShift(sellerId),
       triggers: [
         _client
             .from('cash_shifts')
@@ -192,7 +198,7 @@ class SalesRemoteDataSource {
     required double openingLongitude,
   }) async {
     final current = await _loadOpenShift(sellerId);
-    if (current != null && !current.isRejected) {
+    if (current != null) {
       return current;
     }
 
@@ -277,8 +283,46 @@ class SalesRemoteDataSource {
             .toList();
 
     await _insertSaleItems(saleItemsPayload);
+    await _decrementSoldPacks(sale.items);
 
     return _PersistedSale(id: saleId, cashShiftId: openShift.id);
+  }
+
+  Future<void> _decrementSoldPacks(List<SaleLine> items) async {
+    final soldByPack = <String, int>{};
+    for (final item in items) {
+      final packId = item.packId;
+      final soldQuantity = item.packSaleQuantity ?? 0;
+      if (packId == null || packId.isEmpty || soldQuantity <= 0) {
+        continue;
+      }
+      final current = soldByPack[packId] ?? 0;
+      if (soldQuantity > current) {
+        soldByPack[packId] = soldQuantity;
+      }
+    }
+
+    for (final entry in soldByPack.entries) {
+      final row =
+          await _client
+              .from('packs')
+              .select('pack_quantity_remaining')
+              .eq('id', entry.key)
+              .maybeSingle();
+      final currentRemaining =
+          (row?['pack_quantity_remaining'] as num?)?.toInt() ?? 0;
+      final nextRemaining =
+          currentRemaining - entry.value < 0
+              ? 0
+              : currentRemaining - entry.value;
+      await _client
+          .from('packs')
+          .update({
+            'pack_quantity_remaining': nextRemaining,
+            'status': nextRemaining <= 0 ? 'exhausted' : 'active',
+          })
+          .eq('id', entry.key);
+    }
   }
 
   Future<void> closeShift({
@@ -337,6 +381,23 @@ class SalesRemoteDataSource {
         .eq('status', 'pending_approval');
   }
 
+  Future<void> deletePendingShiftRequest({
+    required String sellerId,
+    String? shiftId,
+  }) async {
+    var query = _client
+        .from('cash_shifts')
+        .delete()
+        .eq('status', 'pending_approval')
+        .eq('seller_id', sellerId);
+
+    if (shiftId != null && shiftId.trim().isNotEmpty) {
+      query = query.eq('id', shiftId);
+    }
+
+    await query;
+  }
+
   Future<void> _insertSaleItems(
     List<Map<String, dynamic>> saleItemsPayload,
   ) async {
@@ -391,6 +452,28 @@ class SalesRemoteDataSource {
     }
   }
 
+  Future<CashShift?> _loadLatestShift(String sellerId) async {
+    final rows = await _client
+        .from('cash_shifts')
+        .select(
+          'id, seller_id, opened_at, closed_at, opening_cash, opening_yape, closing_cash, closing_yape, '
+          'location_id, opening_latitude, opening_longitude, closing_latitude, closing_longitude, '
+          'status, approved_by, approved_at, rejection_reason, '
+          'location:locations!cash_shifts_location_id_fkey(name), '
+          'sales(payment_method, total)',
+        )
+        .eq('seller_id', sellerId)
+        .order('opened_at', ascending: false)
+        .limit(1);
+
+    final data = _mapRows(rows);
+    if (data.isEmpty) {
+      return null;
+    }
+
+    return _mapCashShift(data.first);
+  }
+
   Future<CashShift?> _loadOpenShift(String sellerId) async {
     final rows = await _client
         .from('cash_shifts')
@@ -403,12 +486,7 @@ class SalesRemoteDataSource {
         )
         .eq('seller_id', sellerId)
         .isFilter('closed_at', null)
-        .inFilter('status', const [
-          'open',
-          'approved',
-          'pending_approval',
-          'rejected',
-        ])
+        .inFilter('status', const ['open', 'approved', 'pending_approval'])
         .order('opened_at', ascending: false)
         .limit(1);
 
@@ -513,6 +591,8 @@ class SalesRemoteDataSource {
       'pending_approval' => CashShiftStatus.pendingApproval,
       'approved' => CashShiftStatus.approved,
       'rejected' => CashShiftStatus.rejected,
+      'canceled' => CashShiftStatus.canceled,
+      'cancelled' => CashShiftStatus.canceled,
       'closed' => CashShiftStatus.closed,
       _ => CashShiftStatus.open,
     };

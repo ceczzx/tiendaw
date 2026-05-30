@@ -57,6 +57,18 @@ class SalesRepositoryImpl implements SalesRepository {
   }
 
   @override
+  Future<void> deletePendingShiftRequest({
+    required String sellerId,
+    String? shiftId,
+  }) async {
+    await _remote.deletePendingShiftRequest(
+      sellerId: sellerId,
+      shiftId: shiftId,
+    );
+    await _local.clearOpenShift(sellerId);
+  }
+
+  @override
   Future<CashShift?> getOpenShift(String sellerId) async {
     try {
       final shift = await _remote.getOpenShift(sellerId);

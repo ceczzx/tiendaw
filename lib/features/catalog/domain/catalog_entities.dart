@@ -327,6 +327,8 @@ class Pack {
     required this.id,
     required this.name,
     required this.totalPackPrice,
+    required this.packQuantityTotal,
+    required this.packQuantityRemaining,
     required this.status,
     required this.createdBy,
     required this.createdAt,
@@ -336,6 +338,8 @@ class Pack {
   final String id;
   final String name;
   final double totalPackPrice;
+  final int packQuantityTotal;
+  final int packQuantityRemaining;
   final String status;
   final String createdBy;
   final DateTime createdAt;
@@ -346,13 +350,26 @@ class Pack {
   double get totalRegularPrice =>
       items.fold(0, (sum, item) => sum + item.totalRegularPrice);
   double get margin => totalPackPrice - totalCost;
+  int get availableForSale {
+    if (status != 'active' || packQuantityRemaining <= 0) {
+      return 0;
+    }
+    return packQuantityRemaining;
+  }
+
   int get availableInStore {
     if (items.isEmpty || status != 'active') {
       return 0;
     }
-    return items
+    final stockAvailable = items
         .map((item) => item.availablePacks)
         .reduce((left, right) => left < right ? left : right);
+    if (packQuantityRemaining <= 0) {
+      return 0;
+    }
+    return stockAvailable < packQuantityRemaining
+        ? stockAvailable
+        : packQuantityRemaining;
   }
 }
 

@@ -330,6 +330,36 @@ class AdminDesktopDashboardViewModel
     );
   }
 
+  Future<void> disassembleUnsoldPack(String packId) async {
+    final current = state.valueOrNull;
+    if (current == null) {
+      return;
+    }
+
+    await ref
+        .read(catalogRepositoryProvider)
+        .disassembleUnsoldPack(packId: packId);
+    final catalog = await ref.read(loadCatalogOverviewUseCaseProvider)();
+    final packs = await ref.read(catalogRepositoryProvider).getPacks();
+    final movements =
+        await ref.read(catalogRepositoryProvider).getInventoryMovements();
+    final alerts = _buildProductAlerts(
+      products: catalog.products,
+      expiringLotAlerts: current.expiringLotAlerts,
+    );
+
+    state = AsyncData(
+      current.copyWith(
+        categories: catalog.categories,
+        products: catalog.products,
+        packs: packs,
+        movements: movements,
+        lowStockProducts: alerts.lowStockProducts,
+        expiringProducts: alerts.expiringProducts,
+      ),
+    );
+  }
+
   Future<AdminDesktopDashboardState> _hydrate({
     String sellerFilter = 'all',
     DateTime? periodStart,

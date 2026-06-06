@@ -54,3 +54,4 @@ macos/
 
 supabase/migrations/
 supabase/olds
+supabase/Triggers

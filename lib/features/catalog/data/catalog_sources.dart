@@ -390,8 +390,6 @@ class CatalogRemoteDataSource {
   }
 
   Future<List<Pack>> getPacks() async {
-    // ignore: avoid_print
-    print('[CATALOG_PACKS][getPacks] start');
     final rows = await _client
         .from('packs')
         .select(
@@ -404,20 +402,6 @@ class CatalogRemoteDataSource {
         )
         .order('created_at', ascending: false);
     final mappedRows = _mapRows(rows);
-    // ignore: avoid_print
-    print('[CATALOG_PACKS][getPacks] rows=${mappedRows.length}');
-    for (final row in mappedRows) {
-      // ignore: avoid_print
-      print(
-        "[CATALOG_PACKS][row] "
-        "id=${row['id']} "
-        "name=\"${row['name']}\" "
-        "status=${row['status']} "
-        "remaining=${row['pack_quantity_remaining']} "
-        "total=${row['pack_quantity_total']} "
-        "items=${((row['pack_items'] as List?) ?? const []).length}",
-      );
-    }
     final productIds = <String>{};
     for (final row in mappedRows) {
       for (final item in (row['pack_items'] as List?) ?? const []) {
@@ -431,57 +415,55 @@ class CatalogRemoteDataSource {
     );
     final stockByBatch = await _loadBatchStockSummaries();
 
-    final packs = mappedRows.map((row) {
-      final creator = _mapNullable(row['creator']);
-      final items =
-          ((row['pack_items'] as List?) ?? const [])
-              .map((item) => Map<String, dynamic>.from(item as Map))
-              .map((item) {
-                final product = _mapNullable(item['product']);
-                final purchaseItem = _mapNullable(item['purchase_item']);
-                final productId = item['product_id'] as String;
-                final batchId = item['batch_id'] as String;
-                return PackItem(
-                  id: item['id'] as String,
-                  packId: item['pack_id'] as String,
-                  productId: productId,
-                  productName: product['name']?.toString() ?? 'Producto',
-                  batchId: batchId,
-                  quantity: (item['quantity'] as num?)?.toInt() ?? 0,
-                  reducedUnitPrice:
-                      (item['reduced_unit_price'] as num?)?.toDouble() ?? 0,
-                  unitCost:
-                      (purchaseItem['unit_cost'] as num?)?.toDouble() ?? 0,
-                  salePrice:
-                      pricingByProduct[productId]?.salePrice ?? 0,
-                  storeAvailableUnits:
-                      stockByBatch[batchId]?.storeUnits ?? 0,
-                  expiryDate:
-                      purchaseItem['expiry_date'] == null
-                          ? null
-                          : DateTime.parse(
-                            purchaseItem['expiry_date'] as String,
-                          ),
-                );
-              })
-              .toList();
+    final packs =
+        mappedRows.map((row) {
+          final creator = _mapNullable(row['creator']);
+          final items =
+              ((row['pack_items'] as List?) ?? const [])
+                  .map((item) => Map<String, dynamic>.from(item as Map))
+                  .map((item) {
+                    final product = _mapNullable(item['product']);
+                    final purchaseItem = _mapNullable(item['purchase_item']);
+                    final productId = item['product_id'] as String;
+                    final batchId = item['batch_id'] as String;
+                    return PackItem(
+                      id: item['id'] as String,
+                      packId: item['pack_id'] as String,
+                      productId: productId,
+                      productName: product['name']?.toString() ?? 'Producto',
+                      batchId: batchId,
+                      quantity: (item['quantity'] as num?)?.toInt() ?? 0,
+                      reducedUnitPrice:
+                          (item['reduced_unit_price'] as num?)?.toDouble() ?? 0,
+                      unitCost:
+                          (purchaseItem['unit_cost'] as num?)?.toDouble() ?? 0,
+                      salePrice: pricingByProduct[productId]?.salePrice ?? 0,
+                      storeAvailableUnits:
+                          stockByBatch[batchId]?.storeUnits ?? 0,
+                      expiryDate:
+                          purchaseItem['expiry_date'] == null
+                              ? null
+                              : DateTime.parse(
+                                purchaseItem['expiry_date'] as String,
+                              ),
+                    );
+                  })
+                  .toList();
 
-      return Pack(
-        id: row['id'] as String,
-        name: row['name']?.toString() ?? 'Pack',
-        totalPackPrice: (row['total_pack_price'] as num?)?.toDouble() ?? 0,
-        packQuantityTotal:
-            (row['pack_quantity_total'] as num?)?.toInt() ?? 0,
-        packQuantityRemaining:
-            (row['pack_quantity_remaining'] as num?)?.toInt() ?? 0,
-        status: row['status']?.toString() ?? 'active',
-        createdBy: creator['full_name']?.toString() ?? 'Admin',
-        createdAt: _parseSupabaseDateTime(row['created_at'] as String),
-        items: List<PackItem>.unmodifiable(items),
-      );
-    }).toList();
-    // ignore: avoid_print
-    print('[CATALOG_PACKS][getPacks] mapped=${packs.length}');
+          return Pack(
+            id: row['id'] as String,
+            name: row['name']?.toString() ?? 'Pack',
+            totalPackPrice: (row['total_pack_price'] as num?)?.toDouble() ?? 0,
+            packQuantityTotal:
+                (row['pack_quantity_total'] as num?)?.toInt() ?? 0,
+            packQuantityRemaining:
+                (row['pack_quantity_remaining'] as num?)?.toInt() ?? 0,
+            status: row['status']?.toString() ?? 'active',
+            createdBy: creator['full_name']?.toString() ?? 'Admin',
+            createdAt: _parseSupabaseDateTime(row['created_at'] as String),
+            items: List<PackItem>.unmodifiable(items),
+          );
+        }).toList();
     return packs;
   }
 
@@ -558,22 +540,35 @@ class CatalogRemoteDataSource {
             .select('id')
             .single();
     final packId = inserted['id'] as String;
-    await _client.from('pack_items').insert(
-      items
-          .map(
-            (item) => {
-              'pack_id': packId,
-              'product_id': item.productId,
-              'batch_id': item.batchId,
-              'quantity': item.quantity,
-              'reduced_unit_price': item.reducedUnitPrice,
-            },
-          )
-          .toList(),
-    );
+    await _client
+        .from('pack_items')
+        .insert(
+          items
+              .map(
+                (item) => {
+                  'pack_id': packId,
+                  'product_id': item.productId,
+                  'batch_id': item.batchId,
+                  'quantity': item.quantity,
+                  'reduced_unit_price': item.reducedUnitPrice,
+                },
+              )
+              .toList(),
+        );
 
     final packs = await getPacks();
     return packs.firstWhere((pack) => pack.id == packId);
+  }
+
+  Future<void> disassembleUnsoldPack({required String packId}) async {
+    if (packId.trim().isEmpty) {
+      throw StateError('Selecciona un pack valido para desarmar.');
+    }
+
+    await _client.rpc(
+      'fn_disassemble_unsold_pack',
+      params: {'p_pack_id': packId},
+    );
   }
 
   Future<List<PromotableLot>> getPromotableLots({
@@ -1794,9 +1789,7 @@ class CatalogRemoteDataSource {
   Future<bool> _isBeverageProductId(String productId) async {
     final rows = await _client
         .from('products')
-        .select(
-          'category:categories!products_category_id_fkey(prefix)',
-        )
+        .select('category:categories!products_category_id_fkey(prefix)')
         .eq('id', productId)
         .limit(1);
     final data = _mapRows(rows);
@@ -2591,7 +2584,10 @@ int _warehouseLotPromotionRank(WarehouseSupplierLot lot) {
   return 2;
 }
 
-int _compareSupplierLots(WarehouseSupplierLot left, WarehouseSupplierLot right) {
+int _compareSupplierLots(
+  WarehouseSupplierLot left,
+  WarehouseSupplierLot right,
+) {
   final leftRank = _warehouseLotPromotionRank(left);
   final rightRank = _warehouseLotPromotionRank(right);
   if (leftRank != rightRank) {

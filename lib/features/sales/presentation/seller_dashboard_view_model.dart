@@ -98,8 +98,11 @@ class SellerDashboardState {
     return null;
   }
 
+  List<SaleLineDisplayGroup> get cartDisplayItems =>
+      groupSaleLinesForDisplay(cartItems);
+
   int get cartItemsCount =>
-      cartItems.fold(0, (sum, item) => sum + item.quantity);
+      cartDisplayItems.fold(0, (sum, item) => sum + item.quantity);
 
   double get cartTotal => cartItems.fold(0, (sum, item) => sum + item.subtotal);
 
@@ -186,14 +189,8 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
 
   @override
   Future<SellerDashboardState> build() async {
-    // ignore: avoid_print
-    print('[SELLER_PACKS][viewmodel-build] start');
     ref.onDispose(_disposeRealtimeSubscriptions);
     final hydrated = await _hydrate();
-    // ignore: avoid_print
-    print(
-      '[SELLER_PACKS][viewmodel-build] hydrated packs=${hydrated.packs.length}',
-    );
     _bindRealtime();
     _schedulePromotionRefresh(hydrated.priceHistory);
     return hydrated;
@@ -412,13 +409,7 @@ class SellerDashboardViewModel extends AsyncNotifier<SellerDashboardState> {
       if (pack == null) {
         return;
       }
-      final currentPackQuantity = _cartPackQuantity(next, existing.packId!);
-      final desiredPackQuantity =
-          quantity <= 0
-              ? 0
-              : quantity > existing.quantity
-              ? currentPackQuantity + 1
-              : currentPackQuantity - 1;
+      final desiredPackQuantity = quantity <= 0 ? 0 : quantity;
       if (desiredPackQuantity > pack.availableForSale) {
         state = AsyncData(
           current.copyWith(

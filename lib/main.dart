@@ -8,21 +8,12 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: '.env');
 
-  final bootstrapError = await _bootstrapSupabase();
-
-  runApp(ProviderScope(child: SystemWApp(bootstrapError: bootstrapError)));
-}
-
-Future<String?> _bootstrapSupabase() async {
   final supabaseUrl = _readSupabaseUrl();
   final accessKey = _readSupabaseAccessKey();
 
-  try {
-    await Supabase.initialize(url: supabaseUrl, anonKey: accessKey);
-    return null;
-  } catch (error) {
-    return 'No se pudo iniciar Supabase. Verifica que SUPABASE_URL apunte a la URL base del proyecto y que la clave publicada sea valida. Detalle: $error';
-  }
+  await Supabase.initialize(url: supabaseUrl, anonKey: accessKey);
+
+  runApp(const ProviderScope(child: SystemWApp()));
 }
 
 String _readSupabaseUrl() {
@@ -33,8 +24,6 @@ String _readSupabaseUrl() {
     );
   }
 
-  // Si por error pegan un endpoint interno como /auth/v1, lo llevamos
-  // de vuelta a la raiz del proyecto sin tocar el formato normal.
   final sanitizedUrl = rawUrl.replaceFirst(
     RegExp(
       r'/(auth|rest|storage|realtime|functions)/v1/?$',

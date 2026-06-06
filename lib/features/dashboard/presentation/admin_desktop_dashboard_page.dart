@@ -483,14 +483,28 @@ class _PurchasesSection extends StatelessWidget {
   }
 }
 
-class _ProductsSection extends StatelessWidget {
+class _ProductsSection extends ConsumerWidget {
   const _ProductsSection({required this.state});
 
   final AdminDesktopDashboardState state;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final snapshots = _buildProductSnapshots(state);
+    final activePacks =
+        state.packs
+            .where(
+              (pack) => pack.status == 'active' && pack.availableForSale > 0,
+            )
+            .toList();
+    final exhaustedPacks =
+        state.packs
+            .where(
+              (pack) =>
+                  pack.status == 'exhausted' ||
+                  (pack.status == 'active' && pack.availableForSale <= 0),
+            )
+            .toList();
     final storeUnits = state.products.fold<int>(
       0,
       (sum, product) => sum + product.stockStore,
@@ -588,9 +602,9 @@ class _ProductsSection extends StatelessWidget {
           ),
           const SizedBox(height: 20),
           SectionCard(
-            title: 'Packs en tienda',
+            title: 'Packs activos',
             subtitle:
-                'Lectura de packs activos con stock disponible solo en tienda, precio, costo y margen.',
+                'Packs comerciales separados del stock unitario y disponibles para venta.',
             child: _DesktopTable(
               columns: const [
                 'Pack',
@@ -600,9 +614,10 @@ class _ProductsSection extends StatelessWidget {
                 'Costo',
                 'Margen',
                 'Estado',
+                'Acciones',
               ],
               rows:
-                  state.packs
+                  activePacks
                       .map(
                         (pack) => _DesktopTableRow(
                           cells: [
@@ -636,14 +651,27 @@ class _ProductsSection extends StatelessWidget {
                             ),
                             StatusPill(
                               label: _packStatusLabel(pack),
-                              background:
-                                  pack.availableForSale > 0
-                                      ? const Color(0xFFECFDF5)
-                                      : const Color(0xFFF1F5F9),
-                              foreground:
-                                  pack.availableForSale > 0
-                                      ? const Color(0xFF047857)
-                                      : const Color(0xFF334155),
+                              background: const Color(0xFFECFDF5),
+                              foreground: const Color(0xFF047857),
+                            ),
+                            SizedBox(
+                              width: 150,
+                              child:
+                                  _canDisassemblePack(pack)
+                                      ? OutlinedButton.icon(
+                                        onPressed:
+                                            () => _confirmDisassemblePack(
+                                              context,
+                                              ref,
+                                              pack,
+                                            ),
+                                        icon: const Icon(
+                                          Icons.undo_rounded,
+                                          size: 18,
+                                        ),
+                                        label: const Text('Desarmar'),
+                                      )
+                                      : const Text('Con ventas'),
                             ),
                           ],
                         ),
@@ -654,9 +682,128 @@ class _ProductsSection extends StatelessWidget {
                   'Crea packs desde Operaciones en admin móvil para verlos aqui.',
             ),
           ),
+          const SizedBox(height: 20),
+          SectionCard(
+            title: 'Packs agotados',
+            subtitle:
+                'Historial de packs que completaron su venta hasta quedar sin unidades.',
+            child: _DesktopTable(
+              columns: const [
+                'Pack',
+                'Productos',
+                'Total creado',
+                'Precio pack',
+                'Costo',
+                'Margen',
+                'Estado',
+              ],
+              rows:
+                  exhaustedPacks
+                      .map(
+                        (pack) => _DesktopTableRow(
+                          cells: [
+                            SizedBox(width: 220, child: Text(pack.name)),
+                            SizedBox(
+                              width: 320,
+                              child: Text(
+                                pack.items
+                                    .map(
+                                      (item) =>
+                                          '${item.productName} x${item.quantity}',
+                                    )
+                                    .join('\n'),
+                                maxLines: 4,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            Text('${pack.packQuantityTotal} packs'),
+                            Text(
+                              SystemWFormatters.currency.format(
+                                pack.totalPackPrice,
+                              ),
+                            ),
+                            Text(
+                              SystemWFormatters.currency.format(pack.totalCost),
+                            ),
+                            Text(
+                              SystemWFormatters.currency.format(pack.margin),
+                            ),
+                            const StatusPill(
+                              label: 'Agotado',
+                              background: Color(0xFFF1F5F9),
+                              foreground: Color(0xFF334155),
+                            ),
+                          ],
+                        ),
+                      )
+                      .toList(),
+              emptyTitle: 'Sin packs agotados',
+              emptyCaption:
+                  'Cuando un pack se venda por completo aparecera en esta tabla.',
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  bool _canDisassemblePack(Pack pack) {
+    return pack.status == 'active' &&
+        pack.packQuantityTotal > 0 &&
+        pack.packQuantityRemaining == pack.packQuantityTotal;
+  }
+
+  Future<void> _confirmDisassemblePack(
+    BuildContext context,
+    WidgetRef ref,
+    Pack pack,
+  ) async {
+    final shouldDisassemble = await showDialog<bool>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Desarmar pack'),
+            content: Text(
+              'Se devolveran los productos reservados de "${pack.name}" al stock de tienda. Esta accion solo esta permitida porque el pack no tuvo ventas.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Desarmar'),
+              ),
+            ],
+          ),
+    );
+
+    if (shouldDisassemble != true || !context.mounted) {
+      return;
+    }
+
+    try {
+      await ref
+          .read(adminDesktopDashboardViewModelProvider.notifier)
+          .disassembleUnsoldPack(pack.id);
+      if (!context.mounted) {
+        return;
+      }
+      await showSystemWActionDialog(
+        context,
+        message: 'Pack desarmado y stock devuelto a tienda.',
+      );
+    } catch (error) {
+      if (!context.mounted) {
+        return;
+      }
+      await showSystemWActionDialog(
+        context,
+        message: 'No se pudo desarmar el pack: $error',
+        isError: true,
+      );
+    }
   }
 }
 

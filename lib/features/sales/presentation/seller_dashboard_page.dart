@@ -582,12 +582,9 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                             )
                             : Column(
                               children:
-                                  state.cartItems.map((item) {
-                                    final availableUnits = _storeStockForItem(
-                                      state,
-                                      item.productId,
-                                      isIced: item.isIced,
-                                    );
+                                  state.cartDisplayItems.map((item) {
+                                    final availableUnits =
+                                        _availableUnitsForItem(state, item);
                                     return Padding(
                                       padding: const EdgeInsets.only(
                                         bottom: 12,
@@ -1416,7 +1413,7 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   const SizedBox(height: 12),
-                  ...state.cartItems.map((item) {
+                  ...state.cartDisplayItems.map((item) {
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Row(
@@ -1424,8 +1421,8 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
                           Expanded(
                             child: Text(
                               item.isIced
-                                  ? '${item.productName} (helada)'
-                                  : item.productName,
+                                  ? '${item.displayName} (helada)'
+                                  : item.displayName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -1547,6 +1544,27 @@ class _SellerDashboardPageState extends ConsumerState<SellerDashboardPage> {
       }
     }
     return 0;
+  }
+
+  int _availableUnitsForItem(
+    SellerDashboardState state,
+    SaleLineDisplayGroup item,
+  ) {
+    if (item.isPack) {
+      final packId = item.primaryLine.packId;
+      for (final pack in state.packs) {
+        if (pack.id == packId) {
+          return pack.availableForSale;
+        }
+      }
+      return item.quantity;
+    }
+
+    return _storeStockForItem(
+      state,
+      item.primaryLine.productId,
+      isIced: item.isIced,
+    );
   }
 }
 
@@ -1746,7 +1764,7 @@ class _CartItemRow extends StatelessWidget {
     required this.onRemove,
   });
 
-  final SaleLine item;
+  final SaleLineDisplayGroup item;
   final int stockStore;
   final VoidCallback onDecrease;
   final VoidCallback? onIncrease;
@@ -1769,15 +1787,17 @@ class _CartItemRow extends StatelessWidget {
               children: [
                 Text(
                   item.isIced
-                      ? '${item.productName} (helada)'
-                      : item.productName,
+                      ? '${item.displayName} (helada)'
+                      : item.displayName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  item.isIced
+                  item.isPack
+                      ? 'Packs disponibles: $stockStore u.'
+                      : item.isIced
                       ? 'Heladas disponibles: $stockStore u.'
                       : 'Normales disponibles: $stockStore u.',
                   style: Theme.of(context).textTheme.bodySmall,
@@ -1789,7 +1809,9 @@ class _CartItemRow extends StatelessWidget {
                     color: const Color(0xFF0F766E),
                   ),
                 ),
-                if (item.usedPromotionalPrice || item.isIced) ...[
+                if (item.isPack ||
+                    item.usedPromotionalPrice ||
+                    item.isIced) ...[
                   const SizedBox(height: 4),
                   Text(
                     _saleLineDescriptor(item),
@@ -2013,22 +2035,28 @@ bool _isErrorFeedback(String message) {
       message.trim().toLowerCase().startsWith('no hay una caja');
 }
 
-String _saleLineDescriptor(SaleLine item) {
+String _saleLineDescriptor(SaleLineDisplayGroup item) {
+  if (item.isPack) {
+    final contents = item.packContentsLabel;
+    return contents.isEmpty ? 'pack' : 'pack | $contents';
+  }
+
+  final line = item.primaryLine;
   final details = <String>[];
-  details.add(item.isIced ? 'estado: helada' : 'estado: normal');
+  details.add(line.isIced ? 'estado: helada' : 'estado: normal');
   final originalUnitPrice =
-      item.originalUnitPrice ?? item.baseUnitPrice ?? item.unitPrice;
-  final baseUnitPrice = item.baseUnitPrice ?? item.unitPrice;
-  if (item.usedLotPromotion) {
+      line.originalUnitPrice ?? line.baseUnitPrice ?? line.unitPrice;
+  final baseUnitPrice = line.baseUnitPrice ?? line.unitPrice;
+  if (line.usedLotPromotion) {
     details.add('precio promo por lote');
   } else if (originalUnitPrice > baseUnitPrice) {
     details.add('descuento general');
   } else {
     details.add('precio normal');
   }
-  if (item.isIced && item.priceAdjustment > 0) {
+  if (line.isIced && line.priceAdjustment > 0) {
     details.add(
-      'helada +${SystemWFormatters.currency.format(item.priceAdjustment)}',
+      'helada +${SystemWFormatters.currency.format(line.priceAdjustment)}',
     );
   }
   return details.join(' | ');

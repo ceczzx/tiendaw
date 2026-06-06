@@ -588,4 +588,9 @@ class CatalogRepositoryImpl implements CatalogRepository {
       items: items,
     );
   }
+
+  @override
+  Future<void> disassembleUnsoldPack({required String packId}) {
+    return _remote.disassembleUnsoldPack(packId: packId);
+  }
 }

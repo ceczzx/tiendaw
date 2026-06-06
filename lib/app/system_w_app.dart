@@ -8,9 +8,7 @@ import 'package:tiendaw/features/auth/presentation/sign_in_page.dart';
 import 'package:tiendaw/features/home/presentation/system_w_shell.dart';
 
 class SystemWApp extends StatelessWidget {
-  const SystemWApp({super.key, this.bootstrapError});
-
-  final String? bootstrapError;
+  const SystemWApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -24,10 +22,7 @@ class SystemWApp extends StatelessWidget {
         GlobalCupertinoLocalizations.delegate,
       ],
       supportedLocales: const [Locale('es', 'PE'), Locale('es'), Locale('en')],
-      home:
-          bootstrapError == null
-              ? const _SessionGate()
-              : SetupRequiredPage(message: bootstrapError!),
+      home: const _SessionGate(),
     );
   }
 }
@@ -41,13 +36,6 @@ class _SessionGate extends ConsumerWidget {
 
     return session.when(
       data: (state) {
-        // Invitation link deshabilitado temporalmente.
-        // if (state.isInviteFlow) {
-        //   // El onboarding del invitado siempre gana prioridad para
-        //   // impedir que entre al shell antes de definir su contrasena.
-        //   return const InvitePasswordPage();
-        // }
-
         if (state.isAuthenticated && state.isOfflineMode) {
           return OfflineSessionPage(state: state);
         }
@@ -64,54 +52,6 @@ class _SessionGate extends ConsumerWidget {
             errorMessage:
                 'No pudimos validar tu sesion en este momento. Revisa tu conexion e intenta nuevamente.',
           ),
-    );
-  }
-}
-
-class SetupRequiredPage extends StatelessWidget {
-  const SetupRequiredPage({required this.message, super.key});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Scaffold(
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Configura Supabase',
-                      style: theme.textTheme.headlineMedium,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(message, style: theme.textTheme.bodyLarge),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Archivo esperado:',
-                      style: theme.textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 8),
-                    const SelectableText(
-                      'SUPABASE_URL=https://tu-proyecto.supabase.co\nSUPABASE_PUBLISHABLE_KEY=tu_publishable_key\n# o tambien\nSUPABASE_ANON_KEY=tu_anon_key',
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

@@ -77,47 +77,14 @@ class SalesRemoteDataSource {
 
     return _mapRows(rows).map((row) {
       final seller = _mapNullable(row['seller']);
-      final items =
-          ((row['sale_items'] as List?) ?? const [])
-              .map((item) => Map<String, dynamic>.from(item as Map))
-              .map((item) {
-                final product = _mapNullable(item['product']);
-                final itemMeta =
-                    item['item_meta'] is Map
-                        ? Map<String, dynamic>.from(item['item_meta'] as Map)
-                        : const <String, dynamic>{};
-                final usedPromotionalPrice =
-                    itemMeta['used_promotional_price'] == true;
-                final usedLotPromotion =
-                    itemMeta.containsKey('used_lot_promotion')
-                        ? itemMeta['used_lot_promotion'] == true
-                        : usedPromotionalPrice;
-                return SaleLine(
-                  productId: item['product_id'] as String,
-                  productName: product['name']?.toString() ?? 'Producto',
-                  quantity: (item['quantity'] as num).toInt(),
-                  unitPrice: (item['unit_price'] as num).toDouble(),
-                  baseUnitPrice:
-                      (itemMeta['base_unit_price'] as num?)?.toDouble(),
-                  originalUnitPrice:
-                      (itemMeta['original_unit_price'] as num?)?.toDouble(),
-                  priceAdjustment:
-                      (itemMeta['price_adjustment'] as num?)?.toDouble() ?? 0,
-                  isIced: itemMeta['is_iced'] == true,
-                  usedPromotionalPrice: usedPromotionalPrice,
-                  usedLotPromotion: usedLotPromotion,
-                  packId: itemMeta['pack_id']?.toString(),
-                  packName: itemMeta['pack_name']?.toString(),
-                  batchId: itemMeta['batch_id']?.toString(),
-                  packSaleQuantity:
-                      (itemMeta['pack_sale_quantity'] as num?)?.toInt(),
-                  packItemQuantity:
-                      (itemMeta['pack_item_quantity'] as num?)?.toInt(),
-                  stockReservedByPack:
-                      itemMeta['stock_reserved_by_pack'] == true,
-                );
-              })
-              .toList();
+      final items = [
+        ...((row['sale_items'] as List?) ?? const [])
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .map(_mapSaleItem),
+        ...((row['sale_packs'] as List?) ?? const [])
+            .map((item) => Map<String, dynamic>.from(item as Map))
+            .map(_mapSalePack),
+      ];
 
       return Sale(
         id: row['id'] as String,
@@ -143,6 +110,7 @@ class SalesRemoteDataSource {
       triggers: [
         _tableTrigger('sales', primaryKey: const ['id']),
         _tableTrigger('sale_items', primaryKey: const ['id']),
+        _tableTrigger('sale_packs', primaryKey: const ['id']),
         _tableTrigger('products', primaryKey: const ['id']),
       ],
     );
@@ -269,8 +237,9 @@ class SalesRemoteDataSource {
             .single();
     final saleId = inserted['id'] as String;
 
+    final submission = _splitSaleItemsForSubmission(sale.items);
     final saleItemsPayload =
-        sale.items
+        submission.regularItems
             .map(
               (item) => {
                 'sale_id': saleId,
@@ -283,46 +252,20 @@ class SalesRemoteDataSource {
             .toList();
 
     await _insertSaleItems(saleItemsPayload);
-    await _decrementSoldPacks(sale.items);
+    await _insertSalePacks(
+      submission.packItems
+          .map(
+            (pack) => {
+              'sale_id': saleId,
+              'pack_id': pack.packId,
+              'quantity': pack.quantity,
+              'price_paid': pack.pricePaid,
+            },
+          )
+          .toList(),
+    );
 
     return _PersistedSale(id: saleId, cashShiftId: openShift.id);
-  }
-
-  Future<void> _decrementSoldPacks(List<SaleLine> items) async {
-    final soldByPack = <String, int>{};
-    for (final item in items) {
-      final packId = item.packId;
-      final soldQuantity = item.packSaleQuantity ?? 0;
-      if (packId == null || packId.isEmpty || soldQuantity <= 0) {
-        continue;
-      }
-      final current = soldByPack[packId] ?? 0;
-      if (soldQuantity > current) {
-        soldByPack[packId] = soldQuantity;
-      }
-    }
-
-    for (final entry in soldByPack.entries) {
-      final row =
-          await _client
-              .from('packs')
-              .select('pack_quantity_remaining')
-              .eq('id', entry.key)
-              .maybeSingle();
-      final currentRemaining =
-          (row?['pack_quantity_remaining'] as num?)?.toInt() ?? 0;
-      final nextRemaining =
-          currentRemaining - entry.value < 0
-              ? 0
-              : currentRemaining - entry.value;
-      await _client
-          .from('packs')
-          .update({
-            'pack_quantity_remaining': nextRemaining,
-            'status': nextRemaining <= 0 ? 'exhausted' : 'active',
-          })
-          .eq('id', entry.key);
-    }
   }
 
   Future<void> closeShift({
@@ -401,6 +344,10 @@ class SalesRemoteDataSource {
   Future<void> _insertSaleItems(
     List<Map<String, dynamic>> saleItemsPayload,
   ) async {
+    if (saleItemsPayload.isEmpty) {
+      return;
+    }
+
     if (_supportsSaleItemMeta == false) {
       await _client
           .from('sale_items')
@@ -425,6 +372,16 @@ class SalesRemoteDataSource {
           .from('sale_items')
           .insert(saleItemsPayload.map(_withoutItemMeta).toList());
     }
+  }
+
+  Future<void> _insertSalePacks(
+    List<Map<String, dynamic>> salePacksPayload,
+  ) async {
+    if (salePacksPayload.isEmpty) {
+      return;
+    }
+
+    await _client.from('sale_packs').insert(salePacksPayload);
   }
 
   Future<T> _withSalesSelect<T>(
@@ -550,6 +507,61 @@ class SalesRemoteDataSource {
     );
   }
 
+  SaleLine _mapSaleItem(Map<String, dynamic> item) {
+    final product = _mapNullable(item['product']);
+    final itemMeta =
+        item['item_meta'] is Map
+            ? Map<String, dynamic>.from(item['item_meta'] as Map)
+            : const <String, dynamic>{};
+    final usedPromotionalPrice = itemMeta['used_promotional_price'] == true;
+    final usedLotPromotion =
+        itemMeta.containsKey('used_lot_promotion')
+            ? itemMeta['used_lot_promotion'] == true
+            : usedPromotionalPrice;
+
+    return SaleLine(
+      productId: item['product_id'] as String,
+      productName: product['name']?.toString() ?? 'Producto',
+      quantity: (item['quantity'] as num).toInt(),
+      unitPrice: (item['unit_price'] as num).toDouble(),
+      baseUnitPrice: (itemMeta['base_unit_price'] as num?)?.toDouble(),
+      originalUnitPrice: (itemMeta['original_unit_price'] as num?)?.toDouble(),
+      priceAdjustment: (itemMeta['price_adjustment'] as num?)?.toDouble() ?? 0,
+      isIced: itemMeta['is_iced'] == true,
+      usedPromotionalPrice: usedPromotionalPrice,
+      usedLotPromotion: usedLotPromotion,
+      packId: itemMeta['pack_id']?.toString(),
+      packName: itemMeta['pack_name']?.toString(),
+      batchId: itemMeta['batch_id']?.toString(),
+      packSaleQuantity: (itemMeta['pack_sale_quantity'] as num?)?.toInt(),
+      packItemQuantity: (itemMeta['pack_item_quantity'] as num?)?.toInt(),
+      stockReservedByPack: itemMeta['stock_reserved_by_pack'] == true,
+    );
+  }
+
+  SaleLine _mapSalePack(Map<String, dynamic> item) {
+    final pack = _mapNullable(item['pack']);
+    final packId = item['pack_id'] as String;
+    final quantity = (item['quantity'] as num).toInt();
+    final pricePaid = (item['price_paid'] as num).toDouble();
+    final regularPrice = (pack['total_pack_price'] as num?)?.toDouble();
+    final packName = pack['name']?.toString() ?? 'Pack';
+
+    return SaleLine(
+      productId: packId,
+      productName: packName,
+      quantity: quantity,
+      unitPrice: pricePaid,
+      baseUnitPrice: pricePaid,
+      originalUnitPrice: regularPrice,
+      usedPromotionalPrice: regularPrice != null && pricePaid < regularPrice,
+      packId: packId,
+      packName: packName,
+      packSaleQuantity: quantity,
+      stockReservedByPack: true,
+    );
+  }
+
   List<Map<String, dynamic>> _mapRows(dynamic rows) {
     return (rows as List)
         .map((row) => Map<String, dynamic>.from(row as Map))
@@ -617,15 +629,71 @@ String _toSupabaseDateTime(DateTime value) {
 const String _enhancedSalesSelectClause =
     'id, seller_id, cash_shift_id, payment_method, created_at, '
     'seller:profiles(full_name), '
-    'sale_items(product_id, quantity, unit_price, item_meta, product:products(name))';
+    'sale_items(product_id, quantity, unit_price, item_meta, product:products(name)), '
+    'sale_packs(pack_id, quantity, price_paid, pack:packs(name, total_pack_price))';
 
 const String _legacySalesSelectClause =
     'id, seller_id, cash_shift_id, payment_method, created_at, '
     'seller:profiles(full_name), '
-    'sale_items(product_id, quantity, unit_price, product:products(name))';
+    'sale_items(product_id, quantity, unit_price, product:products(name)), '
+    'sale_packs(pack_id, quantity, price_paid, pack:packs(name, total_pack_price))';
 
 Map<String, dynamic> _withoutItemMeta(Map<String, dynamic> row) {
   final next = Map<String, dynamic>.from(row);
   next.remove('item_meta');
   return next;
+}
+
+_SaleSubmission _splitSaleItemsForSubmission(List<SaleLine> items) {
+  final regularItems = <SaleLine>[];
+  final packSourceItems = <SaleLine>[];
+
+  for (final item in items) {
+    final packId = item.packId;
+    if (packId == null || packId.isEmpty) {
+      regularItems.add(item);
+    } else {
+      packSourceItems.add(item);
+    }
+  }
+
+  final packItems =
+      groupSaleLinesForDisplay(packSourceItems)
+          .where((group) => group.isPack && group.quantity > 0)
+          .map((group) {
+            final packId = group.primaryLine.packId!;
+            return _SalePackSubmission(
+              packId: packId,
+              quantity: group.quantity,
+              pricePaid: group.subtotal / group.quantity,
+            );
+          })
+          .toList();
+
+  return _SaleSubmission(
+    regularItems: regularItems,
+    packItems: packItems,
+  );
+}
+
+class _SaleSubmission {
+  const _SaleSubmission({
+    required this.regularItems,
+    required this.packItems,
+  });
+
+  final List<SaleLine> regularItems;
+  final List<_SalePackSubmission> packItems;
+}
+
+class _SalePackSubmission {
+  const _SalePackSubmission({
+    required this.packId,
+    required this.quantity,
+    required this.pricePaid,
+  });
+
+  final String packId;
+  final int quantity;
+  final double pricePaid;
 }

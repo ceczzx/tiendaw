@@ -112,4 +112,5 @@ abstract class CatalogRepository {
     required int packQuantity,
     required List<PackDraftItem> items,
   });
+  Future<void> disassembleUnsoldPack({required String packId});
 }

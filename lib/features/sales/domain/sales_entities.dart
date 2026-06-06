@@ -71,6 +71,115 @@ class SaleLine {
   }
 }
 
+class SaleLineDisplayGroup {
+  SaleLineDisplayGroup(Iterable<SaleLine> lines)
+    : lines = List<SaleLine>.unmodifiable(lines) {
+    if (this.lines.isEmpty) {
+      throw ArgumentError.value(lines, 'lines', 'Debe tener al menos una linea.');
+    }
+  }
+
+  final List<SaleLine> lines;
+
+  SaleLine get primaryLine => lines.first;
+  bool get isPack => primaryLine.packId != null;
+  bool get isIced => !isPack && primaryLine.isIced;
+  bool get usedPromotionalPrice =>
+      !isPack && primaryLine.usedPromotionalPrice;
+  String get cartKey => primaryLine.cartKey;
+
+  String get displayName {
+    if (!isPack) {
+      return primaryLine.productName;
+    }
+    final packName = primaryLine.packName?.trim();
+    if (packName != null && packName.isNotEmpty) {
+      return packName;
+    }
+    return primaryLine.productName;
+  }
+
+  int get quantity {
+    if (!isPack) {
+      return primaryLine.quantity;
+    }
+
+    var packQuantity = 0;
+    for (final line in lines) {
+      final inferredQuantity =
+          line.packSaleQuantity ??
+          ((line.packItemQuantity ?? 0) <= 0
+              ? 0
+              : line.quantity ~/ line.packItemQuantity!);
+      if (inferredQuantity > packQuantity) {
+        packQuantity = inferredQuantity;
+      }
+    }
+    return packQuantity;
+  }
+
+  double get subtotal => lines.fold(0, (sum, line) => sum + line.subtotal);
+
+  String get packContentsLabel {
+    if (!isPack) {
+      return '';
+    }
+
+    final packQuantity = quantity;
+    return lines
+        .map((line) {
+          final componentQuantity =
+              line.packItemQuantity ??
+              (packQuantity <= 0 ? line.quantity : line.quantity ~/ packQuantity);
+          return '${_packComponentName(line)} x$componentQuantity';
+        })
+        .join(' | ');
+  }
+}
+
+List<SaleLineDisplayGroup> groupSaleLinesForDisplay(
+  Iterable<SaleLine> lines,
+) {
+  final groups = <SaleLineDisplayGroup>[];
+  final packIndexes = <String, int>{};
+  final packLines = <String, List<SaleLine>>{};
+
+  for (final line in lines) {
+    final packId = line.packId;
+    if (packId == null || packId.isEmpty) {
+      groups.add(SaleLineDisplayGroup([line]));
+      continue;
+    }
+
+    final index = packIndexes[packId];
+    if (index == null) {
+      packIndexes[packId] = groups.length;
+      final linesForPack = <SaleLine>[line];
+      packLines[packId] = linesForPack;
+      groups.add(SaleLineDisplayGroup(linesForPack));
+      continue;
+    }
+
+    final linesForPack = packLines[packId]!..add(line);
+    groups[index] = SaleLineDisplayGroup(linesForPack);
+  }
+
+  return List<SaleLineDisplayGroup>.unmodifiable(groups);
+}
+
+String _packComponentName(SaleLine line) {
+  final packName = line.packName?.trim();
+  if (packName == null || packName.isEmpty) {
+    return line.productName;
+  }
+
+  final prefixedName = '$packName / ';
+  if (line.productName.startsWith(prefixedName)) {
+    return line.productName.substring(prefixedName.length);
+  }
+  return line.productName;
+}
+
 class Sale {
   const Sale({
     required this.id,
